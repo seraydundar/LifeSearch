@@ -1,0 +1,49 @@
+# Local development stack.
+#
+# This is a convenience environment for backend development that mirrors
+# production schema (Postgres + pgvector) without needing a real Supabase
+# project yet. It is NOT a replacement for Supabase Auth/Storage — once the
+# Supabase project exists, point DATABASE_URL at it instead and this
+# `db` service becomes optional (kept for fast local iteration / tests).
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: lifesearch-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lifesearch
+      POSTGRES_PASSWORD: lifesearch
+      POSTGRES_DB: lifesearch
+    ports:
+      - "5432:5432"
+    volumes:
+      - lifesearch-db-data:/var/lib/postgresql/data
+    # Note: migrations under infra/supabase/migrations reference `auth.users`,
+    # which only exists in a real Supabase project (or `supabase start`).
+    # They are NOT auto-applied here — this plain Postgres+pgvector container
+    # is only for backend unit/integration tests against a disposable DB.
+    # Use the Supabase CLI for a full local stack with Auth included.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lifesearch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: lifesearch-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://lifesearch:lifesearch@db:5432/lifesearch
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app
+
+volumes:
+  lifesearch-db-data:

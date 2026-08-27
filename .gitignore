@@ -1,0 +1,44 @@
+# --- Secrets ---
+.env
+*.env
+!.env.example
+
+# --- Flutter / Dart ---
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/.pub-cache/
+mobile/.pub/
+mobile/build/
+mobile/*.iml
+mobile/*.ipr
+mobile/*.iws
+mobile/.idea/
+mobile/android/.gradle
+mobile/android/local.properties
+mobile/android/**/GeneratedPluginRegistrant.java
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/flutter_export_environment.sh
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/**/*.g.dart
+mobile/**/*.freezed.dart
+mobile/coverage/
+
+# --- Python / FastAPI ---
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.egg-info/
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/htmlcov/
+backend/.coverage
+
+# --- macOS ---
+.DS_Store
+
+# --- Editors ---
+.vscode/
+.idea/

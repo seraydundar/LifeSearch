@@ -1,0 +1,17 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-multipart==0.0.20
+httpx==0.28.1
+supabase==2.11.0
+asyncpg==0.30.0
+sqlalchemy[asyncio]==2.0.36
+pgvector==0.3.6
+python-dotenv==1.0.1
+
+# AI providers — add the ones you actually use per AIProvider implementation
+openai==1.59.6
+
+# Content extraction (wired up starting Phase 4)
+pypdf==5.1.0
