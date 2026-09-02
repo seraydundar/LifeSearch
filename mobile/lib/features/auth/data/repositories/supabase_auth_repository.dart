@@ -43,13 +43,17 @@ class SupabaseAuthRepository implements AuthRepository {
   Future<AppUser> signUp({required String email, required String password}) async {
     try {
       final response = await _client.auth.signUp(email: email, password: password);
-      final user = _toAppUser(response.user);
-      if (user == null) {
-        // Email confirmation is required — there is no session yet, but the
-        // account was created successfully.
+      if (response.session == null) {
+        // Supabase returns a `user` here even when email confirmation is
+        // required — `session` (not `user`) is the real signal that the
+        // account isn't actually signed in yet.
         throw const AuthFailure(
           'Hesap oluşturuldu. Devam etmeden önce lütfen e-postanı onayla.',
         );
+      }
+      final user = _toAppUser(response.user);
+      if (user == null) {
+        throw const AuthFailure('Kayıt başarısız oldu. Lütfen tekrar deneyin.');
       }
       return user;
     } on AuthException catch (e) {
