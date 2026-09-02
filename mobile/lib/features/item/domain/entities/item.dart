@@ -1,0 +1,39 @@
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'item.freezed.dart';
+
+/// Mirrors the `type` check constraint on the `items` table
+/// (see infra/supabase/migrations/0001_init.sql). Enum member names are
+/// used verbatim as the DB values — see [ItemTypeX].
+enum ItemType { note, image, screenshot, pdf, audio, url, document }
+
+extension ItemTypeX on ItemType {
+  String get dbValue => name;
+
+  static ItemType fromDbValue(String value) {
+    return ItemType.values.firstWhere(
+      (type) => type.name == value,
+      orElse: () => ItemType.document,
+    );
+  }
+}
+
+/// A single piece of content the user saved — a note, an uploaded image/PDF,
+/// etc. This is the row shape from the `items` table; the actual text body
+/// of a note lives in `item_contents` and is fetched separately (see
+/// `ItemRepository.fetchNoteContent`) since the list view never needs it.
+@freezed
+sealed class Item with _$Item {
+  const factory Item({
+    required String id,
+    required ItemType type,
+    String? title,
+    String? description,
+    String? originalFilename,
+    String? mimeType,
+    String? storagePath,
+    required String processingStatus,
+    required bool favorite,
+    required DateTime createdAt,
+  }) = _Item;
+}

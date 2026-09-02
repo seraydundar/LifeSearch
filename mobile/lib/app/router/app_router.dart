@@ -6,6 +6,9 @@ import '../../features/auth/presentation/providers/auth_providers.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/register_screen.dart';
 import '../../features/home/presentation/screens/home_screen.dart';
+import '../../features/item/domain/entities/item.dart';
+import '../../features/item/presentation/screens/item_detail_screen.dart';
+import '../../features/item/presentation/screens/note_editor_screen.dart';
 import '../../features/library/presentation/screens/library_screen.dart';
 import '../../features/settings/presentation/screens/settings_screen.dart';
 import 'scaffold_with_nav_bar.dart';
@@ -16,6 +19,7 @@ abstract final class AppRoutes {
   static const home = '/home';
   static const library = '/library';
   static const settings = '/settings';
+  static const newNote = '/item/new';
 }
 
 /// Central navigation graph. Auth-gated: signed-out users can only reach
@@ -44,6 +48,18 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.register,
         builder: (context, state) => const RegisterScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.newNote,
+        builder: (context, state) => const NoteEditorScreen(),
+      ),
+      GoRoute(
+        path: '/item/:id/note',
+        builder: (context, state) => NoteEditorScreen(item: state.extra as Item),
+      ),
+      GoRoute(
+        path: '/item/:id',
+        builder: (context, state) => ItemDetailScreen(item: state.extra as Item),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
