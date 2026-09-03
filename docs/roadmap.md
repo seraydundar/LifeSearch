@@ -8,7 +8,7 @@ Geliştirme Kuralları").
 |---|---|---|
 | **1** | Flutter proje iskeleti, tema, Riverpod, go_router, Supabase bağlantısı, Login/Register/Logout, bottom nav, Home/Library/Settings kabukları | Hayır |
 | **2** | Not oluşturma/düzenleme/silme, image/PDF upload, item list/detail, favorites | Hayır (Supabase doğrudan) |
-| **3** | Drift ile local DB (items, notes, favorites, recent searches), sync_status + pending operations + retry | Hayır |
+| **3** ✅ | Drift ile local DB (items, notes, favorites, recent searches), sync_status + pending operations + retry | Hayır |
 | **4** | FastAPI backend kurulur. İlk pipeline: Note/PDF → text → chunking → embedding → pgvector | **Evet — burada başlar** |
 | **5** | Semantic Search: query → embedding → pgvector → top-K chunk → items | Evet |
 | **6** | Image Intelligence: camera, image upload, OCR, image description/embedding | Evet |
@@ -26,9 +26,11 @@ cevap verir. Bu senaryo çalışıyorsa MVP tamamlanmıştır (Faz 7 sonu).
 
 ## Şu an neredeyiz
 
-Altyapı kuruldu (bu oturumda): monorepo iskeleti, Flutter feature-first
-mimarisi + Phase 1 bağımlılıkları, FastAPI backend iskeleti (`/health`
-uçtan uca çalışıyor), Supabase şeması taslağı (`infra/supabase/migrations`),
-docker-compose. **Henüz hiçbir ürün özelliği kodlanmadı.**
+Faz 1, 2 ve 3 tamamlandı ve gerçek Supabase projesinde uçtan uca test
+edildi: auth (register/login/logout), not/görsel/PDF CRUD, favorites, ve
+şimdi de Drift ile offline-first local cache + sync queue. UI artık
+Supabase'i değil local DB'yi izliyor; `SyncService` ikisini arka planda
+uzlaştırıyor.
 
-Sıradaki adım: **Faz 1** — bkz. görev listesi için sohbetteki plan mesajı.
+Sıradaki adım: **Faz 4 — FastAPI backend'i gerçek AI pipeline'ına bağlamak**
+(not/PDF → text → chunking → embedding → pgvector).

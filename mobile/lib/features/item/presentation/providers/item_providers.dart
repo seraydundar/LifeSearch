@@ -1,18 +1,74 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/database/database_provider.dart';
+import '../../../../core/network/connectivity_provider.dart';
 import '../../../../core/network/supabase_client_provider.dart';
-import '../../data/repositories/supabase_item_repository.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
+import '../../data/local/item_local_data_source.dart';
+import '../../data/local/sync_queue_data_source.dart';
+import '../../data/remote/remote_item_data_source.dart';
+import '../../data/repositories/offline_item_repository.dart';
+import '../../data/sync/sync_service.dart';
 import '../../domain/entities/item.dart';
 import '../../domain/repositories/item_repository.dart';
 
-final itemRepositoryProvider = Provider<ItemRepository>((ref) {
-  return SupabaseItemRepository(ref.watch(supabaseClientProvider));
+final remoteItemDataSourceProvider = Provider<RemoteItemDataSource>((ref) {
+  return RemoteItemDataSource(ref.watch(supabaseClientProvider));
 });
 
-/// Realtime item list for the signed-in user. Home/Library both watch this
-/// directly — no separate fetch-on-navigate step.
+final itemLocalDataSourceProvider = Provider<ItemLocalDataSource>((ref) {
+  return ItemLocalDataSource(ref.watch(appDatabaseProvider));
+});
+
+final syncQueueDataSourceProvider = Provider<SyncQueueDataSource>((ref) {
+  return SyncQueueDataSource(ref.watch(appDatabaseProvider));
+});
+
+/// Reconciles local cache ↔ Supabase. Kicked off whenever connectivity
+/// returns or the user signs in; `itemRepositoryProvider` also nudges it
+/// after every local write (see `SyncService.syncSoon`).
+final syncServiceProvider = Provider<SyncService>((ref) {
+  final service = SyncService(
+    local: ref.watch(itemLocalDataSourceProvider),
+    remote: ref.watch(remoteItemDataSourceProvider),
+    queue: ref.watch(syncQueueDataSourceProvider),
+  );
+
+  final onlineSub = ref.listen(isOnlineProvider, (previous, next) {
+    if (next.valueOrNull == true) service.syncSoon();
+  });
+  final authSub = ref.listen(authStateChangesProvider, (previous, next) {
+    if (next.valueOrNull != null) service.syncSoon();
+  });
+  ref.onDispose(() {
+    onlineSub.close();
+    authSub.close();
+  });
+
+  service.syncSoon();
+  return service;
+});
+
+final itemRepositoryProvider = Provider<ItemRepository>((ref) {
+  return OfflineItemRepository(
+    local: ref.watch(itemLocalDataSourceProvider),
+    remote: ref.watch(remoteItemDataSourceProvider),
+    queue: ref.watch(syncQueueDataSourceProvider),
+    syncService: ref.watch(syncServiceProvider),
+  );
+});
+
+/// Local-first item list for the signed-in user — reads the Drift cache,
+/// which `SyncService` keeps reconciled with Supabase. Home/Library both
+/// watch this directly and it works fully offline.
 final itemsProvider = StreamProvider<List<Item>>((ref) {
   return ref.watch(itemRepositoryProvider).watchItems();
+});
+
+/// Number of local changes still waiting to reach the server — shown in
+/// Settings (requirements doc, section 49: "Sync").
+final pendingSyncCountProvider = StreamProvider<int>((ref) {
+  return ref.watch(syncQueueDataSourceProvider).watchPendingCount();
 });
 
 final noteEditorControllerProvider =

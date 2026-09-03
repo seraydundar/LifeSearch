@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../auth/presentation/providers/auth_providers.dart';
+import '../../../item/presentation/providers/item_providers.dart';
 import '../providers/theme_mode_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -12,6 +13,7 @@ class SettingsScreen extends ConsumerWidget {
     final user = ref.watch(authControllerProvider).valueOrNull;
     final themeMode = ref.watch(themeModeProvider);
     final isSigningOut = ref.watch(authControllerProvider).isLoading;
+    final pendingSync = ref.watch(pendingSyncCountProvider).valueOrNull ?? 0;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -21,6 +23,18 @@ class SettingsScreen extends ConsumerWidget {
             leading: const CircleAvatar(child: Icon(Icons.person_outline)),
             title: Text(user?.email ?? '—'),
             subtitle: const Text('Account'),
+          ),
+          const Divider(),
+          ListTile(
+            leading: Icon(
+              pendingSync == 0 ? Icons.cloud_done_outlined : Icons.cloud_sync_outlined,
+            ),
+            title: const Text('Sync'),
+            subtitle: Text(
+              pendingSync == 0
+                  ? 'Her şey senkronize edildi'
+                  : '$pendingSync değişiklik senkronize edilmeyi bekliyor',
+            ),
           ),
           const Divider(),
           ListTile(

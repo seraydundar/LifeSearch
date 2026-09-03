@@ -1,26 +1,31 @@
 import 'dart:io';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:uuid/uuid.dart';
 
 import '../../../../core/error/failure.dart';
 import '../../domain/entities/item.dart';
-import '../../domain/repositories/item_repository.dart';
 
-class SupabaseItemRepository implements ItemRepository {
-  SupabaseItemRepository(this._client);
+/// Talks to Supabase directly. Every write takes an explicit `id` supplied
+/// by the caller (`OfflineItemRepository`) rather than generating its own —
+/// that's what makes replaying a queued sync operation idempotent: pushing
+/// the same `id` twice upserts instead of duplicating (requirements doc,
+/// rules 16-17).
+///
+/// Nothing outside `features/item/data` should import this directly —
+/// screens/controllers depend on `ItemRepository`.
+class RemoteItemDataSource {
+  RemoteItemDataSource(this._client);
 
   final SupabaseClient _client;
   static const _bucket = 'item-files';
-  static const _uuid = Uuid();
 
-  String get _userId {
+  String get userId {
     final id = _client.auth.currentUser?.id;
     if (id == null) throw const AuthFailure('Oturum bulunamadı.');
     return id;
   }
 
-  Item _fromRow(Map<String, dynamic> row) => Item(
+  Item rowToItem(Map<String, dynamic> row) => Item(
         id: row['id'] as String,
         type: ItemTypeX.fromDbValue(row['type'] as String),
         title: row['title'] as String?,
@@ -33,17 +38,12 @@ class SupabaseItemRepository implements ItemRepository {
         createdAt: DateTime.parse(row['created_at'] as String),
       );
 
-  @override
-  Stream<List<Item>> watchItems() {
-    return _client
-        .from('items')
-        .stream(primaryKey: ['id'])
-        .eq('user_id', _userId)
-        .order('created_at')
-        .map((rows) => rows.reversed.map(_fromRow).toList());
+  /// One-shot snapshot of every item the user has — used by `SyncService`
+  /// to reconcile the local cache, not by the UI directly.
+  Future<List<Map<String, dynamic>>> fetchAllRows() {
+    return _client.from('items').select().eq('user_id', userId).order('created_at');
   }
 
-  @override
   Future<String> fetchNoteContent(String itemId) async {
     final row = await _client
         .from('item_contents')
@@ -53,32 +53,36 @@ class SupabaseItemRepository implements ItemRepository {
     return (row?['raw_text'] as String?) ?? '';
   }
 
-  @override
-  Future<Item> createNote({required String title, required String content}) async {
-    final id = _uuid.v4();
+  Future<void> createNote({
+    required String id,
+    required String title,
+    required String content,
+  }) async {
     try {
-      await _client.from('items').insert({
+      await _client.from('items').upsert({
         'id': id,
-        'user_id': _userId,
+        'user_id': userId,
         'type': ItemType.note.dbValue,
         'title': title,
         'processing_status': 'completed', // notes need no AI pipeline to be "ready"
       });
       try {
-        await _client.from('item_contents').insert({'item_id': id, 'raw_text': content});
+        await _client.from('item_contents').upsert(
+          {'item_id': id, 'raw_text': content},
+          onConflict: 'item_id',
+        );
       } catch (_) {
-        // Compensate: don't leave a note item with no content behind.
+        // Compensate: don't leave a note item with no content behind. Only
+        // safe because `id` is caller-owned — retrying the whole op later
+        // just recreates both rows from scratch.
         await _client.from('items').delete().eq('id', id);
         rethrow;
       }
-      final row = await _client.from('items').select().eq('id', id).single();
-      return _fromRow(row);
     } on PostgrestException catch (e) {
       throw UnexpectedFailure('Not kaydedilemedi: ${e.message}');
     }
   }
 
-  @override
   Future<void> updateNote({
     required String itemId,
     required String title,
@@ -92,26 +96,29 @@ class SupabaseItemRepository implements ItemRepository {
     }
   }
 
-  @override
-  Future<Item> uploadFile({
+  Future<void> uploadFile({
+    required String id,
     required String localFilePath,
     required String originalFilename,
     required String mimeType,
     required ItemType type,
   }) async {
-    final id = _uuid.v4();
-    final storagePath = '$_userId/$id/$originalFilename';
+    final storagePath = '$userId/$id/$originalFilename';
 
     try {
-      await _client.storage.from(_bucket).upload(storagePath, File(localFilePath));
+      await _client.storage.from(_bucket).upload(
+            storagePath,
+            File(localFilePath),
+            fileOptions: const FileOptions(upsert: true),
+          );
     } on StorageException catch (e) {
       throw UnexpectedFailure('Dosya yüklenemedi: ${e.message}');
     }
 
     try {
-      await _client.from('items').insert({
+      await _client.from('items').upsert({
         'id': id,
-        'user_id': _userId,
+        'user_id': userId,
         'type': type.dbValue,
         'title': originalFilename,
         'original_filename': originalFilename,
@@ -124,17 +131,12 @@ class SupabaseItemRepository implements ItemRepository {
       await _client.storage.from(_bucket).remove([storagePath]); // don't leave an orphan file
       throw UnexpectedFailure('İçerik kaydedilemedi. Lütfen tekrar dene.');
     }
-
-    final row = await _client.from('items').select().eq('id', id).single();
-    return _fromRow(row);
   }
 
-  @override
   Future<String> getSignedUrl(String storagePath) {
     return _client.storage.from(_bucket).createSignedUrl(storagePath, 60 * 10);
   }
 
-  @override
   Future<void> setFavorite(String itemId, bool favorite) async {
     try {
       await _client.from('items').update({'favorite': favorite}).eq('id', itemId);
@@ -143,13 +145,12 @@ class SupabaseItemRepository implements ItemRepository {
     }
   }
 
-  @override
-  Future<void> deleteItem(Item item) async {
-    if (item.storagePath != null) {
-      await _client.storage.from(_bucket).remove([item.storagePath!]);
+  Future<void> deleteItem({required String itemId, String? storagePath}) async {
+    if (storagePath != null) {
+      await _client.storage.from(_bucket).remove([storagePath]);
     }
     try {
-      await _client.from('items').delete().eq('id', item.id);
+      await _client.from('items').delete().eq('id', itemId);
     } on PostgrestException catch (e) {
       throw UnexpectedFailure('Silinemedi: ${e.message}');
     }
