@@ -70,7 +70,9 @@ class OfflineItemRepository implements ItemRepository {
       userId: _userId,
       type: ItemType.note.dbValue,
       title: Value(title),
-      processingStatus: const Value('completed'),
+      // Chunked/embedded by the backend (Phase 4), same as PDFs — flips
+      // to 'completed' once that job finishes, not immediately.
+      processingStatus: const Value('pending'),
       createdAt: now,
       noteContent: Value(content),
       syncStatus: const Value('pending'),
@@ -86,7 +88,7 @@ class OfflineItemRepository implements ItemRepository {
       id: id,
       type: ItemType.note,
       title: title,
-      processingStatus: 'completed',
+      processingStatus: 'pending',
       favorite: false,
       createdAt: now,
     );

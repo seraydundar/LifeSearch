@@ -20,6 +20,14 @@ class Settings(BaseSettings):
 
     # Supabase / Postgres
     supabase_url: str = Field(default="")
+    # The publishable/anon key — used as the `apikey` header on every
+    # Supabase request the backend makes, including verifying a user's
+    # access token via GET /auth/v1/user (see core/security.py). Safe to
+    # share; it's the same key the Flutter app ships with.
+    supabase_anon_key: str = Field(default="")
+    # Only needed for admin-level operations that must bypass RLS — none
+    # of the Phase 4 pipeline does; every request is scoped by the calling
+    # user's own JWT instead. Keep unset until something actually needs it.
     supabase_service_role_key: str = Field(default="")
     database_url: str = Field(default="")
 
@@ -27,9 +35,6 @@ class Settings(BaseSettings):
     ai_provider: str = Field(default="openai")  # openai | gemini | local
     openai_api_key: str = Field(default="")
     gemini_api_key: str = Field(default="")
-
-    # Auth
-    jwt_secret: str = Field(default="")
 
     # CORS
     allowed_origins: list[str] = Field(default_factory=lambda: ["*"])

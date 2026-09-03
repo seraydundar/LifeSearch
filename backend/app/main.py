@@ -6,14 +6,15 @@ to Supabase directly for plain CRUD + auth, and to this service for
 anything that needs an AI provider — so provider API keys never live in
 the mobile app.
 
-Only a health check is wired up for now. Feature routers under
-`app/api/*` are scaffolded but intentionally not included yet — they get
-wired in starting Phase 4 of the roadmap (see docs/requirements.md).
+Phase 4 wires up the AI processing pipeline (`/ai/process-item`). Auth,
+items and search routers are still scaffolding — they land in later
+phases (see docs/requirements.md).
 """
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.ai.routes import router as ai_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -40,6 +41,8 @@ async def health_check() -> dict:
     return {"status": "ok", "environment": settings.environment}
 
 
-# Feature routers are added here as each phase lands, e.g.:
+app.include_router(ai_router)
+
+# Remaining routers are added here as each phase lands, e.g.:
 # from app.api.items.routes import router as items_router
 # app.include_router(items_router)

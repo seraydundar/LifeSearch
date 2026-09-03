@@ -1,11 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/database/database_provider.dart';
+import '../../../../core/network/api_client_provider.dart';
 import '../../../../core/network/connectivity_provider.dart';
 import '../../../../core/network/supabase_client_provider.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../data/local/item_local_data_source.dart';
 import '../../data/local/sync_queue_data_source.dart';
+import '../../data/remote/ai_processing_trigger.dart';
 import '../../data/remote/remote_item_data_source.dart';
 import '../../data/repositories/offline_item_repository.dart';
 import '../../data/sync/sync_service.dart';
@@ -14,6 +16,10 @@ import '../../domain/repositories/item_repository.dart';
 
 final remoteItemDataSourceProvider = Provider<RemoteItemDataSource>((ref) {
   return RemoteItemDataSource(ref.watch(supabaseClientProvider));
+});
+
+final aiProcessingTriggerProvider = Provider<AiProcessingTrigger>((ref) {
+  return AiProcessingTrigger(ref.watch(apiClientProvider));
 });
 
 final itemLocalDataSourceProvider = Provider<ItemLocalDataSource>((ref) {
@@ -32,6 +38,7 @@ final syncServiceProvider = Provider<SyncService>((ref) {
     local: ref.watch(itemLocalDataSourceProvider),
     remote: ref.watch(remoteItemDataSourceProvider),
     queue: ref.watch(syncQueueDataSourceProvider),
+    aiTrigger: ref.watch(aiProcessingTriggerProvider),
   );
 
   final onlineSub = ref.listen(isOnlineProvider, (previous, next) {

@@ -11,6 +11,15 @@ class Env {
   static String get supabaseUrl => _require('SUPABASE_URL');
   static String get supabaseAnonKey => _require('SUPABASE_ANON_KEY');
 
+  /// The FastAPI AI service's base URL. Optional on purpose — AI
+  /// processing is an enhancement, not something the app depends on to
+  /// function (requirements doc, rule 15: assume AI operations can fail).
+  /// Empty/unset means "AI processing disabled", not an error.
+  static String? get backendUrl {
+    final value = dotenv.env['BACKEND_URL'];
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
   static String _require(String key) {
     final value = dotenv.env[key];
     if (value == null || value.isEmpty) {

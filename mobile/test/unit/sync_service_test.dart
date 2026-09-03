@@ -5,6 +5,7 @@ import 'package:lifesearch/core/database/app_database.dart';
 import 'package:lifesearch/core/error/failure.dart';
 import 'package:lifesearch/features/item/data/local/item_local_data_source.dart';
 import 'package:lifesearch/features/item/data/local/sync_queue_data_source.dart';
+import 'package:lifesearch/features/item/data/remote/ai_processing_trigger.dart';
 import 'package:lifesearch/features/item/data/remote/remote_item_data_source.dart';
 import 'package:lifesearch/features/item/data/sync/sync_service.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
@@ -26,7 +27,13 @@ void main() {
     remote = _MockRemote();
     when(() => remote.userId).thenReturn('user-1');
     when(() => remote.fetchAllRows()).thenAnswer((_) async => []);
-    sync = SyncService(local: local, remote: remote, queue: queue);
+    // BACKEND_URL unset -> null Dio -> triggerProcessing() is a no-op.
+    sync = SyncService(
+      local: local,
+      remote: remote,
+      queue: queue,
+      aiTrigger: AiProcessingTrigger(null),
+    );
   });
 
   tearDown(() => db.close());

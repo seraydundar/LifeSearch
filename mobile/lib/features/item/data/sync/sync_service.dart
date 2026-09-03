@@ -8,7 +8,14 @@ import '../../../../core/error/failure.dart';
 import '../../domain/entities/item.dart';
 import '../local/item_local_data_source.dart';
 import '../local/sync_queue_data_source.dart';
+import '../remote/ai_processing_trigger.dart';
 import '../remote/remote_item_data_source.dart';
+
+/// Operation types (and, for uploads, item types) the backend's Phase 4
+/// pipeline actually supports — see backend/app/services/processing_pipeline.py
+/// SUPPORTED_TYPES. Everything else (images today; audio/URL later) just
+/// isn't wired up yet, so there's nothing to trigger.
+const _aiSupportedUploadTypes = {'pdf'};
 
 /// Bridges the local cache and Supabase in both directions:
 ///  - pulls the server's current state into `LocalItems` (skipping any item
@@ -23,13 +30,16 @@ class SyncService {
     required ItemLocalDataSource local,
     required RemoteItemDataSource remote,
     required SyncQueueDataSource queue,
+    required AiProcessingTrigger aiTrigger,
   })  : _local = local,
         _remote = remote,
-        _queue = queue;
+        _queue = queue,
+        _aiTrigger = aiTrigger;
 
   final ItemLocalDataSource _local;
   final RemoteItemDataSource _remote;
   final SyncQueueDataSource _queue;
+  final AiProcessingTrigger _aiTrigger;
 
   bool _isSyncing = false;
   bool _syncAgain = false;
@@ -159,6 +169,9 @@ class SyncService {
         if (entry.operationType != 'delete_item') {
           await _local.markSynced(entry.itemId);
         }
+        if (_shouldTriggerAi(entry.operationType, payload)) {
+          unawaited(_aiTrigger.triggerProcessing(entry.itemId));
+        }
       } catch (e) {
         await _queue.recordFailure(entry.id, e.toString());
         await _local.markFailed(entry.itemId);
@@ -166,5 +179,13 @@ class SyncService {
         // block every other pending change.
       }
     }
+  }
+
+  bool _shouldTriggerAi(String operationType, Map<String, dynamic> payload) {
+    return switch (operationType) {
+      'create_note' || 'update_note' => true,
+      'upload_file' => _aiSupportedUploadTypes.contains(payload['type']),
+      _ => false,
+    };
   }
 }

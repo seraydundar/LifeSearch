@@ -4,6 +4,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# B008: FastAPI's `Depends(...)` is meant to be called in argument
+# defaults — that's the framework's own documented pattern, not a bug.
+ignore = ["B008"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

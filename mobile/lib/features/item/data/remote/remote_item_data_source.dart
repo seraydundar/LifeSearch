@@ -64,7 +64,8 @@ class RemoteItemDataSource {
         'user_id': userId,
         'type': ItemType.note.dbValue,
         'title': title,
-        'processing_status': 'completed', // notes need no AI pipeline to be "ready"
+        // Chunked/embedded by the backend (Phase 4), same as PDFs.
+        'processing_status': 'pending',
       });
       try {
         await _client.from('item_contents').upsert(

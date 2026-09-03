@@ -50,6 +50,9 @@ class ItemLocalDataSource {
         title: Value(title),
         noteContent: Value(content),
         syncStatus: Value(syncStatus),
+        // The content changed, so any existing embeddings are stale —
+        // back to 'pending' until the AI pipeline re-processes it.
+        processingStatus: const Value('pending'),
       ),
     );
   }

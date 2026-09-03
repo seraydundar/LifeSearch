@@ -43,14 +43,28 @@ cd backend
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env   # fill in Supabase + AI provider keys
+cp .env.example .env   # fill in Supabase URL/anon key + an AI provider key
 uvicorn app.main:app --reload
 ```
 
-> macOS/Homebrew note: if `python3 -m venv` fails with a `pyexpat` /
-> `ensurepip` error, it's a known Homebrew Python + system `libexpat`
-> mismatch. Run `brew install expat` then prefix venv creation with
+> macOS/Homebrew note: Homebrew's Python and macOS's system `libexpat`
+> disagree on ABI, which breaks anything importing `xml`/`pyexpat` —
+> `venv` creation, and later `pypdf` (used for PDF text extraction). Run
+> `brew install expat` once, then prefix every backend command —
+> `venv` creation, `uvicorn`, `pytest`, `ruff` — with
 > `DYLD_LIBRARY_PATH="$(brew --prefix expat)/lib"`.
+
+For AI processing (`POST /ai/process-item`) to actually produce
+embeddings, `AI_PROVIDER=openai` and `OPENAI_API_KEY` need to be set in
+`backend/.env`. Without a key, the endpoint still responds and the item's
+`processing_status` correctly flips to `failed` with a clear
+`error_message` on its `processing_jobs` row — it degrades, it doesn't
+crash.
+
+For the mobile app to reach a locally-running backend, set
+`BACKEND_URL` in `mobile/.env` — `http://127.0.0.1:8000` works from the
+iOS Simulator (shares the Mac's network stack); Android emulator needs
+`http://10.0.2.2:8000`; a physical device needs the Mac's LAN IP.
 
 ### Local Postgres + pgvector (optional, for backend tests)
 
@@ -68,7 +82,7 @@ environment, never in the Flutter app (see requirements doc, section 36).
 
 ```bash
 # Backend
-cd backend && .venv/bin/pytest
+cd backend && DYLD_LIBRARY_PATH="$(brew --prefix expat)/lib" .venv/bin/pytest
 
 # Mobile
 cd mobile && flutter test
