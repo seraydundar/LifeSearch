@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.ai.routes import router as ai_router
+from app.api.search.routes import router as search_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -42,6 +43,7 @@ async def health_check() -> dict:
 
 
 app.include_router(ai_router)
+app.include_router(search_router)
 
 # Remaining routers are added here as each phase lands, e.g.:
 # from app.api.items.routes import router as items_router

@@ -23,8 +23,8 @@ class HomeScreen extends ConsumerWidget {
             Text('Good morning 👋', style: theme.textTheme.headlineSmall),
             const SizedBox(height: 20),
             TextField(
-              readOnly: true, // becomes real search input in Phase 5
-              onTap: () {}, // search UI itself lands with Phase 5
+              readOnly: true, // typing happens on the dedicated Search screen
+              onTap: () => context.push('/search'),
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search),
                 hintText: 'Search your life...',

@@ -10,6 +10,7 @@ import '../../features/item/domain/entities/item.dart';
 import '../../features/item/presentation/screens/item_detail_screen.dart';
 import '../../features/item/presentation/screens/note_editor_screen.dart';
 import '../../features/library/presentation/screens/library_screen.dart';
+import '../../features/search/presentation/screens/search_screen.dart';
 import '../../features/settings/presentation/screens/settings_screen.dart';
 import 'scaffold_with_nav_bar.dart';
 
@@ -20,6 +21,7 @@ abstract final class AppRoutes {
   static const library = '/library';
   static const settings = '/settings';
   static const newNote = '/item/new';
+  static const search = '/search';
 }
 
 /// Central navigation graph. Auth-gated: signed-out users can only reach
@@ -60,6 +62,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/item/:id',
         builder: (context, state) => ItemDetailScreen(item: state.extra as Item),
+      ),
+      GoRoute(
+        path: AppRoutes.search,
+        builder: (context, state) => const SearchScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>

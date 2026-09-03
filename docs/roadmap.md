@@ -10,7 +10,7 @@ Geliştirme Kuralları").
 | **2** | Not oluşturma/düzenleme/silme, image/PDF upload, item list/detail, favorites | Hayır (Supabase doğrudan) |
 | **3** ✅ | Drift ile local DB (items, notes, favorites, recent searches), sync_status + pending operations + retry | Hayır |
 | **4** ✅ | FastAPI backend kurulur. İlk pipeline: Note/PDF → text → chunking → embedding → pgvector | **Evet — burada başlar** |
-| **5** | Semantic Search: query → embedding → pgvector → top-K chunk → items | Evet |
+| **5** ✅ | Semantic Search: query → embedding → pgvector → top-K chunk → items | Evet |
 | **6** | Image Intelligence: camera, image upload, OCR, image description/embedding | Evet |
 | **7** | RAG Chat ("Ask AI"): yalnızca kullanıcının arşivinden, kaynak göstererek cevap | Evet |
 | **8** | Audio + URL: voice note, speech-to-text, URL extraction/webpage processing | Evet |
@@ -26,19 +26,20 @@ cevap verir. Bu senaryo çalışıyorsa MVP tamamlanmıştır (Faz 7 sonu).
 
 ## Şu an neredeyiz
 
-Faz 1-4 tamamlandı. Auth, offline-first not/görsel/PDF CRUD (Drift + sync
-queue), ve şimdi de FastAPI backend'de gerçek bir AI pipeline: not/PDF
-oluşturulup senkronize olduğunda `SyncService` backend'in
-`/ai/process-item` uç noktasını tetikliyor, backend kullanıcının kendi
-Supabase JWT'siyle (RLS altında, admin key olmadan) içeriği çekip
-normalize ediyor, chunk'lıyor, embedding üretip `chunks` tablosuna
-(pgvector) yazıyor, `items.processing_status` ve `processing_jobs`
-satırını güncelliyor.
+Faz 1-5 tamamlandı. Auth, offline-first not/görsel/PDF CRUD (Drift + sync
+queue), FastAPI'de gerçek bir AI pipeline (not/PDF → chunk → embedding →
+pgvector), ve şimdi de gerçek semantic search: ayrı bir arama ekranı,
+debounce'lu sorgu, backend'in `match_chunks` RPC'si (pgvector cosine
+similarity, `auth.uid()` ile RLS-scoped) üzerinden top-K sonuç, ve local
+Drift'te tutulan arama geçmişi.
 
-Canlıda doğrulandı: gerçek bir kullanıcı token'ıyla uçtan uca test edildi
-— auth doğrulama, background task, job tracking, ve (OPENAI_API_KEY
-olmadan) zarif hata yönetimi hepsi çalışıyor. Gerçek embedding üretimi
-için `backend/.env`'e bir OpenAI key girilmesi gerekiyor.
+Canlıda doğrulandı: `match_chunks` fonksiyonu gerçek bir kullanıcı
+token'ıyla, üretilmiş (fake) embedding'lerle test edildi — sıralama ve
+RLS izolasyonu doğru çalışıyor. `/search` endpoint'i de OPENAI_API_KEY
+olmadan 503 ile zarif şekilde dönüyor (500 çökme değil). Gerçek anlamsal
+sonuçlar için `backend/.env`'e bir OpenAI key girilmesi gerekiyor —
+pipeline'ın kendisi hazır ve test edilmiş durumda.
 
-Sıradaki adım: **Faz 5 — Semantic Search** (ana ekrandaki arama kutusunu
-query embedding + pgvector similarity'e bağlamak).
+Sıradaki adım: **Faz 6 — Image Intelligence** (kamera, OCR, görsel
+açıklama/embedding — "geçen ay baktığım monitör" gibi sorguları
+mümkün kılar).

@@ -7,6 +7,12 @@ sealed class Failure {
   const Failure(this.message);
 
   final String message;
+
+  // Every call site that renders an error does `error.toString()` (e.g.
+  // `context.showErrorSnackBar(error.toString())`) — without this override
+  // that prints "Instance of 'AuthFailure'" instead of the actual message.
+  @override
+  String toString() => message;
 }
 
 class AuthFailure extends Failure {
