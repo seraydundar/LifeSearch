@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../shared/extensions/build_context_x.dart';
+import '../../../search/domain/entities/search_result.dart';
+import '../../../search/presentation/providers/search_providers.dart';
 import '../../domain/entities/item.dart';
 import '../providers/item_providers.dart';
 import '../widgets/item_type_icon.dart';
@@ -86,6 +88,23 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
+  void _openRelated(SearchResult related) {
+    final route = related.itemType == ItemType.note
+        ? '/item/${related.itemId}/note'
+        : '/item/${related.itemId}';
+    context.push(
+      route,
+      extra: Item(
+        id: related.itemId,
+        type: related.itemType,
+        title: related.itemTitle,
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime.now(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isImage = _item.type == ItemType.image || _item.type == ItemType.screenshot;
@@ -156,6 +175,8 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
               icon: const Icon(Icons.open_in_new),
               label: const Text('Dosyayı Aç'),
             ),
+          const SizedBox(height: 24),
+          _RelatedSection(itemId: _item.id, onTap: _openRelated),
         ],
       ),
     );
@@ -168,6 +189,84 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
       'failed' => 'İşlenemedi',
       _ => status,
     };
+  }
+}
+
+/// Horizontal strip of semantically related items (requirements doc,
+/// section 47) — hidden entirely while loading/empty/errored so it never
+/// distracts from the item's own content.
+class _RelatedSection extends ConsumerWidget {
+  const _RelatedSection({required this.itemId, required this.onTap});
+
+  final String itemId;
+  final ValueChanged<SearchResult> onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final related = ref.watch(relatedItemsProvider(itemId));
+    return related.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (items) {
+        if (items.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('İlgili İçerikler', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 96,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: items.length,
+                separatorBuilder: (context, index) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  return _RelatedCard(result: item, onTap: () => onTap(item));
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _RelatedCard extends StatelessWidget {
+  const _RelatedCard({required this.result, required this.onTap});
+
+  final SearchResult result;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 140,
+      child: Card(
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(itemTypeIcon(result.itemType), size: 20),
+                const SizedBox(height: 8),
+                Text(
+                  result.itemTitle ?? 'Untitled',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

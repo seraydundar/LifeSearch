@@ -25,7 +25,7 @@ class FakeSearchRepo:
     def __init__(self, matches):
         self._matches = matches
 
-    async def match_chunks(self, query_embedding, *, match_count=40):
+    async def match_chunks_hybrid(self, query_embedding, query_text, *, match_count=40, **filters):
         return self._matches
 
 
@@ -39,6 +39,7 @@ async def test_answers_using_retrieved_sources():
                 "item_title": "Docker Notes",
                 "content": "Docker Compose lets you define multi-container apps.",
                 "similarity": 0.9,
+                "score": 0.9,
             }
         ]
     )
@@ -76,6 +77,7 @@ async def test_system_prompt_forbids_answering_outside_the_sources():
                 "item_title": "A",
                 "content": "x",
                 "similarity": 0.5,
+                "score": 0.5,
             }
         ]
     )

@@ -14,7 +14,7 @@ Geliştirme Kuralları").
 | **6** ✅ | Image Intelligence: camera, image upload, OCR, image description/embedding | Evet |
 | **7** ✅ | RAG Chat ("Ask AI"): yalnızca kullanıcının arşivinden, kaynak göstererek cevap | Evet |
 | **8** ✅ | Audio + URL: voice note, speech-to-text, URL extraction/webpage processing | Evet |
-| **9** | Advanced Search: hybrid search, metadata/doğal dil filtreleri, reranking, related items, smart collections, duplicate detection | Evet |
+| **9** 🟡 | Advanced Search: hybrid search (RRF), metadata filtreleri, related items | Evet |
 
 ## MVP kabul kriteri (bölüm 66)
 
@@ -50,7 +50,35 @@ key olmadığından embedding/transkript/RAG'ın gerçek kalitesi henüz canlı
 görülmedi — pipeline'ın tamamı sahte (fake) provider'larla uçtan uca
 test edilmiş durumda.
 
-Sıradaki adım: **bir OpenAI key ekleyip Faz 4-8'in tamamını gerçek
-veriyle uçtan uca görmek** — ya da doğrudan **Faz 9 — Advanced Search**
-(hybrid search, doğal dil filtreleri, related items, smart collections,
-duplicate detection).
+## Faz 9 — Advanced Search (kısmi 🟡)
+
+Bölüm 21/47'deki üç alt-başlıktan ikisi tamamlandı; "Natural Language
+Filtering", "Smart Collections" ve "Duplicate Detection" bilinçli olarak
+dışarıda bırakıldı (dokümanın kendisi bunları "ileri aşama" olarak
+işaretliyor; Smart Collections ayrıca hiç var olmayan bir Collections
+özelliğine bağımlı).
+
+- **Hybrid search**: pgvector cosine similarity + Postgres full-text
+  search (`tsvector`/`ts_rank`), Reciprocal Rank Fusion (RRF) ile
+  birleştiriliyor — `match_chunks_hybrid` RPC'si (`infra/supabase/migrations/0006_hybrid_and_related.sql`).
+  Ham skorları `0.7*similarity + 0.3*ts_rank` gibi ağırlıklı toplamak
+  yerine RRF seçildi çünkü iki skor karşılaştırılabilir bir ölçekte değil.
+- **Metadata filtreleri**: Search sekmesinde tür (Images/Documents/Notes/
+  Links/Audio) ve tarih (Bugün/Geçen hafta/Geçen ay) filtreleri — seçim
+  değiştiğinde son sorgu aynı filtrelerle otomatik tekrar çalışıyor
+  (`SearchController.researchWithCurrentFilters`).
+- **Related items**: `related_items` RPC'si (item'ın ilk chunk'ını
+  karşılaştırma vektörü olarak kullanan bir `lateral` join) ile item
+  detay ekranında "İlgili İçerikler" yatay listesi — sorgu metni
+  gerektirmiyor, AI provider key'i olmadan da (503 yerine) çalışıyor.
+
+Backend: 39 test yeşil. Mobile: `flutter analyze` temiz, 25 test yeşil,
+uygulama simülatörde (iPhone 17 Pro) regresyonsuz derlenip açılıyor —
+mevcut not/görsel verisi korunmuş durumda görüldü. Gerçek OpenAI key
+olmadığından hybrid arama ve related items'ın gerçek embedding/metin
+kalitesiyle canlı davranışı henüz görülmedi (REST seviyesinde sahte
+ama kontrollü embedding'lerle doğrulandı).
+
+Sıradaki adım: **bir OpenAI key ekleyip Faz 4-9'un tamamını gerçek
+veriyle uçtan uca görmek** — ya da Faz 9'un bırakılan alt-başlıklarına
+(doğal dil filtreleri, smart collections, duplicate detection) geçmek.
