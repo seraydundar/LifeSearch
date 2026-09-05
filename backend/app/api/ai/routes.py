@@ -7,14 +7,17 @@ admin key — it reuses the caller's own session token, so RLS applies
 exactly as it would if the client made the request itself.
 """
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from ...core.config import get_settings
 from ...core.security import CurrentUser, get_current_user
 from ...repositories.items_repository import SupabaseRestRepository
-from ...schemas.ai import ProcessItemRequest, ProcessItemResponse
+from ...repositories.search_repository import SearchRepository
+from ...schemas.ai import AskRequest, AskResponse, ProcessItemRequest, ProcessItemResponse
+from ...schemas.search import SearchResult
 from ...services.ai_provider import get_ai_provider
 from ...services.processing_pipeline import process_item
+from ...services.rag_service import answer_question
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -33,3 +36,38 @@ async def process_item_endpoint(
         process_item, body.item_id, repo, lambda: get_ai_provider(get_settings())
     )
     return ProcessItemResponse(status="accepted", item_id=body.item_id)
+
+
+@router.post("/ask", response_model=AskResponse)
+async def ask_endpoint(
+    body: AskRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> AskResponse:
+    """RAG chat (requirements doc, section 23): answers only from the
+    user's own archive, always with the sources it used.
+    """
+    try:
+        provider = get_ai_provider(get_settings())
+    except (RuntimeError, NotImplementedError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Ask AI is unavailable: {error}",
+        ) from error
+
+    repo = SearchRepository(user.access_token)
+    result = await answer_question(body.question, repo, provider, limit=body.limit)
+
+    return AskResponse(
+        question=body.question,
+        answer=result["answer"],
+        sources=[
+            SearchResult(
+                item_id=m["item_id"],
+                item_type=m["item_type"],
+                item_title=m.get("item_title"),
+                snippet=m["content"],
+                similarity=m["similarity"],
+            )
+            for m in result["sources"]
+        ],
+    )

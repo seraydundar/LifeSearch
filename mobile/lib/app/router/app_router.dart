@@ -10,7 +10,7 @@ import '../../features/item/domain/entities/item.dart';
 import '../../features/item/presentation/screens/item_detail_screen.dart';
 import '../../features/item/presentation/screens/note_editor_screen.dart';
 import '../../features/library/presentation/screens/library_screen.dart';
-import '../../features/search/presentation/screens/search_screen.dart';
+import '../../features/search/presentation/screens/search_hub_screen.dart';
 import '../../features/settings/presentation/screens/settings_screen.dart';
 import 'scaffold_with_nav_bar.dart';
 
@@ -65,7 +65,7 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: AppRoutes.search,
-        builder: (context, state) => const SearchScreen(),
+        builder: (context, state) => const SearchHubScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>

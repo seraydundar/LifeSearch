@@ -7,7 +7,7 @@ import 'package:lifesearch/core/database/app_database.dart';
 import 'package:lifesearch/core/database/database_provider.dart';
 import 'package:lifesearch/core/error/failure.dart';
 import 'package:lifesearch/features/search/presentation/providers/search_providers.dart';
-import 'package:lifesearch/features/search/presentation/screens/search_screen.dart';
+import 'package:lifesearch/features/search/presentation/screens/search_tab.dart';
 
 import '../fakes/fake_search_repository.dart';
 
@@ -26,7 +26,7 @@ void main() {
         // on success — give it an in-memory db instead of touching a real file.
         appDatabaseProvider.overrideWithValue(AppDatabase.forTesting(NativeDatabase.memory())),
       ],
-      child: const MaterialApp(home: SearchScreen()),
+      child: const MaterialApp(home: Scaffold(body: SearchTab())),
     );
   }
 

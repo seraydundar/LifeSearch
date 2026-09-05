@@ -12,7 +12,7 @@ Geliştirme Kuralları").
 | **4** ✅ | FastAPI backend kurulur. İlk pipeline: Note/PDF → text → chunking → embedding → pgvector | **Evet — burada başlar** |
 | **5** ✅ | Semantic Search: query → embedding → pgvector → top-K chunk → items | Evet |
 | **6** ✅ | Image Intelligence: camera, image upload, OCR, image description/embedding | Evet |
-| **7** | RAG Chat ("Ask AI"): yalnızca kullanıcının arşivinden, kaynak göstererek cevap | Evet |
+| **7** ✅ | RAG Chat ("Ask AI"): yalnızca kullanıcının arşivinden, kaynak göstererek cevap | Evet |
 | **8** | Audio + URL: voice note, speech-to-text, URL extraction/webpage processing | Evet |
 | **9** | Advanced Search: hybrid search, metadata/doğal dil filtreleri, reranking, related items, smart collections, duplicate detection | Evet |
 
@@ -26,21 +26,21 @@ cevap verir. Bu senaryo çalışıyorsa MVP tamamlanmıştır (Faz 7 sonu).
 
 ## Şu an neredeyiz
 
-Faz 1-6 tamamlandı. Auth, offline-first CRUD (Drift + sync queue),
-FastAPI'de gerçek bir AI pipeline (not/PDF/görsel → chunk → embedding →
-pgvector), semantic search (ayrı arama ekranı + `match_chunks` RPC), ve
-şimdi de Image Intelligence: gerçek kamera çekimi (`camera` paketi),
-backend'de tek bir multimodal çağrıyla OCR + görsel açıklama + başlık
-üretimi (GPT-4o-mini vision), üretilen metnin aynı chunk/embed
-pipeline'ına akması.
+Faz 1-7 tamamlandı — dokümanın bölüm 66'da tarif ettiği MVP senaryosunun
+kodu baştan sona yazılmış durumda: register → login → PDF/görsel/not
+ekle → backend işler → embedding oluşur → semantic search bulur →
+Ask AI, kaynak göstererek cevap üretir. `SearchHubScreen` artık
+"Search | Ask AI" sekmeleriyle (bölüm 23) her ikisini de barındırıyor;
+RAG servisi Faz 5'in `semantic_search`'ünü olduğu gibi yeniden kullanıp
+üstüne LLM cevabı ekliyor — retrieval iki kere yazılmadı.
 
 Canlıda doğrulandı: backend uçları (auth, pipeline, search RPC) gerçek
-kullanıcı token'ıyla test edildi; mobile uygulama camera plugin'in native
-iOS entegrasyonuyla birlikte derlenip regresyonsuz çalıştı. Gerçek
-OpenAI key olmadığından görsel analiz/embedding sonuçları henüz canlı
-doğrulanmadı — pipeline mock provider ile test edilmiş, key eklenince
-çalışmaya hazır.
+kullanıcı token'ıyla test edildi; mobile uygulama regresyonsuz derlenip
+çalışıyor (44 backend + 24 mobile test yeşil). Gerçek OpenAI key
+olmadığından embedding/RAG cevaplarının gerçek kalitesi henüz canlı
+görülmedi — tüm pipeline sahte (fake) provider'larla uçtan uca test
+edilmiş, key eklenince çalışmaya hazır.
 
-Sıradaki adım: **Faz 7 — RAG Chat** ("Ask AI" — yalnızca kullanıcının
-arşivinden, kaynak göstererek cevap üretir) — ya da önce bir OpenAI key
-ekleyip Faz 4-6'nın gerçek sonuçlarını uçtan uca görmek.
+Sıradaki adım: **bir OpenAI key ekleyip Faz 4-7'nin tamamını gerçek
+veriyle uçtan uca görmek** (MVP demo senaryosu) — ya da doğrudan
+**Faz 8 — Audio + URL**'e geçmek.
