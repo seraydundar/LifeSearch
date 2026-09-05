@@ -5,7 +5,10 @@ against a specific vendor SDK. Swapping OpenAI for Gemini or a local model
 later means adding one more subclass here — nothing else changes.
 """
 
+import base64
+import json
 from abc import ABC, abstractmethod
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -25,7 +28,12 @@ class AIProvider(ABC):
     async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Batch embed — what the chunking pipeline actually uses."""
 
-    async def analyze_image(self, image_bytes: bytes, mime_type: str) -> dict:
+    async def analyze_image(self, image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+        """Returns `{"title", "description", "ocr_text", "tags"}` — see
+        requirements doc, section 14. `ocr_text` is every piece of visible
+        text transcribed as-is; `description` is what the image actually
+        shows. Both feed the same chunk/embed pipeline as notes and PDFs.
+        """
         raise NotImplementedError("Image analysis lands in Phase 6 (Image Intelligence).")
 
     async def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> str:
@@ -73,6 +81,44 @@ class OpenAIProvider(AIProvider):
         # OpenAI preserves input order in `data`, but sort by index defensively.
         ordered = sorted(response.data, key=lambda d: d.index)
         return [item.embedding for item in ordered]
+
+    async def analyze_image(self, image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+        data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"
+        response = await self._client.chat.completions.create(
+            model=self._text_model,  # gpt-4o-mini reads images too, no separate vision model
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You analyze a photo or screenshot for a personal search app. "
+                        "Respond with strict JSON: "
+                        '{"title": string, "description": string, "ocr_text": string, '
+                        '"tags": [string, ...]}. title is under 8 words. description is '
+                        "1-2 sentences describing what's shown. ocr_text is every piece "
+                        'of visible text transcribed as-is, or "" if there is none. tags '
+                        "are 3-6 short lowercase keywords."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Analyze this image."},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                },
+            ],
+        )
+        try:
+            data = json.loads(response.choices[0].message.content or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        return {
+            "title": data.get("title") or "",
+            "description": data.get("description") or "",
+            "ocr_text": data.get("ocr_text") or "",
+            "tags": data.get("tags") or [],
+        }
 
 
 def get_ai_provider(settings: Settings) -> AIProvider:

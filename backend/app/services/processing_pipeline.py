@@ -1,7 +1,7 @@
-"""Orchestrates the Phase 4 pipeline (requirements doc, section 41):
+"""Orchestrates the AI pipeline (requirements doc, section 41):
 
-    INPUT (note | pdf) -> CONTENT EXTRACTION -> NORMALIZED TEXT
-        -> CHUNKS -> EMBEDDINGS -> VECTOR DB
+    INPUT (note | pdf | image | screenshot) -> CONTENT EXTRACTION
+        -> NORMALIZED TEXT -> CHUNKS -> EMBEDDINGS -> VECTOR DB
 
 Runs as a FastAPI background task (see api/ai/routes.py) so the mobile
 app's request returns immediately — the item's `processing_status` and a
@@ -17,12 +17,14 @@ from .ai_provider import AIProvider
 from .chunking_service import chunk_text
 from .document_service import extract_pdf_text, normalize_text
 from .embedding_service import embed_chunks, format_embedding_literal
+from .ocr_service import extract_text as extract_ocr_text
+from .vision_service import analyze_image
 
 logger = logging.getLogger(__name__)
 
-# Notes + PDFs only for now — images/audio/URLs arrive in Phases 6 and 8
-# with their own extraction step ahead of the same chunk/embed tail.
-SUPPORTED_TYPES = {"note", "pdf"}
+# Audio/URL extraction (Phase 8) is the only thing still missing its own
+# step ahead of the shared chunk/embed tail below.
+SUPPORTED_TYPES = {"note", "pdf", "image", "screenshot"}
 
 
 class UnsupportedItemType(Exception):
@@ -49,18 +51,36 @@ async def process_item(
         item = await repo.get_item(item_id)
         item_type = item["type"]
         if item_type not in SUPPORTED_TYPES:
-            raise UnsupportedItemType(
-                f"Processing for type '{item_type}' isn't implemented yet."
-            )
+            raise UnsupportedItemType(f"Processing for type '{item_type}' isn't implemented yet.")
 
         if item_type == "note":
             raw_text = await repo.get_note_content(item_id)
-        else:  # pdf
+        elif item_type == "pdf":
             storage_path = item.get("storage_path")
             if not storage_path:
                 raise ValueError("PDF item has no storage_path.")
             pdf_bytes = await repo.download_file(storage_path)
             raw_text = extract_pdf_text(pdf_bytes)
+        else:  # image | screenshot
+            storage_path = item.get("storage_path")
+            if not storage_path:
+                raise ValueError("Image item has no storage_path.")
+            image_bytes = await repo.download_file(storage_path)
+            mime_type = item.get("mime_type") or "image/jpeg"
+
+            analysis = await analyze_image(image_bytes, mime_type, provider)
+            ocr_text = extract_ocr_text(analysis)
+            description = analysis["description"]
+
+            # AI-generated title/description replace the filename-based
+            # placeholder set at upload time (requirements doc, section 14).
+            await repo.update_item_metadata(
+                item_id, title=analysis["title"], description=description
+            )
+            await repo.replace_item_content(
+                item_id, raw_text=description, ocr_text=ocr_text, ai_description=description
+            )
+            raw_text = f"{description}\n\n{ocr_text}".strip()
 
         text = normalize_text(raw_text)
         if not text:

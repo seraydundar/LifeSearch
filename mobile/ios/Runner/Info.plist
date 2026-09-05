@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>LifeSearch needs camera access to let you add photos to your library.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>LifeSearch needs microphone access to record voice notes.</string>
 </dict>
 </plist>

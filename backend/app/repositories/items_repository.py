@@ -90,6 +90,66 @@ class SupabaseRestRepository:
             )
             insert_response.raise_for_status()
 
+    async def update_item_metadata(
+        self, item_id: str, *, title: str | None = None, description: str | None = None
+    ) -> None:
+        """AI-generated title/description for an image (requirements doc,
+        section 14's Dell-monitor example) — only overwrites the fields
+        that are actually given.
+        """
+        fields: dict[str, Any] = {}
+        if title:
+            fields["title"] = title
+        if description:
+            fields["description"] = description
+        if not fields:
+            return
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.patch(
+                f"{self._base_url}/rest/v1/items",
+                params={"id": f"eq.{item_id}"},
+                headers={**self._headers, "Content-Type": "application/json"},
+                json=fields,
+            )
+            response.raise_for_status()
+
+    async def replace_item_content(
+        self,
+        item_id: str,
+        *,
+        raw_text: str | None = None,
+        ocr_text: str | None = None,
+        ai_description: str | None = None,
+    ) -> None:
+        """Same idempotent replace pattern as `replace_chunks` — re-running
+        the pipeline for an item (e.g. after a fix) shouldn't leave two
+        `item_contents` rows behind. Notes write their body once at
+        creation instead and never call this.
+        """
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            delete_response = await client.delete(
+                f"{self._base_url}/rest/v1/item_contents",
+                params={"item_id": f"eq.{item_id}"},
+                headers=self._headers,
+            )
+            delete_response.raise_for_status()
+
+            insert_response = await client.post(
+                f"{self._base_url}/rest/v1/item_contents",
+                headers={
+                    **self._headers,
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal",
+                },
+                json={
+                    "item_id": item_id,
+                    "raw_text": raw_text,
+                    "ocr_text": ocr_text,
+                    "ai_description": ai_description,
+                },
+            )
+            insert_response.raise_for_status()
+
     async def update_item_status(self, item_id: str, status: str) -> None:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.patch(

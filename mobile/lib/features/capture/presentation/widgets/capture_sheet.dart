@@ -2,15 +2,16 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../../shared/extensions/build_context_x.dart';
 import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
+import '../screens/camera_screen.dart';
 
-/// The "+" flow from the requirements doc (section 13). Photo capture,
-/// audio recording and link saving are Phase 6/8 work — shown but disabled
-/// for now so the full product shape is visible without pretending they
-/// already work.
+/// The "+" flow from the requirements doc (section 13). Audio recording
+/// and link saving are still Phase 8 work — shown but disabled so the
+/// full product shape is visible without pretending they already work.
 Future<void> showCaptureSheet(BuildContext context) {
   return showModalBottomSheet(
     context: context,
@@ -44,6 +45,28 @@ class _CaptureSheet extends ConsumerWidget {
           originalFilename: file.name,
           mimeType: _guessMimeType(file.extension),
           type: itemType,
+        );
+
+    if (!context.mounted) return;
+    if (!ok) {
+      final error = ref.read(captureControllerProvider).error;
+      context.showErrorSnackBar(error?.toString() ?? 'Yükleme başarısız oldu.');
+    }
+  }
+
+  Future<void> _takePhoto(BuildContext context, WidgetRef ref) async {
+    final path = await Navigator.of(context, rootNavigator: true).push<String>(
+      MaterialPageRoute(builder: (_) => const CameraScreen()),
+    );
+    if (!context.mounted) return;
+    Navigator.of(context).pop(); // close the sheet now that we're back from the camera
+    if (path == null) return; // backed out without taking a photo
+
+    final ok = await ref.read(captureControllerProvider.notifier).uploadFile(
+          localFilePath: path,
+          originalFilename: p.basename(path),
+          mimeType: 'image/jpeg',
+          type: ItemType.image,
         );
 
     if (!context.mounted) return;
@@ -109,7 +132,12 @@ class _CaptureSheet extends ConsumerWidget {
                 itemType: ItemType.pdf,
               ),
             ),
-            const _CaptureTile(icon: Icons.camera_alt_outlined, label: 'Take Photo', comingSoon: 'Faz 6'),
+            _CaptureTile(
+              icon: Icons.camera_alt_outlined,
+              label: 'Take Photo',
+              enabled: !isUploading,
+              onTap: () => _takePhoto(context, ref),
+            ),
             const _CaptureTile(icon: Icons.mic_none_outlined, label: 'Record Audio', comingSoon: 'Faz 8'),
             const _CaptureTile(icon: Icons.link, label: 'Add Link', comingSoon: 'Faz 8'),
           ],

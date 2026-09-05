@@ -123,6 +123,10 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
               style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 4),
           Text(itemTypeLabel(_item.type), style: Theme.of(context).textTheme.bodyMedium),
+          if (_item.description != null && _item.description!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(_item.description!, style: Theme.of(context).textTheme.bodyMedium),
+          ],
           const SizedBox(height: 16),
           if (_item.processingStatus != 'completed')
             Chip(label: Text(_processingLabel(_item.processingStatus))),

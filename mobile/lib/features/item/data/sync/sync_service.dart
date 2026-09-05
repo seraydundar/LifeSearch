@@ -11,11 +11,10 @@ import '../local/sync_queue_data_source.dart';
 import '../remote/ai_processing_trigger.dart';
 import '../remote/remote_item_data_source.dart';
 
-/// Operation types (and, for uploads, item types) the backend's Phase 4
-/// pipeline actually supports — see backend/app/services/processing_pipeline.py
-/// SUPPORTED_TYPES. Everything else (images today; audio/URL later) just
-/// isn't wired up yet, so there's nothing to trigger.
-const _aiSupportedUploadTypes = {'pdf'};
+/// Upload item types the backend's AI pipeline actually supports — see
+/// backend/app/services/processing_pipeline.py SUPPORTED_TYPES. Audio/URL
+/// (Phase 8) aren't wired up yet, so there's nothing to trigger for those.
+const _aiSupportedUploadTypes = {'pdf', 'image', 'screenshot'};
 
 /// Bridges the local cache and Supabase in both directions:
 ///  - pulls the server's current state into `LocalItems` (skipping any item
