@@ -6,6 +6,7 @@ later means adding one more subclass here — nothing else changes.
 """
 
 import base64
+import io
 import json
 from abc import ABC, abstractmethod
 from typing import Any
@@ -37,7 +38,8 @@ class AIProvider(ABC):
         raise NotImplementedError("Image analysis lands in Phase 6 (Image Intelligence).")
 
     async def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> str:
-        raise NotImplementedError("Audio transcription lands in Phase 8 (Audio + URL).")
+        """Returns the spoken-word transcript (requirements doc, section 18)."""
+        raise NotImplementedError
 
 
 class OpenAIProvider(AIProvider):
@@ -119,6 +121,16 @@ class OpenAIProvider(AIProvider):
             "ocr_text": data.get("ocr_text") or "",
             "tags": data.get("tags") or [],
         }
+
+    async def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> str:
+        extension = mime_type.split("/")[-1] or "m4a"
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = f"voice-note.{extension}"  # whisper needs a filename to infer format
+        response = await self._client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+        )
+        return response.text
 
 
 def get_ai_provider(settings: Settings) -> AIProvider:

@@ -106,6 +106,36 @@ void main() {
     expect(row!.syncStatus, 'failed');
   });
 
+  test('pushes a queued create_url and triggers AI processing for it', () async {
+    await local.upsert(LocalItemsCompanion.insert(
+      id: 'link-1',
+      userId: 'user-1',
+      type: ItemType.url.dbValue,
+      title: const Value('https://example.com/docker-guide'),
+      sourceUrl: const Value('https://example.com/docker-guide'),
+      processingStatus: const Value('pending'),
+      createdAt: DateTime(2026, 1, 1),
+      syncStatus: const Value('pending'),
+    ));
+    await queue.enqueue(
+      operationType: 'create_url',
+      itemId: 'link-1',
+      payload: {'url': 'https://example.com/docker-guide'},
+    );
+    when(() => remote.createUrlItem(
+          id: 'link-1',
+          url: 'https://example.com/docker-guide',
+        )).thenAnswer((_) async {});
+
+    await sync.syncNow();
+
+    verify(() => remote.createUrlItem(id: 'link-1', url: 'https://example.com/docker-guide'))
+        .called(1);
+    expect(await queue.pendingEntries(), isEmpty);
+    final row = await local.findById('link-1');
+    expect(row!.syncStatus, 'synced');
+  });
+
   test('pulling remote state does not clobber a not-yet-synced local edit', () async {
     await local.upsert(LocalItemsCompanion.insert(
       id: 'note-1',

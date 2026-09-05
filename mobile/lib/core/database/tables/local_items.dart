@@ -12,6 +12,9 @@ class LocalItems extends Table {
   TextColumn get originalFilename => text().nullable()();
   TextColumn get mimeType => text().nullable()();
   TextColumn get storagePath => text().nullable()();
+
+  /// Only set for `type == url` — what the item actually points to.
+  TextColumn get sourceUrl => text().nullable()();
   TextColumn get processingStatus => text().withDefault(const Constant('pending'))();
   BoolColumn get favorite => boolean().withDefault(const Constant(false))();
   DateTimeColumn get createdAt => dateTime()();

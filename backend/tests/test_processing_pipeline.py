@@ -26,6 +26,9 @@ class FakeProvider(AIProvider):
             "tags": ["dell", "monitor", "gaming"],
         }
 
+    async def transcribe_audio(self, audio_bytes, mime_type):
+        return "Prag'a gittiğimde Cafe Louvre'a uğramayı unutma."
+
 
 class FakeRepo:
     def __init__(self, item: dict, note_content: str = "", image_bytes: bytes = b"fake-bytes"):
@@ -96,7 +99,7 @@ async def test_processes_a_note_end_to_end():
 
 @pytest.mark.asyncio
 async def test_unsupported_type_marks_the_item_failed_not_crashes():
-    repo = FakeRepo(item={"id": "item-2", "type": "audio"})
+    repo = FakeRepo(item={"id": "item-2", "type": "carrier_pigeon"})
 
     await process_item("item-2", repo, lambda: FakeProvider())  # must not raise
 
@@ -153,6 +156,80 @@ async def test_image_without_a_storage_path_fails_clearly():
 
     assert repo.status_history[-1] == "failed"
     assert "no storage_path" in repo.job_updates[-1]["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_processes_an_audio_note_end_to_end():
+    repo = FakeRepo(
+        item={
+            "id": "item-7",
+            "type": "audio",
+            "storage_path": "u1/item-7/note.m4a",
+            "mime_type": "audio/m4a",
+        },
+    )
+
+    await process_item("item-7", repo, lambda: FakeProvider())
+
+    assert repo.status_history == ["processing", "completed"]
+    # The transcript becomes both the title source and the embedded text.
+    assert repo.metadata_updates[0]["title"] == "fake answer"  # FakeProvider.generate_text()
+    assert repo.content_updates[0]["raw_text"] == "Prag'a gittiğimde Cafe Louvre'a uğramayı unutma."
+    assert repo.inserted_chunks is not None
+    assert "Cafe Louvre" in repo.inserted_chunks[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_audio_without_a_storage_path_fails_clearly():
+    repo = FakeRepo(item={"id": "item-8", "type": "audio"})
+
+    await process_item("item-8", repo, lambda: FakeProvider())
+
+    assert repo.status_history[-1] == "failed"
+    assert "no storage_path" in repo.job_updates[-1]["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_processes_a_url_item_end_to_end(monkeypatch):
+    async def fake_fetch_and_extract(url):
+        assert url == "https://example.com/docker-compose-guide"
+        return {
+            "title": "Docker Compose Guide",
+            "description": "How to run multi-container apps.",
+            "text": "Docker Compose lets you define and run multi-container Docker applications.",
+        }
+
+    monkeypatch.setattr(
+        "app.services.processing_pipeline.fetch_and_extract", fake_fetch_and_extract
+    )
+    repo = FakeRepo(
+        item={
+            "id": "item-9",
+            "type": "url",
+            "source_url": "https://example.com/docker-compose-guide",
+        },
+    )
+
+    await process_item("item-9", repo, lambda: FakeProvider())
+
+    assert repo.status_history == ["processing", "completed"]
+    assert repo.metadata_updates == [
+        {"title": "Docker Compose Guide", "description": "How to run multi-container apps."}
+    ]
+    assert repo.content_updates[0]["raw_text"] == (
+        "Docker Compose lets you define and run multi-container Docker applications."
+    )
+    assert repo.inserted_chunks is not None
+
+
+@pytest.mark.asyncio
+async def test_url_item_without_a_source_url_fails_clearly():
+    repo = FakeRepo(item={"id": "item-10", "type": "url"})
+
+    await process_item("item-10", repo, lambda: FakeProvider())
+
+    assert repo.status_history[-1] == "failed"
+    assert "no source_url" in repo.job_updates[-1]["error"].lower()
 
 
 @pytest.mark.asyncio

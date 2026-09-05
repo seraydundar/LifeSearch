@@ -27,6 +27,8 @@ abstract interface class ItemRepository {
     required ItemType type,
   });
 
+  Future<Item> createUrlItem({required String url});
+
   /// Short-lived signed URL for viewing/downloading a private-bucket file.
   Future<String> getSignedUrl(String storagePath);
 

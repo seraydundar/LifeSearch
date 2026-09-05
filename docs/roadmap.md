@@ -13,7 +13,7 @@ Geliştirme Kuralları").
 | **5** ✅ | Semantic Search: query → embedding → pgvector → top-K chunk → items | Evet |
 | **6** ✅ | Image Intelligence: camera, image upload, OCR, image description/embedding | Evet |
 | **7** ✅ | RAG Chat ("Ask AI"): yalnızca kullanıcının arşivinden, kaynak göstererek cevap | Evet |
-| **8** | Audio + URL: voice note, speech-to-text, URL extraction/webpage processing | Evet |
+| **8** ✅ | Audio + URL: voice note, speech-to-text, URL extraction/webpage processing | Evet |
 | **9** | Advanced Search: hybrid search, metadata/doğal dil filtreleri, reranking, related items, smart collections, duplicate detection | Evet |
 
 ## MVP kabul kriteri (bölüm 66)
@@ -26,21 +26,31 @@ cevap verir. Bu senaryo çalışıyorsa MVP tamamlanmıştır (Faz 7 sonu).
 
 ## Şu an neredeyiz
 
-Faz 1-7 tamamlandı — dokümanın bölüm 66'da tarif ettiği MVP senaryosunun
-kodu baştan sona yazılmış durumda: register → login → PDF/görsel/not
-ekle → backend işler → embedding oluşur → semantic search bulur →
-Ask AI, kaynak göstererek cevap üretir. `SearchHubScreen` artık
-"Search | Ask AI" sekmeleriyle (bölüm 23) her ikisini de barındırıyor;
-RAG servisi Faz 5'in `semantic_search`'ünü olduğu gibi yeniden kullanıp
-üstüne LLM cevabı ekliyor — retrieval iki kere yazılmadı.
+Faz 1-8 tamamlandı. Dokümandaki 7 içerik tipinin (note, image, screenshot,
+pdf, audio, url, document) hepsi artık gerçekten eklenebiliyor ve aynı
+chunk/embed pipeline'ından geçiyor:
 
-Canlıda doğrulandı: backend uçları (auth, pipeline, search RPC) gerçek
-kullanıcı token'ıyla test edildi; mobile uygulama regresyonsuz derlenip
-çalışıyor (44 backend + 24 mobile test yeşil). Gerçek OpenAI key
-olmadığından embedding/RAG cevaplarının gerçek kalitesi henüz canlı
-görülmedi — tüm pipeline sahte (fake) provider'larla uçtan uca test
-edilmiş, key eklenince çalışmaya hazır.
+- **Ses**: gerçek mikrofon kaydı (`record` paketi) → Whisper transkripti
+  → LLM'den kısa bir başlık ("LLM metadata extraction", bölüm 18) →
+  embedding
+- **Link**: "Add Link" diyaloğu → backend sayfayı çekip nav/footer/reklam
+  temizleyerek asıl makale metnini çıkarıyor (BeautifulSoup), başlık ve
+  meta description'ı item'a yazıyor (bölüm 17)
+- Local Drift şeması `source_url` kolonuyla v2'ye yükseltildi —
+  `MigrationStrategy.onUpgrade` ile mevcut kullanıcı verisi kaybolmadan
 
-Sıradaki adım: **bir OpenAI key ekleyip Faz 4-7'nin tamamını gerçek
-veriyle uçtan uca görmek** (MVP demo senaryosu) — ya da doğrudan
-**Faz 8 — Audio + URL**'e geçmek.
+Canlıda doğrulandı: backend 37 test, mobile 25 test yeşil; local DB
+migration'ı (v1→v2) simülatörde gerçek veri üzerinde (önceden eklenmiş
+not + görsel) veri kaybı olmadan çalıştı; app native camera + record
+plugin entegrasyonlarıyla birlikte regresyonsuz derlenip çalışıyor.
+
+Bölüm 66'daki MVP senaryosunun kodu Faz 7 sonunda tamamlanmıştı; Faz 8
+onun üstüne dokümanın geri kalan içerik tiplerini ekledi. Gerçek OpenAI
+key olmadığından embedding/transkript/RAG'ın gerçek kalitesi henüz canlı
+görülmedi — pipeline'ın tamamı sahte (fake) provider'larla uçtan uca
+test edilmiş durumda.
+
+Sıradaki adım: **bir OpenAI key ekleyip Faz 4-8'in tamamını gerçek
+veriyle uçtan uca görmek** — ya da doğrudan **Faz 9 — Advanced Search**
+(hybrid search, doğal dil filtreleri, related items, smart collections,
+duplicate detection).

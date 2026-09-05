@@ -80,6 +80,12 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     await launchUrl(Uri.parse(_signedUrl!), mode: LaunchMode.externalApplication);
   }
 
+  Future<void> _openSourceUrl() async {
+    final url = _item.sourceUrl;
+    if (url == null) return;
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isImage = _item.type == ItemType.image || _item.type == ItemType.screenshot;
@@ -131,11 +137,20 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
           if (_item.processingStatus != 'completed')
             Chip(label: Text(_processingLabel(_item.processingStatus))),
           const SizedBox(height: 16),
-          _MetaRow(label: 'Dosya adı', value: _item.originalFilename ?? '—'),
+          if (_item.type == ItemType.url)
+            _MetaRow(label: 'Link', value: _item.sourceUrl ?? '—')
+          else
+            _MetaRow(label: 'Dosya adı', value: _item.originalFilename ?? '—'),
           _MetaRow(label: 'Tür', value: _item.mimeType ?? '—'),
           _MetaRow(label: 'Eklenme', value: DateFormat('d MMM y, HH:mm').format(_item.createdAt)),
           const SizedBox(height: 24),
-          if (!isImage && _item.storagePath != null)
+          if (_item.type == ItemType.url)
+            FilledButton.icon(
+              onPressed: _openSourceUrl,
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Bağlantıyı Aç'),
+            )
+          else if (!isImage && _item.storagePath != null)
             FilledButton.icon(
               onPressed: _signedUrl == null ? null : _openFile,
               icon: const Icon(Icons.open_in_new),

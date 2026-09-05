@@ -130,4 +130,10 @@ class CaptureController extends AsyncNotifier<void> {
         ));
     return !state.hasError;
   }
+
+  Future<bool> addLink(String url) async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() => ref.read(itemRepositoryProvider).createUrlItem(url: url));
+    return !state.hasError;
+  }
 }

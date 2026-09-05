@@ -33,6 +33,7 @@ class RemoteItemDataSource {
         originalFilename: row['original_filename'] as String?,
         mimeType: row['mime_type'] as String?,
         storagePath: row['storage_path'] as String?,
+        sourceUrl: row['source_url'] as String?,
         processingStatus: row['processing_status'] as String? ?? 'pending',
         favorite: row['favorite'] as bool? ?? false,
         createdAt: DateTime.parse(row['created_at'] as String),
@@ -131,6 +132,25 @@ class RemoteItemDataSource {
     } catch (e) {
       await _client.storage.from(_bucket).remove([storagePath]); // don't leave an orphan file
       throw UnexpectedFailure('İçerik kaydedilemedi. Lütfen tekrar dene.');
+    }
+  }
+
+  Future<void> createUrlItem({
+    required String id,
+    required String url,
+    String? title,
+  }) async {
+    try {
+      await _client.from('items').upsert({
+        'id': id,
+        'user_id': userId,
+        'type': ItemType.url.dbValue,
+        'title': title ?? url,
+        'source_url': url,
+        'processing_status': 'pending',
+      });
+    } on PostgrestException catch (e) {
+      throw UnexpectedFailure('Link kaydedilemedi: ${e.message}');
     }
   }
 

@@ -32,6 +32,7 @@ sealed class Item with _$Item {
     String? originalFilename,
     String? mimeType,
     String? storagePath,
+    String? sourceUrl,
     required String processingStatus,
     required bool favorite,
     required DateTime createdAt,

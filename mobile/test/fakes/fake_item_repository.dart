@@ -59,6 +59,21 @@ class FakeItemRepository implements ItemRepository {
   }
 
   @override
+  Future<Item> createUrlItem({required String url}) async {
+    final item = Item(
+      id: 'url-${_items.length}',
+      type: ItemType.url,
+      title: url,
+      sourceUrl: url,
+      processingStatus: 'pending',
+      favorite: false,
+      createdAt: DateTime.now(),
+    );
+    _items.insert(0, item);
+    return item;
+  }
+
+  @override
   Future<String> getSignedUrl(String storagePath) async => 'https://example.test/$storagePath';
 
   @override

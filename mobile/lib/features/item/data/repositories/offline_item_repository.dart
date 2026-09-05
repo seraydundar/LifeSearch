@@ -43,6 +43,7 @@ class OfflineItemRepository implements ItemRepository {
         originalFilename: row.originalFilename,
         mimeType: row.mimeType,
         storagePath: row.storagePath,
+        sourceUrl: row.sourceUrl,
         processingStatus: row.processingStatus,
         favorite: row.favorite,
         createdAt: row.createdAt,
@@ -153,6 +154,39 @@ class OfflineItemRepository implements ItemRepository {
       title: originalFilename,
       originalFilename: originalFilename,
       mimeType: mimeType,
+      processingStatus: 'pending',
+      favorite: false,
+      createdAt: now,
+    );
+  }
+
+  @override
+  Future<Item> createUrlItem({required String url}) async {
+    final id = _uuid.v4();
+    final now = DateTime.now();
+
+    await _local.upsert(LocalItemsCompanion.insert(
+      id: id,
+      userId: _userId,
+      type: ItemType.url.dbValue,
+      title: Value(url),
+      sourceUrl: Value(url),
+      processingStatus: const Value('pending'),
+      createdAt: now,
+      syncStatus: const Value('pending'),
+    ));
+    await _queue.enqueue(
+      operationType: 'create_url',
+      itemId: id,
+      payload: {'url': url},
+    );
+    _syncService.syncSoon();
+
+    return Item(
+      id: id,
+      type: ItemType.url,
+      title: url,
+      sourceUrl: url,
       processingStatus: 'pending',
       favorite: false,
       createdAt: now,

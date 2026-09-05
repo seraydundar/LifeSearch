@@ -1,7 +1,8 @@
 """Orchestrates the AI pipeline (requirements doc, section 41):
 
-    INPUT (note | pdf | image | screenshot) -> CONTENT EXTRACTION
-        -> NORMALIZED TEXT -> CHUNKS -> EMBEDDINGS -> VECTOR DB
+    INPUT (note | pdf | image | screenshot | audio | url)
+        -> CONTENT EXTRACTION -> NORMALIZED TEXT
+        -> CHUNKS -> EMBEDDINGS -> VECTOR DB
 
 Runs as a FastAPI background task (see api/ai/routes.py) so the mobile
 app's request returns immediately — the item's `processing_status` and a
@@ -18,13 +19,12 @@ from .chunking_service import chunk_text
 from .document_service import extract_pdf_text, normalize_text
 from .embedding_service import embed_chunks, format_embedding_literal
 from .ocr_service import extract_text as extract_ocr_text
+from .url_service import fetch_and_extract
 from .vision_service import analyze_image
 
 logger = logging.getLogger(__name__)
 
-# Audio/URL extraction (Phase 8) is the only thing still missing its own
-# step ahead of the shared chunk/embed tail below.
-SUPPORTED_TYPES = {"note", "pdf", "image", "screenshot"}
+SUPPORTED_TYPES = {"note", "pdf", "image", "screenshot", "audio", "url"}
 
 
 class UnsupportedItemType(Exception):
@@ -61,7 +61,7 @@ async def process_item(
                 raise ValueError("PDF item has no storage_path.")
             pdf_bytes = await repo.download_file(storage_path)
             raw_text = extract_pdf_text(pdf_bytes)
-        else:  # image | screenshot
+        elif item_type in {"image", "screenshot"}:
             storage_path = item.get("storage_path")
             if not storage_path:
                 raise ValueError("Image item has no storage_path.")
@@ -81,6 +81,35 @@ async def process_item(
                 item_id, raw_text=description, ocr_text=ocr_text, ai_description=description
             )
             raw_text = f"{description}\n\n{ocr_text}".strip()
+        elif item_type == "audio":
+            storage_path = item.get("storage_path")
+            if not storage_path:
+                raise ValueError("Audio item has no storage_path.")
+            audio_bytes = await repo.download_file(storage_path)
+            mime_type = item.get("mime_type") or "audio/m4a"
+
+            transcript = await provider.transcribe_audio(audio_bytes, mime_type)
+            if transcript.strip():
+                # "LLM metadata extraction" (requirements doc, section 18) —
+                # a short title beats the recording's generic filename.
+                title = await provider.generate_text(
+                    "Summarize this voice note transcript as a title under 8 "
+                    f"words, in Turkish:\n\n{transcript}"
+                )
+                await repo.update_item_metadata(item_id, title=title.strip())
+            await repo.replace_item_content(item_id, raw_text=transcript)
+            raw_text = transcript
+        else:  # url
+            source_url = item.get("source_url")
+            if not source_url:
+                raise ValueError("URL item has no source_url.")
+            extracted = await fetch_and_extract(source_url)
+
+            await repo.update_item_metadata(
+                item_id, title=extracted["title"], description=extracted["description"]
+            )
+            await repo.replace_item_content(item_id, raw_text=extracted["text"])
+            raw_text = extracted["text"]
 
         text = normalize_text(raw_text)
         if not text:

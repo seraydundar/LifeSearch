@@ -7,11 +7,11 @@ import 'package:path/path.dart' as p;
 import '../../../../shared/extensions/build_context_x.dart';
 import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
+import '../screens/audio_recorder_screen.dart';
 import '../screens/camera_screen.dart';
 
-/// The "+" flow from the requirements doc (section 13). Audio recording
-/// and link saving are still Phase 8 work — shown but disabled so the
-/// full product shape is visible without pretending they already work.
+/// The "+" flow from the requirements doc (section 13) — every option is
+/// live as of Phase 8.
 Future<void> showCaptureSheet(BuildContext context) {
   return showModalBottomSheet(
     context: context,
@@ -73,6 +73,47 @@ class _CaptureSheet extends ConsumerWidget {
     if (!ok) {
       final error = ref.read(captureControllerProvider).error;
       context.showErrorSnackBar(error?.toString() ?? 'Yükleme başarısız oldu.');
+    }
+  }
+
+  Future<void> _recordAudio(BuildContext context, WidgetRef ref) async {
+    final path = await Navigator.of(context, rootNavigator: true).push<String>(
+      MaterialPageRoute(builder: (_) => const AudioRecorderScreen()),
+    );
+    if (!context.mounted) return;
+    Navigator.of(context).pop(); // close the sheet now that we're back from recording
+    if (path == null) return; // backed out without saving a recording
+
+    final ok = await ref.read(captureControllerProvider.notifier).uploadFile(
+          localFilePath: path,
+          originalFilename: p.basename(path),
+          mimeType: 'audio/m4a',
+          type: ItemType.audio,
+        );
+
+    if (!context.mounted) return;
+    if (!ok) {
+      final error = ref.read(captureControllerProvider).error;
+      context.showErrorSnackBar(error?.toString() ?? 'Yükleme başarısız oldu.');
+    }
+  }
+
+  Future<void> _addLink(BuildContext context, WidgetRef ref) async {
+    final url = await showDialog<String>(
+      context: context,
+      builder: (context) => const _AddLinkDialog(),
+    );
+    if (url == null) return; // cancelled
+
+    if (!context.mounted) return;
+    Navigator.of(context).pop(); // close the sheet
+
+    final ok = await ref.read(captureControllerProvider.notifier).addLink(url);
+
+    if (!context.mounted) return;
+    if (!ok) {
+      final error = ref.read(captureControllerProvider).error;
+      context.showErrorSnackBar(error?.toString() ?? 'Link eklenemedi.');
     }
   }
 
@@ -138,11 +179,74 @@ class _CaptureSheet extends ConsumerWidget {
               enabled: !isUploading,
               onTap: () => _takePhoto(context, ref),
             ),
-            const _CaptureTile(icon: Icons.mic_none_outlined, label: 'Record Audio', comingSoon: 'Faz 8'),
-            const _CaptureTile(icon: Icons.link, label: 'Add Link', comingSoon: 'Faz 8'),
+            _CaptureTile(
+              icon: Icons.mic_none_outlined,
+              label: 'Record Audio',
+              enabled: !isUploading,
+              onTap: () => _recordAudio(context, ref),
+            ),
+            _CaptureTile(
+              icon: Icons.link,
+              label: 'Add Link',
+              enabled: !isUploading,
+              onTap: () => _addLink(context, ref),
+            ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AddLinkDialog extends StatefulWidget {
+  const _AddLinkDialog();
+
+  @override
+  State<_AddLinkDialog> createState() => _AddLinkDialogState();
+}
+
+class _AddLinkDialogState extends State<_AddLinkDialog> {
+  final _controller = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    var url = _controller.text.trim();
+    if (url.isEmpty) {
+      setState(() => _error = 'Bir link gir.');
+      return;
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://$url';
+    }
+    if (Uri.tryParse(url)?.host.contains('.') != true) {
+      setState(() => _error = 'Geçerli bir link gir.');
+      return;
+    }
+    Navigator.of(context).pop(url);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add Link'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.url,
+        textInputAction: TextInputAction.done,
+        decoration: InputDecoration(hintText: 'https://...', errorText: _error),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Vazgeç')),
+        FilledButton(onPressed: _submit, child: const Text('Ekle')),
+      ],
     );
   }
 }
@@ -153,26 +257,20 @@ class _CaptureTile extends StatelessWidget {
     required this.label,
     this.onTap,
     this.enabled = true,
-    this.comingSoon,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
   final bool enabled;
-  final String? comingSoon;
 
   @override
   Widget build(BuildContext context) {
-    final isDisabled = comingSoon != null || !enabled;
     return ListTile(
       leading: Icon(icon),
       title: Text(label),
-      trailing: comingSoon != null
-          ? Chip(label: Text(comingSoon!), visualDensity: VisualDensity.compact)
-          : null,
-      enabled: !isDisabled,
-      onTap: isDisabled ? null : onTap,
+      enabled: enabled,
+      onTap: enabled ? onTap : null,
     );
   }
 }

@@ -11,10 +11,11 @@ import '../local/sync_queue_data_source.dart';
 import '../remote/ai_processing_trigger.dart';
 import '../remote/remote_item_data_source.dart';
 
-/// Upload item types the backend's AI pipeline actually supports — see
-/// backend/app/services/processing_pipeline.py SUPPORTED_TYPES. Audio/URL
-/// (Phase 8) aren't wired up yet, so there's nothing to trigger for those.
-const _aiSupportedUploadTypes = {'pdf', 'image', 'screenshot'};
+/// Upload item types the backend's AI pipeline actually supports for the
+/// `upload_file` op — see backend/app/services/processing_pipeline.py
+/// SUPPORTED_TYPES. `create_url` items are triggered unconditionally
+/// instead (see `_shouldTriggerAi`), since a link has no upload step.
+const _aiSupportedUploadTypes = {'pdf', 'image', 'screenshot', 'audio'};
 
 /// Bridges the local cache and Supabase in both directions:
 ///  - pulls the server's current state into `LocalItems` (skipping any item
@@ -112,6 +113,7 @@ class SyncService {
         originalFilename: Value(row['original_filename'] as String?),
         mimeType: Value(row['mime_type'] as String?),
         storagePath: Value(row['storage_path'] as String?),
+        sourceUrl: Value(row['source_url'] as String?),
         processingStatus: Value(row['processing_status'] as String? ?? 'pending'),
         favorite: Value(row['favorite'] as bool? ?? false),
         createdAt: DateTime.parse(row['created_at'] as String),
@@ -151,6 +153,11 @@ class SyncService {
               itemId: entry.itemId,
               storagePath: payload['storagePath'] as String?,
             );
+          case 'create_url':
+            await _remote.createUrlItem(
+              id: entry.itemId,
+              url: payload['url'] as String,
+            );
           case 'upload_file':
             await _remote.uploadFile(
               id: entry.itemId,
@@ -182,7 +189,7 @@ class SyncService {
 
   bool _shouldTriggerAi(String operationType, Map<String, dynamic> payload) {
     return switch (operationType) {
-      'create_note' || 'update_note' => true,
+      'create_note' || 'update_note' || 'create_url' => true,
       'upload_file' => _aiSupportedUploadTypes.contains(payload['type']),
       _ => false,
     };
