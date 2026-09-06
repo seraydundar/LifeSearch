@@ -1,7 +1,9 @@
 """Semantic + hybrid search over items/chunks via pgvector (requirements
-doc, sections 19-21) and related-items lookup (section 47). Reranking and
-natural-language filter extraction (sections 20, 22) stay out of scope —
-noted as "ileri aşama" in the doc itself.
+doc, sections 19-21) and related-items lookup (section 47). Reranking
+(section 20) stays out of scope — noted as "ileri aşama" in the doc
+itself. Natural-language filter extraction (section 22) happens one
+layer up, in `query_parser.py` — this module only ever sees the already
+resolved `item_types`/`date_after`/`date_before`.
 """
 
 from datetime import datetime

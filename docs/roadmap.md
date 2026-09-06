@@ -52,10 +52,10 @@ test edilmiş durumda.
 
 ## Faz 9 — Advanced Search (kısmi 🟡)
 
-Bölüm 21/47'deki dört alt-başlıktan üçü tamamlandı; "Natural Language
-Filtering" ve "Smart Collections" bilinçli olarak dışarıda bırakıldı
-(dokümanın kendisi bunları "ileri aşama" olarak işaretliyor; Smart
-Collections ayrıca hiç var olmayan bir Collections özelliğine bağımlı).
+Bölüm 21/47'deki beş alt-başlıktan dördü tamamlandı; yalnızca "Smart
+Collections" bilinçli olarak dışarıda bırakıldı (dokümanın kendisi
+"ileri aşama" olarak işaretliyor; hiç var olmayan bir Collections
+özelliğine bağımlı).
 
 - **Hybrid search**: pgvector cosine similarity + Postgres full-text
   search (`tsvector`/`ts_rank`), Reciprocal Rank Fusion (RRF) ile
@@ -80,15 +80,27 @@ Collections ayrıca hiç var olmayan bir Collections özelliğine bağımlı).
   Kontrol tamamen best-effort: RPC hata verse veya provider key'i eksik
   olsa bile item'ın kendi işlenme durumunu asla etkilemiyor. Local Drift
   şeması bu üç kolonla v3'e yükseltildi.
+- **Doğal dil filtreleme**: `query_parser.py` — LLM çağrısı olmadan,
+  kural tabanlı bir çıkarım. "geçen ay baktığım PDF'ler" gibi bir sorgu
+  önce tür/tarih ifadeleri için taranıyor (Türkçe anahtar kelimeler:
+  pdf/resim/not/link/ses/belge/screenshot; bugün/dün/bu hafta/geçen
+  hafta/bu ay/geçen ay/bu yıl/geçen yıl), eşleşenler filtreye çevrilip
+  sorgu metninden temizleniyor, geri kalan temiz metin ("baktığım")
+  embedding'e gidiyor. Search sekmesindeki filtre chip'leri her zaman
+  öncelikli — bu yalnızca client hiçbir filtre göndermediğinde devreye
+  giriyor, boşlukları dolduruyor.
 
-Backend: 42 test yeşil. Mobile: `flutter analyze` temiz, 26 test yeşil,
-uygulama simülatörde (iPhone 17 Pro) regresyonsuz derlenip açılıyor —
-mevcut not/görsel verisi korunmuş durumda görüldü, local DB migration'ı
-(v2→v3) veri kaybı olmadan çalıştı. Gerçek OpenAI key olmadığından
-hybrid arama, related items ve duplicate detection'ın gerçek embedding/
-metin kalitesiyle canlı davranışı henüz görülmedi (REST seviyesinde
-sahte ama kontrollü embedding'lerle doğrulandı).
+Backend: 50 test yeşil (8 yeni: query_parser). Mobile: `flutter analyze`
+temiz, 26 test yeşil, uygulama simülatörde (iPhone 17 Pro) regresyonsuz
+derlenip açılıyor — mevcut not/görsel verisi korunmuş durumda görüldü,
+local DB migration'ı (v2→v3) veri kaybı olmadan çalıştı. Gerçek OpenAI
+key olmadığından hybrid arama, related items ve duplicate detection'ın
+gerçek embedding/metin kalitesiyle canlı davranışı henüz görülmedi
+(REST seviyesinde sahte ama kontrollü embedding'lerle doğrulandı);
+doğal dil filtreleme key gerektirmediği için kural tabanlı testlerle
+tam doğrulandı.
 
 Sıradaki adım: **bir OpenAI key ekleyip Faz 4-9'un tamamını gerçek
-veriyle uçtan uca görmek** — ya da Faz 9'un son iki bırakılan
-alt-başlığına (doğal dil filtreleri, smart collections) geçmek.
+veriyle uçtan uca görmek** — ya da Faz 9'un son bırakılan alt-başlığı
+olan Smart Collections'a geçmek (önce düz bir Collections özelliği
+gerektiriyor).

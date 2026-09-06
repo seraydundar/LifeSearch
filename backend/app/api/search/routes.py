@@ -15,6 +15,7 @@ from ...schemas.search import (
     SearchResult,
 )
 from ...services.ai_provider import get_ai_provider
+from ...services.query_parser import parse_query
 from ...services.search_service import find_related_items, semantic_search
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -51,13 +52,21 @@ async def search_endpoint(
     provider = _require_provider()
     repo = SearchRepository(user.access_token)
 
+    # Natural-language filtering (requirements doc, section 22): pull a
+    # type/date filter out of the query text itself, e.g. "geçen ay
+    # baktığım PDF'ler". Anything the client already sent explicitly (the
+    # Search tab's filter chips) wins — this only fills in the gaps.
+    parsed = parse_query(body.query)
+    item_types = body.item_types or parsed.item_types
+    date_from = body.date_from or parsed.date_from
+
     matches = await semantic_search(
-        body.query,
+        parsed.cleaned_query,
         repo,
         provider,
         limit=body.limit,
-        item_types=body.item_types,
-        date_after=body.date_from,
+        item_types=item_types,
+        date_after=date_from,
         date_before=body.date_to,
     )
 
