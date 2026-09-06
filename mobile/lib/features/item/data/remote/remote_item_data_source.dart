@@ -37,6 +37,9 @@ class RemoteItemDataSource {
         processingStatus: row['processing_status'] as String? ?? 'pending',
         favorite: row['favorite'] as bool? ?? false,
         createdAt: DateTime.parse(row['created_at'] as String),
+        duplicateOfItemId: row['duplicate_of_item_id'] as String?,
+        duplicateSimilarity: (row['duplicate_similarity'] as num?)?.toDouble(),
+        duplicateDismissed: row['duplicate_dismissed'] as bool? ?? false,
       );
 
   /// One-shot snapshot of every item the user has — used by `SyncService`
@@ -161,6 +164,14 @@ class RemoteItemDataSource {
   Future<void> setFavorite(String itemId, bool favorite) async {
     try {
       await _client.from('items').update({'favorite': favorite}).eq('id', itemId);
+    } on PostgrestException catch (e) {
+      throw UnexpectedFailure('Güncellenemedi: ${e.message}');
+    }
+  }
+
+  Future<void> dismissDuplicate(String itemId) async {
+    try {
+      await _client.from('items').update({'duplicate_dismissed': true}).eq('id', itemId);
     } on PostgrestException catch (e) {
       throw UnexpectedFailure('Güncellenemedi: ${e.message}');
     }

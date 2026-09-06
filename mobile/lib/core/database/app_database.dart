@@ -13,7 +13,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.connection);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -24,6 +24,13 @@ class AppDatabase extends _$AppDatabase {
           // for the same column on the server side.
           if (from < 2) {
             await m.addColumn(localItems, localItems.sourceUrl);
+          }
+          // v3 (Faz 9 — Duplicate Detection): mirrors
+          // infra/supabase/migrations/0007_duplicate_detection.sql.
+          if (from < 3) {
+            await m.addColumn(localItems, localItems.duplicateOfItemId);
+            await m.addColumn(localItems, localItems.duplicateSimilarity);
+            await m.addColumn(localItems, localItems.duplicateDismissed);
           }
         },
       );

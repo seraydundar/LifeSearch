@@ -33,7 +33,11 @@ async def process_item_endpoint(
     # matching `processing_jobs` row) is what actually reports progress —
     # including a bad AI_PROVIDER config, resolved lazily inside the task.
     background_tasks.add_task(
-        process_item, body.item_id, repo, lambda: get_ai_provider(get_settings())
+        process_item,
+        body.item_id,
+        repo,
+        lambda: get_ai_provider(get_settings()),
+        lambda: SearchRepository(user.access_token),
     )
     return ProcessItemResponse(status="accepted", item_id=body.item_id)
 

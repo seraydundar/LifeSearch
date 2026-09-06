@@ -12,6 +12,11 @@ abstract interface class ItemRepository {
 
   Future<String> fetchNoteContent(String itemId);
 
+  /// Single item by id from the local cache, or `null` if it isn't known
+  /// yet — used for the duplicate-candidate banner on item detail, which
+  /// needs the *other* item's title/type without loading the whole list.
+  Future<Item?> findById(String itemId);
+
   Future<Item> createNote({required String title, required String content});
 
   Future<void> updateNote({
@@ -33,6 +38,10 @@ abstract interface class ItemRepository {
   Future<String> getSignedUrl(String storagePath);
 
   Future<void> setFavorite(String itemId, bool favorite);
+
+  /// User says "this isn't actually a duplicate" (or "I know, ignore it") —
+  /// hides the banner for good, doesn't touch either item's content.
+  Future<void> dismissDuplicate(String itemId);
 
   Future<void> deleteItem(Item item);
 }

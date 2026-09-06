@@ -136,6 +136,32 @@ void main() {
     expect(row!.syncStatus, 'synced');
   });
 
+  test('pushes a queued dismiss_duplicate', () async {
+    await local.upsert(LocalItemsCompanion.insert(
+      id: 'item-1',
+      userId: 'user-1',
+      type: ItemType.note.dbValue,
+      processingStatus: const Value('completed'),
+      createdAt: DateTime(2026, 1, 1),
+      duplicateOfItemId: const Value('item-0'),
+      duplicateSimilarity: const Value(0.97),
+      syncStatus: const Value('pending'),
+    ));
+    await queue.enqueue(
+      operationType: 'dismiss_duplicate',
+      itemId: 'item-1',
+      payload: const {},
+    );
+    when(() => remote.dismissDuplicate('item-1')).thenAnswer((_) async {});
+
+    await sync.syncNow();
+
+    verify(() => remote.dismissDuplicate('item-1')).called(1);
+    expect(await queue.pendingEntries(), isEmpty);
+    final row = await local.findById('item-1');
+    expect(row!.syncStatus, 'synced');
+  });
+
   test('pulling remote state does not clobber a not-yet-synced local edit', () async {
     await local.upsert(LocalItemsCompanion.insert(
       id: 'note-1',

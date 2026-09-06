@@ -40,6 +40,7 @@ class FakeRepo:
         self.inserted_chunks: list[dict] | None = None
         self.metadata_updates: list[dict] = []
         self.content_updates: list[dict] = []
+        self.duplicate_marks: list[dict] = []
         self._job_id = "job-1"
 
     async def create_job(self, item_id, job_type):
@@ -78,6 +79,26 @@ class FakeRepo:
         self.content_updates.append(
             {"raw_text": raw_text, "ocr_text": ocr_text, "ai_description": ai_description}
         )
+
+    async def mark_duplicate(self, item_id, duplicate_of_item_id, similarity):
+        self.duplicate_marks.append(
+            {"item_id": item_id, "duplicate_of_item_id": duplicate_of_item_id, "similarity": similarity}
+        )
+
+
+class FakeSearchRepo:
+    """Stands in for `SearchRepository` in the duplicate-check step."""
+
+    def __init__(self, candidate: dict | None = None, error: Exception | None = None):
+        self.candidate = candidate
+        self.error = error
+        self.calls: list[str] = []
+
+    async def find_duplicate_candidate(self, item_id, *, similarity_threshold=0.93):
+        self.calls.append(item_id)
+        if self.error is not None:
+            raise self.error
+        return self.candidate
 
 
 @pytest.mark.asyncio
@@ -248,3 +269,53 @@ async def test_a_broken_provider_factory_fails_the_item_not_the_request():
 
     assert repo.status_history == ["processing", "failed"]
     assert "OPENAI_API_KEY" in repo.job_updates[-1]["error"]
+
+
+@pytest.mark.asyncio
+async def test_marks_the_item_as_a_duplicate_when_a_near_identical_one_exists():
+    repo = FakeRepo(
+        item={"id": "item-11", "type": "note"},
+        note_content="Docker container ile image arasındaki fark budur.",
+    )
+    search_repo = FakeSearchRepo(
+        candidate={"item_id": "item-1", "item_type": "note", "similarity": 0.97}
+    )
+
+    await process_item("item-11", repo, lambda: FakeProvider(), lambda: search_repo)
+
+    assert search_repo.calls == ["item-11"]
+    assert repo.duplicate_marks == [
+        {"item_id": "item-11", "duplicate_of_item_id": "item-1", "similarity": 0.97}
+    ]
+    # Still completes normally — duplicate detection only flags, never blocks.
+    assert repo.status_history == ["processing", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_no_duplicate_mark_when_nothing_is_similar_enough():
+    repo = FakeRepo(
+        item={"id": "item-12", "type": "note"}, note_content="Benzersiz bir not."
+    )
+    search_repo = FakeSearchRepo(candidate=None)
+
+    await process_item("item-12", repo, lambda: FakeProvider(), lambda: search_repo)
+
+    assert repo.duplicate_marks == []
+    assert repo.status_history == ["processing", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_duplicate_check_does_not_fail_the_item():
+    """Regression guard for the best-effort contract in
+    `_check_for_duplicate`: whatever goes wrong there (RPC down, bad
+    response, ...) must never turn a successful processing run into a
+    failed one.
+    """
+    repo = FakeRepo(item={"id": "item-13", "type": "note"}, note_content="hello")
+    search_repo = FakeSearchRepo(error=RuntimeError("RPC unavailable"))
+
+    await process_item("item-13", repo, lambda: FakeProvider(), lambda: search_repo)
+
+    assert repo.duplicate_marks == []
+    assert repo.status_history == ["processing", "completed"]
+    assert repo.job_updates[-1]["status"] == "completed"

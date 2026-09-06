@@ -14,7 +14,7 @@ Geliştirme Kuralları").
 | **6** ✅ | Image Intelligence: camera, image upload, OCR, image description/embedding | Evet |
 | **7** ✅ | RAG Chat ("Ask AI"): yalnızca kullanıcının arşivinden, kaynak göstererek cevap | Evet |
 | **8** ✅ | Audio + URL: voice note, speech-to-text, URL extraction/webpage processing | Evet |
-| **9** 🟡 | Advanced Search: hybrid search (RRF), metadata filtreleri, related items | Evet |
+| **9** 🟡 | Advanced Search: hybrid search (RRF), metadata filtreleri, related items, duplicate detection | Evet |
 
 ## MVP kabul kriteri (bölüm 66)
 
@@ -52,11 +52,10 @@ test edilmiş durumda.
 
 ## Faz 9 — Advanced Search (kısmi 🟡)
 
-Bölüm 21/47'deki üç alt-başlıktan ikisi tamamlandı; "Natural Language
-Filtering", "Smart Collections" ve "Duplicate Detection" bilinçli olarak
-dışarıda bırakıldı (dokümanın kendisi bunları "ileri aşama" olarak
-işaretliyor; Smart Collections ayrıca hiç var olmayan bir Collections
-özelliğine bağımlı).
+Bölüm 21/47'deki dört alt-başlıktan üçü tamamlandı; "Natural Language
+Filtering" ve "Smart Collections" bilinçli olarak dışarıda bırakıldı
+(dokümanın kendisi bunları "ileri aşama" olarak işaretliyor; Smart
+Collections ayrıca hiç var olmayan bir Collections özelliğine bağımlı).
 
 - **Hybrid search**: pgvector cosine similarity + Postgres full-text
   search (`tsvector`/`ts_rank`), Reciprocal Rank Fusion (RRF) ile
@@ -71,14 +70,25 @@ işaretliyor; Smart Collections ayrıca hiç var olmayan bir Collections
   karşılaştırma vektörü olarak kullanan bir `lateral` join) ile item
   detay ekranında "İlgili İçerikler" yatay listesi — sorgu metni
   gerektirmiyor, AI provider key'i olmadan da (503 yerine) çalışıyor.
+- **Duplicate detection**: her item işlendikten sonra `find_duplicate_candidate`
+  RPC'si (`infra/supabase/migrations/0007_duplicate_detection.sql`) —
+  `related_items` ile aynı ilk-chunk-anchor mantığı, ama tek sonuç ve
+  yüksek bir eşik (varsayılan 0.93). Eşleşme bulunursa `items` tablosuna
+  (`duplicate_of_item_id`, `duplicate_similarity`, `duplicate_dismissed`)
+  yazılıyor; item detail'de dismissible bir banner ("Bu içerik zaten
+  eklenmiş gibi görünüyor" → Görüntüle/Yoksay) olarak gösteriliyor.
+  Kontrol tamamen best-effort: RPC hata verse veya provider key'i eksik
+  olsa bile item'ın kendi işlenme durumunu asla etkilemiyor. Local Drift
+  şeması bu üç kolonla v3'e yükseltildi.
 
-Backend: 39 test yeşil. Mobile: `flutter analyze` temiz, 25 test yeşil,
+Backend: 42 test yeşil. Mobile: `flutter analyze` temiz, 26 test yeşil,
 uygulama simülatörde (iPhone 17 Pro) regresyonsuz derlenip açılıyor —
-mevcut not/görsel verisi korunmuş durumda görüldü. Gerçek OpenAI key
-olmadığından hybrid arama ve related items'ın gerçek embedding/metin
-kalitesiyle canlı davranışı henüz görülmedi (REST seviyesinde sahte
-ama kontrollü embedding'lerle doğrulandı).
+mevcut not/görsel verisi korunmuş durumda görüldü, local DB migration'ı
+(v2→v3) veri kaybı olmadan çalıştı. Gerçek OpenAI key olmadığından
+hybrid arama, related items ve duplicate detection'ın gerçek embedding/
+metin kalitesiyle canlı davranışı henüz görülmedi (REST seviyesinde
+sahte ama kontrollü embedding'lerle doğrulandı).
 
 Sıradaki adım: **bir OpenAI key ekleyip Faz 4-9'un tamamını gerçek
-veriyle uçtan uca görmek** — ya da Faz 9'un bırakılan alt-başlıklarına
-(doğal dil filtreleri, smart collections, duplicate detection) geçmek.
+veriyle uçtan uca görmek** — ya da Faz 9'un son iki bırakılan
+alt-başlığına (doğal dil filtreleri, smart collections) geçmek.

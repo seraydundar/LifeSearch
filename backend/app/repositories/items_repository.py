@@ -150,6 +150,26 @@ class SupabaseRestRepository:
             )
             insert_response.raise_for_status()
 
+    async def mark_duplicate(
+        self, item_id: str, duplicate_of_item_id: str, similarity: float
+    ) -> None:
+        """Flags a possible duplicate found during processing (requirements
+        doc, section 46) — never blocks or merges anything, just records
+        the best candidate for the client to show a dismissible banner for.
+        """
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.patch(
+                f"{self._base_url}/rest/v1/items",
+                params={"id": f"eq.{item_id}"},
+                headers={**self._headers, "Content-Type": "application/json"},
+                json={
+                    "duplicate_of_item_id": duplicate_of_item_id,
+                    "duplicate_similarity": similarity,
+                    "duplicate_dismissed": False,
+                },
+            )
+            response.raise_for_status()
+
     async def update_item_status(self, item_id: str, status: str) -> None:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.patch(

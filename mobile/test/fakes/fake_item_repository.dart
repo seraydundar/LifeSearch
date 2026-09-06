@@ -16,6 +16,14 @@ class FakeItemRepository implements ItemRepository {
   Future<String> fetchNoteContent(String itemId) async => 'fake content';
 
   @override
+  Future<Item?> findById(String itemId) async {
+    for (final item in _items) {
+      if (item.id == itemId) return item;
+    }
+    return null;
+  }
+
+  @override
   Future<Item> createNote({required String title, required String content}) async {
     final item = Item(
       id: 'note-${_items.length}',
@@ -78,6 +86,9 @@ class FakeItemRepository implements ItemRepository {
 
   @override
   Future<void> setFavorite(String itemId, bool favorite) async {}
+
+  @override
+  Future<void> dismissDuplicate(String itemId) async {}
 
   @override
   Future<void> deleteItem(Item item) async {

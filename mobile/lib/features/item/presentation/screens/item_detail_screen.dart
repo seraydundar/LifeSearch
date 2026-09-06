@@ -26,11 +26,38 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   late Item _item = widget.item;
   String? _signedUrl;
   bool _isDeleting = false;
+  Item? _duplicateTarget;
 
   @override
   void initState() {
     super.initState();
     _loadSignedUrl();
+    _loadDuplicateTarget();
+  }
+
+  Future<void> _loadDuplicateTarget() async {
+    final duplicateOfItemId = _item.duplicateOfItemId;
+    if (duplicateOfItemId == null || _item.duplicateDismissed) return;
+    final target = await ref.read(itemRepositoryProvider).findById(duplicateOfItemId);
+    if (mounted) setState(() => _duplicateTarget = target);
+  }
+
+  Future<void> _dismissDuplicate() async {
+    setState(() => _item = _item.copyWith(duplicateDismissed: true)); // optimistic
+    try {
+      await ref.read(itemRepositoryProvider).dismissDuplicate(_item.id);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _item = _item.copyWith(duplicateDismissed: false)); // revert
+      context.showErrorSnackBar('Güncellenemedi.');
+    }
+  }
+
+  void _openDuplicateTarget() {
+    final target = _duplicateTarget;
+    if (target == null) return;
+    final route = target.type == ItemType.note ? '/item/${target.id}/note' : '/item/${target.id}';
+    context.push(route, extra: target);
   }
 
   Future<void> _loadSignedUrl() async {
@@ -131,6 +158,14 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          if (!_item.duplicateDismissed && _item.duplicateOfItemId != null && _duplicateTarget != null) ...[
+            _DuplicateBanner(
+              target: _duplicateTarget!,
+              onView: _openDuplicateTarget,
+              onDismiss: _dismissDuplicate,
+            ),
+            const SizedBox(height: 16),
+          ],
           if (isImage && _signedUrl != null)
             ClipRRect(
               borderRadius: BorderRadius.circular(16),
@@ -189,6 +224,59 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
       'failed' => 'İşlenemedi',
       _ => status,
     };
+  }
+}
+
+/// Flags a possible duplicate found by the backend pipeline (requirements
+/// doc, section 46) — never blocks anything, just lets the user jump to
+/// the other item or dismiss the flag for good.
+class _DuplicateBanner extends StatelessWidget {
+  const _DuplicateBanner({required this.target, required this.onView, required this.onDismiss});
+
+  final Item target;
+  final VoidCallback onView;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.copy_all_outlined, size: 20, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('Bu içerik zaten eklenmiş gibi görünüyor',
+                      style: theme.textTheme.titleSmall),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              target.title ?? target.originalFilename ?? 'Untitled',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(onPressed: onDismiss, child: const Text('Yoksay')),
+                const SizedBox(width: 4),
+                FilledButton.tonal(onPressed: onView, child: const Text('Görüntüle')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

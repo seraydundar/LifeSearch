@@ -118,6 +118,9 @@ class SyncService {
         favorite: Value(row['favorite'] as bool? ?? false),
         createdAt: DateTime.parse(row['created_at'] as String),
         noteContent: Value(noteContent),
+        duplicateOfItemId: Value(row['duplicate_of_item_id'] as String?),
+        duplicateSimilarity: Value((row['duplicate_similarity'] as num?)?.toDouble()),
+        duplicateDismissed: Value(row['duplicate_dismissed'] as bool? ?? false),
         syncStatus: const Value('synced'),
       ));
     }
@@ -148,6 +151,8 @@ class SyncService {
             );
           case 'set_favorite':
             await _remote.setFavorite(entry.itemId, payload['favorite'] as bool);
+          case 'dismiss_duplicate':
+            await _remote.dismissDuplicate(entry.itemId);
           case 'delete_item':
             await _remote.deleteItem(
               itemId: entry.itemId,

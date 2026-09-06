@@ -47,6 +47,9 @@ class OfflineItemRepository implements ItemRepository {
         processingStatus: row.processingStatus,
         favorite: row.favorite,
         createdAt: row.createdAt,
+        duplicateOfItemId: row.duplicateOfItemId,
+        duplicateSimilarity: row.duplicateSimilarity,
+        duplicateDismissed: row.duplicateDismissed,
       );
 
   @override
@@ -59,6 +62,12 @@ class OfflineItemRepository implements ItemRepository {
     final local = await _local.findById(itemId);
     if (local?.noteContent != null) return local!.noteContent!;
     return _remote.fetchNoteContent(itemId); // cold-start fallback before the first sync
+  }
+
+  @override
+  Future<Item?> findById(String itemId) async {
+    final local = await _local.findById(itemId);
+    return local == null ? null : _toItem(local);
   }
 
   @override
@@ -217,6 +226,13 @@ class OfflineItemRepository implements ItemRepository {
       itemId: itemId,
       payload: {'favorite': favorite},
     );
+    _syncService.syncSoon();
+  }
+
+  @override
+  Future<void> dismissDuplicate(String itemId) async {
+    await _local.setDuplicateDismissed(itemId, syncStatus: 'pending');
+    await _queue.enqueue(operationType: 'dismiss_duplicate', itemId: itemId, payload: const {});
     _syncService.syncSoon();
   }
 

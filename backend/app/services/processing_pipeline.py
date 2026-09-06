@@ -14,6 +14,7 @@ import logging
 from collections.abc import Callable
 
 from ..repositories.items_repository import SupabaseRestRepository
+from ..repositories.search_repository import SearchRepository
 from .ai_provider import AIProvider
 from .chunking_service import chunk_text
 from .document_service import extract_pdf_text, normalize_text
@@ -35,11 +36,16 @@ async def process_item(
     item_id: str,
     repo: SupabaseRestRepository,
     get_provider: Callable[[], AIProvider],
+    get_search_repo: Callable[[], SearchRepository] | None = None,
 ) -> None:
     """`get_provider` is resolved *inside* the try block, deliberately —
     a missing API key or bad AI_PROVIDER config is exactly the kind of
     failure this should report on the item/job (requirements doc, rule
     15), not crash the request that kicked processing off.
+
+    `get_search_repo` is optional (and `None` in tests that don't care
+    about it) — it powers the best-effort duplicate check after
+    embedding, see `_check_for_duplicate`.
     """
     job_id = await repo.create_job(item_id, job_type="chunk_and_embed")
 
@@ -130,6 +136,9 @@ async def process_item(
         ]
         await repo.replace_chunks(item_id, chunk_rows)
 
+        if get_search_repo is not None:
+            await _check_for_duplicate(item_id, repo, get_search_repo)
+
         await repo.update_item_status(item_id, "completed")
         await repo.mark_job_completed(job_id)
     except Exception as error:
@@ -138,3 +147,21 @@ async def process_item(
         logger.warning("processing failed for item_id=%s: %s", item_id, error)
         await repo.update_item_status(item_id, "failed")
         await repo.mark_job_failed(job_id, str(error))
+
+
+async def _check_for_duplicate(
+    item_id: str,
+    repo: SupabaseRestRepository,
+    get_search_repo: Callable[[], SearchRepository],
+) -> None:
+    """Best-effort (requirements doc, section 46): this only ever *flags*
+    a possible duplicate for the user to review, so a failure here should
+    never fail the item's own processing job.
+    """
+    try:
+        search_repo = get_search_repo()
+        candidate = await search_repo.find_duplicate_candidate(item_id)
+        if candidate:
+            await repo.mark_duplicate(item_id, candidate["item_id"], candidate["similarity"])
+    except Exception as error:
+        logger.warning("duplicate check failed for item_id=%s: %s", item_id, error)

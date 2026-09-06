@@ -27,6 +27,14 @@ class LocalItems extends Table {
   /// SyncQueueEntries row driving the retry.
   TextColumn get syncStatus => text().withDefault(const Constant('synced'))();
 
+  /// Set by the backend's duplicate-detection step (requirements doc,
+  /// section 46) when a near-identical item already exists — see
+  /// infra/supabase/migrations/0007_duplicate_detection.sql. Only ever
+  /// flags; the user decides whether to dismiss it.
+  TextColumn get duplicateOfItemId => text().nullable()();
+  RealColumn get duplicateSimilarity => real().nullable()();
+  BoolColumn get duplicateDismissed => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {id};
 }

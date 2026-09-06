@@ -36,5 +36,11 @@ sealed class Item with _$Item {
     required String processingStatus,
     required bool favorite,
     required DateTime createdAt,
+    // Duplicate Detection (requirements doc, section 46) — set by the
+    // backend pipeline, never by the client. `null` duplicateOfItemId
+    // means no candidate was found (or it's been dismissed already).
+    String? duplicateOfItemId,
+    double? duplicateSimilarity,
+    @Default(false) bool duplicateDismissed,
   }) = _Item;
 }

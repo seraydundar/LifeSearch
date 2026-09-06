@@ -64,3 +64,20 @@ class SearchRepository:
             )
             response.raise_for_status()
             return response.json()
+
+    async def find_duplicate_candidate(
+        self, item_id: str, *, similarity_threshold: float = 0.93
+    ) -> dict[str, Any] | None:
+        """At most one match — the pipeline only needs to know whether a
+        near-identical item already exists (requirements doc, section 46),
+        not a ranked list.
+        """
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                f"{self._base_url}/rest/v1/rpc/find_duplicate_candidate",
+                headers=self._headers,
+                json={"source_item_id": item_id, "similarity_threshold": similarity_threshold},
+            )
+            response.raise_for_status()
+            rows = response.json()
+            return rows[0] if rows else None
