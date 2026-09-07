@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../collections/presentation/widgets/collection_suggestions_section.dart';
 import '../../../collections/presentation/widgets/collections_bar.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../../item/presentation/widgets/item_list_tile.dart';
@@ -32,6 +33,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       ),
       body: Column(
         children: [
+          const CollectionSuggestionsSection(),
           const CollectionsBar(),
           const Divider(height: 1),
           Expanded(

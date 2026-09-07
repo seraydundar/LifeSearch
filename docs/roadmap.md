@@ -14,7 +14,7 @@ Geliştirme Kuralları").
 | **6** ✅ | Image Intelligence: camera, image upload, OCR, image description/embedding | Evet |
 | **7** ✅ | RAG Chat ("Ask AI"): yalnızca kullanıcının arşivinden, kaynak göstererek cevap | Evet |
 | **8** ✅ | Audio + URL: voice note, speech-to-text, URL extraction/webpage processing | Evet |
-| **9** 🟡 | Advanced Search: hybrid search (RRF), metadata filtreleri, related items, duplicate detection, doğal dil filtreleme, Collections (temel) | Evet |
+| **9** ✅ | Advanced Search: hybrid search (RRF), metadata filtreleri, related items, duplicate detection, doğal dil filtreleme, Collections + Smart Collections | Evet |
 
 ## MVP kabul kriteri (bölüm 66)
 
@@ -50,11 +50,9 @@ key olmadığından embedding/transkript/RAG'ın gerçek kalitesi henüz canlı
 görülmedi — pipeline'ın tamamı sahte (fake) provider'larla uçtan uca
 test edilmiş durumda.
 
-## Faz 9 — Advanced Search (kısmi 🟡)
+## Faz 9 — Advanced Search ✅
 
-Bölüm 21/47'deki beş alt-başlıktan dördü tamamlandı; beşincisi olan
-"Smart Collections"ın önkoşulu (düz Collections) de artık var, ama
-AI-öneri kısmı henüz yazılmadı — bu yüzden Faz 9 hâlâ kısmi.
+Bölüm 21/47/129'daki beş alt-başlığın hepsi tamamlandı.
 
 - **Hybrid search**: pgvector cosine similarity + Postgres full-text
   search (`tsvector`/`ts_rank`), Reciprocal Rank Fusion (RRF) ile
@@ -96,22 +94,36 @@ AI-öneri kısmı henüz yazılmadı — bu yüzden Faz 9 hâlâ kısmi.
   doğrudan Supabase'e konuşuyor (Faz 2'de item'ların başladığı gibi —
   henüz offline değil, bu bilinçli bir sonraki-adım notu). Library'de
   bir koleksiyon şeridi + "Yeni Koleksiyon", item detail/not editöründe
-  bir "Koleksiyona Ekle" checkbox sheet'i. `is_smart` kolonu ileride AI
-  önerilerinin kullanacağı yer tutucu — hiçbir client bunu `true`
-  yazmıyor henüz.
+  bir "Koleksiyona Ekle" checkbox sheet'i.
+- **Smart Collections** (AI-öneri kısmı): `item_similarity_pairs` RPC'si
+  (`infra/supabase/migrations/0009_collection_suggestions.sql`) henüz
+  koleksiyona girmemiş item'ları ikili benzerliklerine göre döndürür —
+  Python tarafında `collection_suggestion_service.py` bunları union-find
+  ile kümelere ayırır (A~B, B~C ise A/B/C tek küme; ikili karşılaştırma
+  yeter, hepsini hepsiyle karşılaştırmak gerekmez) ve en az 3 öğeli
+  kümeleri öneri olarak döndürür. İsimlendirme AI provider varsa LLM'den
+  ("Docker Notları" gibi kısa bir ad), yoksa (veya provider hata verirse)
+  tür bazlı bir fallback'ten gelir ("PDF Grubu (3)") — kümeleme hiç key
+  gerektirmiyor, sadece isimlendirme daha iyi olur. `POST /collections/suggest`
+  endpoint'i, Library'de "Önerilen Koleksiyonlar" kartları (Oluştur →
+  `is_smart: true` ile gerçek koleksiyon oluşturur; Yoksay → sadece bu
+  oturum için gizler, sunucuya yazılmaz çünkü öneriler her seferinde
+  yeniden hesaplanıyor).
 
-Backend: 50 test yeşil (8 yeni: query_parser). Mobile: `flutter analyze`
-temiz, 30 test yeşil (4 yeni: Collections), uygulama simülatörde
-(iPhone 17 Pro) regresyonsuz derlenip açılıyor — mevcut not/görsel
-verisi korunmuş durumda görüldü, Collections şeridi canlı Supabase
-projesine karşı (gerçek realtime subscription ile) doğrulandı. Gerçek
-OpenAI key olmadığından hybrid arama, related items ve duplicate
-detection'ın gerçek embedding/metin kalitesiyle canlı davranışı henüz
-görülmedi (REST seviyesinde sahte ama kontrollü embedding'lerle
-doğrulandı); doğal dil filtreleme ve Collections key gerektirmediği
-için tam doğrulandı.
+Backend: 58 test yeşil (8 query_parser + 8 collection_suggestion_service).
+Mobile: `flutter analyze` temiz, 34 test yeşil (4 Collections + 4
+suggestion kartı), uygulama simülatörde (iPhone 17 Pro) regresyonsuz
+derlenip açılıyor — mevcut not/görsel verisi korunmuş durumda görüldü,
+Collections şeridi canlı Supabase projesine karşı (gerçek realtime
+subscription ile) doğrulandı; backend kapalıyken suggestion kartı
+sessizce hiç render olmuyor (hata banner'ı yok), backend'in
+ulaşılamaması bekleneni yaptı. Gerçek OpenAI key olmadığından hybrid
+arama, related items, duplicate detection ve Smart Collections
+isimlendirmesinin gerçek kalitesi henüz canlı görülmedi (REST
+seviyesinde sahte ama kontrollü embedding'lerle doğrulandı); doğal dil
+filtreleme, Collections ve Smart Collections'ın kümeleme kısmı key
+gerektirmediği için tam doğrulandı.
 
-Sıradaki adım: **bir OpenAI key ekleyip Faz 4-9'un tamamını gerçek
-veriyle uçtan uca görmek** — ya da Smart Collections'ın AI-öneri
-kısmını yazmak (var olan item embedding'lerini kümeleyip "Docker ile
-ilgili 6 şey buldum, koleksiyon yapayım mı?" gibi bir öneri üretmek).
+Sıradaki adım: **bir OpenAI key ekleyip Faz 1-9'un tamamını gerçek
+veriyle uçtan uca görmek** — dokümandaki 71 maddenin kod tarafı
+tamamlandı, geriye kalan tek şey bunu gerçek verilerle izlemek.

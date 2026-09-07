@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lifesearch/features/collections/presentation/providers/collection_providers.dart';
+import 'package:lifesearch/features/collections/presentation/providers/collection_suggestion_providers.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
 import 'package:lifesearch/features/library/presentation/screens/library_screen.dart';
 
 import '../fakes/fake_collection_repository.dart';
+import '../fakes/fake_collection_suggestion_repository.dart';
 import '../fakes/fake_item_repository.dart';
 
 void main() {
@@ -16,6 +18,8 @@ void main() {
       overrides: [
         itemRepositoryProvider.overrideWithValue(repo),
         collectionRepositoryProvider.overrideWithValue(collections ?? FakeCollectionRepository()),
+        collectionSuggestionRepositoryProvider
+            .overrideWithValue(FakeCollectionSuggestionRepository()),
       ],
       child: MaterialApp.router(
         routerConfig: GoRouter(routes: [

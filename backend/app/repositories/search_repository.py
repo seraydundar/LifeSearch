@@ -65,6 +65,18 @@ class SearchRepository:
             response.raise_for_status()
             return response.json()
 
+    async def item_similarity_pairs(
+        self, *, similarity_threshold: float = 0.75, max_pairs: int = 500
+    ) -> list[dict[str, Any]]:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                f"{self._base_url}/rest/v1/rpc/item_similarity_pairs",
+                headers=self._headers,
+                json={"similarity_threshold": similarity_threshold, "max_pairs": max_pairs},
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def find_duplicate_candidate(
         self, item_id: str, *, similarity_threshold: float = 0.93
     ) -> dict[str, Any] | None:

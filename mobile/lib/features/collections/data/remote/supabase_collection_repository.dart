@@ -39,11 +39,11 @@ class SupabaseCollectionRepository implements CollectionRepository {
   }
 
   @override
-  Future<Collection> createCollection(String name) async {
+  Future<Collection> createCollection(String name, {bool isSmart = false}) async {
     try {
       final row = await _client
           .from('collections')
-          .insert({'user_id': _userId, 'name': name})
+          .insert({'user_id': _userId, 'name': name, 'is_smart': isSmart})
           .select()
           .single();
       return _toCollection(row);

@@ -24,11 +24,11 @@ class FakeCollectionRepository implements CollectionRepository {
   }
 
   @override
-  Future<Collection> createCollection(String name) async {
+  Future<Collection> createCollection(String name, {bool isSmart = false}) async {
     final collection = Collection(
       id: 'collection-${_collections.length}',
       name: name,
-      isSmart: false,
+      isSmart: isSmart,
       createdAt: DateTime.now(),
     );
     _collections.add(collection);
@@ -75,4 +75,12 @@ class FakeCollectionRepository implements CollectionRepository {
         .map((e) => e.key)
         .toList();
   }
+
+  /// (name, member item ids) for every collection created with
+  /// `isSmart: true` — lets a test assert what an "Oluştur" tap actually
+  /// produced without reaching into private state.
+  List<(String, Set<String>)> get createdSmartCollections => _collections
+      .where((c) => c.isSmart)
+      .map((c) => (c.name, _memberItemIds[c.id] ?? const <String>{}))
+      .toList();
 }

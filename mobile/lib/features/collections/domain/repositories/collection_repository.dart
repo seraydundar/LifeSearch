@@ -7,7 +7,10 @@ import '../entities/collection.dart';
 abstract interface class CollectionRepository {
   Stream<List<Collection>> watchCollections();
 
-  Future<Collection> createCollection(String name);
+  /// `isSmart: true` marks a collection created by accepting an AI
+  /// suggestion (requirements doc, section 129) rather than made by hand
+  /// — purely informational for now (e.g. a future "Smart" badge in UI).
+  Future<Collection> createCollection(String name, {bool isSmart = false});
 
   Future<void> renameCollection(String id, String name);
 
