@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/utils/go_router_refresh_stream.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
+import '../../features/collections/presentation/screens/collection_detail_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/register_screen.dart';
 import '../../features/home/presentation/screens/home_screen.dart';
@@ -66,6 +67,13 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.search,
         builder: (context, state) => const SearchHubScreen(),
+      ),
+      GoRoute(
+        path: '/collections/:id',
+        builder: (context, state) => CollectionDetailScreen(
+          collectionId: state.pathParameters['id']!,
+          name: state.extra as String? ?? '',
+        ),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>

@@ -2,16 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lifesearch/features/collections/presentation/providers/collection_providers.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
 import 'package:lifesearch/features/library/presentation/screens/library_screen.dart';
 
+import '../fakes/fake_collection_repository.dart';
 import '../fakes/fake_item_repository.dart';
 
 void main() {
-  Widget wrap(FakeItemRepository repo) {
+  Widget wrap(FakeItemRepository repo, {FakeCollectionRepository? collections}) {
     return ProviderScope(
-      overrides: [itemRepositoryProvider.overrideWithValue(repo)],
+      overrides: [
+        itemRepositoryProvider.overrideWithValue(repo),
+        collectionRepositoryProvider.overrideWithValue(collections ?? FakeCollectionRepository()),
+      ],
       child: MaterialApp.router(
         routerConfig: GoRouter(routes: [
           GoRoute(path: '/', builder: (context, state) => const LibraryScreen()),

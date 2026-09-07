@@ -14,7 +14,7 @@ Geliştirme Kuralları").
 | **6** ✅ | Image Intelligence: camera, image upload, OCR, image description/embedding | Evet |
 | **7** ✅ | RAG Chat ("Ask AI"): yalnızca kullanıcının arşivinden, kaynak göstererek cevap | Evet |
 | **8** ✅ | Audio + URL: voice note, speech-to-text, URL extraction/webpage processing | Evet |
-| **9** 🟡 | Advanced Search: hybrid search (RRF), metadata filtreleri, related items, duplicate detection | Evet |
+| **9** 🟡 | Advanced Search: hybrid search (RRF), metadata filtreleri, related items, duplicate detection, doğal dil filtreleme, Collections (temel) | Evet |
 
 ## MVP kabul kriteri (bölüm 66)
 
@@ -52,10 +52,9 @@ test edilmiş durumda.
 
 ## Faz 9 — Advanced Search (kısmi 🟡)
 
-Bölüm 21/47'deki beş alt-başlıktan dördü tamamlandı; yalnızca "Smart
-Collections" bilinçli olarak dışarıda bırakıldı (dokümanın kendisi
-"ileri aşama" olarak işaretliyor; hiç var olmayan bir Collections
-özelliğine bağımlı).
+Bölüm 21/47'deki beş alt-başlıktan dördü tamamlandı; beşincisi olan
+"Smart Collections"ın önkoşulu (düz Collections) de artık var, ama
+AI-öneri kısmı henüz yazılmadı — bu yüzden Faz 9 hâlâ kısmi.
 
 - **Hybrid search**: pgvector cosine similarity + Postgres full-text
   search (`tsvector`/`ts_rank`), Reciprocal Rank Fusion (RRF) ile
@@ -89,18 +88,30 @@ Collections" bilinçli olarak dışarıda bırakıldı (dokümanın kendisi
   embedding'e gidiyor. Search sekmesindeki filtre chip'leri her zaman
   öncelikli — bu yalnızca client hiçbir filtre göndermediğinde devreye
   giriyor, boşlukları dolduruyor.
+- **Collections** (temel — Smart Collections'ın önkoşulu): `collections`
+  + `collection_items` tabloları (`infra/supabase/migrations/0008_collections.sql`),
+  RLS ile sahiplik hem koleksiyon hem item tarafında ayrı ayrı kontrol
+  ediliyor (bir kullanıcı başkasının item'ını kendi koleksiyonuna
+  ekleyemiyor). Diğer içerik CRUD'ları gibi backend'e uğramadan
+  doğrudan Supabase'e konuşuyor (Faz 2'de item'ların başladığı gibi —
+  henüz offline değil, bu bilinçli bir sonraki-adım notu). Library'de
+  bir koleksiyon şeridi + "Yeni Koleksiyon", item detail/not editöründe
+  bir "Koleksiyona Ekle" checkbox sheet'i. `is_smart` kolonu ileride AI
+  önerilerinin kullanacağı yer tutucu — hiçbir client bunu `true`
+  yazmıyor henüz.
 
 Backend: 50 test yeşil (8 yeni: query_parser). Mobile: `flutter analyze`
-temiz, 26 test yeşil, uygulama simülatörde (iPhone 17 Pro) regresyonsuz
-derlenip açılıyor — mevcut not/görsel verisi korunmuş durumda görüldü,
-local DB migration'ı (v2→v3) veri kaybı olmadan çalıştı. Gerçek OpenAI
-key olmadığından hybrid arama, related items ve duplicate detection'ın
-gerçek embedding/metin kalitesiyle canlı davranışı henüz görülmedi
-(REST seviyesinde sahte ama kontrollü embedding'lerle doğrulandı);
-doğal dil filtreleme key gerektirmediği için kural tabanlı testlerle
-tam doğrulandı.
+temiz, 30 test yeşil (4 yeni: Collections), uygulama simülatörde
+(iPhone 17 Pro) regresyonsuz derlenip açılıyor — mevcut not/görsel
+verisi korunmuş durumda görüldü, Collections şeridi canlı Supabase
+projesine karşı (gerçek realtime subscription ile) doğrulandı. Gerçek
+OpenAI key olmadığından hybrid arama, related items ve duplicate
+detection'ın gerçek embedding/metin kalitesiyle canlı davranışı henüz
+görülmedi (REST seviyesinde sahte ama kontrollü embedding'lerle
+doğrulandı); doğal dil filtreleme ve Collections key gerektirmediği
+için tam doğrulandı.
 
 Sıradaki adım: **bir OpenAI key ekleyip Faz 4-9'un tamamını gerçek
-veriyle uçtan uca görmek** — ya da Faz 9'un son bırakılan alt-başlığı
-olan Smart Collections'a geçmek (önce düz bir Collections özelliği
-gerektiriyor).
+veriyle uçtan uca görmek** — ya da Smart Collections'ın AI-öneri
+kısmını yazmak (var olan item embedding'lerini kümeleyip "Docker ile
+ilgili 6 şey buldum, koleksiyon yapayım mı?" gibi bir öneri üretmek).

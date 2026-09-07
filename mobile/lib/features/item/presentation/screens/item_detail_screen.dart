@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../shared/extensions/build_context_x.dart';
+import '../../../collections/presentation/widgets/add_to_collection_sheet.dart';
 import '../../../search/domain/entities/search_result.dart';
 import '../../../search/presentation/providers/search_providers.dart';
 import '../../domain/entities/item.dart';
@@ -139,6 +140,11 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         actions: [
+          IconButton(
+            icon: const Icon(Icons.folder_outlined),
+            tooltip: 'Koleksiyona ekle',
+            onPressed: () => showAddToCollectionSheet(context, _item.id),
+          ),
           IconButton(
             icon: Icon(_item.favorite ? Icons.star : Icons.star_border),
             onPressed: _toggleFavorite,

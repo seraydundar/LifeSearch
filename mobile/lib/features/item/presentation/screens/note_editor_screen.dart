@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../shared/extensions/build_context_x.dart';
+import '../../../collections/presentation/widgets/add_to_collection_sheet.dart';
 import '../../domain/entities/item.dart';
 import '../providers/item_providers.dart';
 
@@ -75,6 +76,12 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       appBar: AppBar(
         title: Text(_isEditing ? 'Notu Düzenle' : 'Yeni Not'),
         actions: [
+          if (_isEditing)
+            IconButton(
+              icon: const Icon(Icons.folder_outlined),
+              tooltip: 'Koleksiyona ekle',
+              onPressed: () => showAddToCollectionSheet(context, widget.item!.id),
+            ),
           IconButton(
             icon: isSaving
                 ? const SizedBox(
