@@ -1,13 +1,17 @@
 # LifeSearch
 
+[![CI](https://github.com/seraydundar/LifeSearch/actions/workflows/ci.yml/badge.svg)](https://github.com/seraydundar/LifeSearch/actions/workflows/ci.yml)
+
 **Multimodal Personal AI Search Engine.** Save photos, screenshots, PDFs,
 notes, voice memos and links from daily life, then find them again with
 natural-language, semantic search — *"Google Search, but for your personal
 digital life."*
 
-> Status: early scaffolding. See [`docs/roadmap.md`](docs/roadmap.md) for
-> where we are and what's next. Full requirements:
-> [`docs/requirements.md`](docs/requirements.md).
+> Status: all 9 planned phases done, plus a post-Phase-9 pass that closed
+> four gaps found by re-reading the requirements doc (tags, offline
+> keyword search, structured logging, EXIF location). See
+> [`docs/roadmap.md`](docs/roadmap.md) for the phase-by-phase detail.
+> Full requirements: [`docs/requirements.md`](docs/requirements.md).
 
 ## Monorepo layout
 
@@ -83,10 +87,15 @@ environment, never in the Flutter app (see requirements doc, section 36).
 ```bash
 # Backend
 cd backend && DYLD_LIBRARY_PATH="$(brew --prefix expat)/lib" .venv/bin/pytest
+cd backend && DYLD_LIBRARY_PATH="$(brew --prefix expat)/lib" .venv/bin/ruff check .
 
 # Mobile
+cd mobile && flutter analyze
 cd mobile && flutter test
 ```
+
+Every push/PR to `main` runs the same checks in CI — see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Roadmap
 

@@ -118,9 +118,11 @@ class FakeRepo:
         )
 
     async def mark_duplicate(self, item_id, duplicate_of_item_id, similarity):
-        self.duplicate_marks.append(
-            {"item_id": item_id, "duplicate_of_item_id": duplicate_of_item_id, "similarity": similarity}
-        )
+        self.duplicate_marks.append({
+            "item_id": item_id,
+            "duplicate_of_item_id": duplicate_of_item_id,
+            "similarity": similarity,
+        })
 
     async def attach_tags(self, item_id, user_id, tag_names):
         if self.tag_error is not None:

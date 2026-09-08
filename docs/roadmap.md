@@ -260,5 +260,47 @@ local DB migration'ı (v3→v4) mevcut veri üzerinde veri kaybı olmadan
 
 Requirements dokümanının 71 maddesi ve Faz 9 sonrası taramada bulunan
 dört boşluğun (tags, offline keyword search, structured logging,
-konum/EXIF) hepsi artık kod tarafında tamam. Sıradaki adım: **bir
-OpenAI key ekleyip her şeyi gerçek veriyle uçtan uca görmek.**
+konum/EXIF) hepsi artık kod tarafında tamam.
+
+## Dokümanın dışında — mühendislik/ürünleştirme kalemleri
+
+Requirements dokümanının kapsamı bitince, kod tabanı tekrar dokümanın
+kendisinin (bölüm 53-56, 49-52) hâlâ karşılanmamış bıraktığı yerler için
+tarandı. Öncelik sırasıyla:
+
+### CI/CD ✅
+
+Bölüm 53-56: *"CI/CD: GitHub Actions (flutter analyze, flutter test,
+backend lint, pytest)"* — `.github/workflows/` klasörü var ama boştu.
+
+- `.github/workflows/ci.yml`: `main`'e her push/PR'da iki bağımsız job —
+  **backend** (`ruff check .` + `pytest`, Python 3.12) ve **mobile**
+  (`dart run build_runner build` — freezed/drift üretilen dosyalar
+  gitignore'da, her checkout'ta yeniden üretilmesi gerekiyor — sonra
+  `flutter analyze` + `flutter test`, Flutter 3.38.3). Bir backend
+  değişikliği mobile job'ını beklemiyor, tersi de öyle.
+- Workflow'u yazarken `ruff check .` ilk kez CI koşulunda çalıştırıldı ve
+  gerçek bir ihlal buldu (`test_processing_pipeline.py`'de 100 karakteri
+  aşan bir satır) — düzeltildi.
+- README'ye CI badge'i ve `ruff check` komutu eklendi; "early
+  scaffolding" diyen aylar önceki durum satırı güncel duruma çekildi.
+
+### Henüz yapılmayan (öncelik sırasıyla)
+
+- **Settings ekranı eksik** (bölüm 49-52): Account/Sync/Theme/Logout var;
+  AI Settings, Storage, Privacy (biometric/PIN), Export, Delete Account
+  yok.
+- **Library'de grid görünüm/sıralama yok** (bölüm 25-33): yalnızca liste,
+  hep en yeni önce.
+- **Integration testleri yok**: `integration_test` paketi pubspec'te yok,
+  yalnızca unit + widget testleri var.
+- **README yüzeysel**: 95 satır, ekran görüntüsü/mimari diyagramı yok.
+- **`flutter_secure_storage` kurulu ama kullanılmıyor**: session Supabase
+  SDK'nın kendi local storage'ında.
+- **Collections offline değil**: diğer her şey Drift + sync queue ile
+  offline çalışıyor, Collections hâlâ doğrudan Supabase'e konuşuyor.
+- **Entity extraction, Privacy mode yok** (bölüm 44-48): "ileri aşama"
+  olarak işaretli, hiç başlanmadı.
+
+Sıradaki adım: **bir OpenAI key ekleyip her şeyi gerçek veriyle uçtan
+uca görmek** — ya da yukarıdaki listeden birine devam etmek.
