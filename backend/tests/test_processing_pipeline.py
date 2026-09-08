@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from app.services.ai_provider import AIProvider
@@ -378,3 +380,35 @@ async def test_a_failing_tag_attach_does_not_fail_the_item():
 
     assert repo.status_history == ["processing", "completed"]
     assert repo.job_updates[-1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_successful_run_logs_item_id_job_id_and_a_processing_time(caplog):
+    """Requirements doc, section 53: every log line should carry the
+    identifiers that let it be traced back to a specific run, plus how
+    long it took — never the item's actual content.
+    """
+    repo = FakeRepo(item={"id": "item-18", "type": "note"}, note_content="Docker notes.")
+
+    with caplog.at_level(logging.INFO, logger="app.services.processing_pipeline"):
+        await process_item("item-18", repo, lambda: FakeProvider())
+
+    record = next(r for r in caplog.records if r.message == "item processed")
+    assert record.item_id == "item-18"
+    assert record.job_id == "job-1"
+    assert record.processing_time_ms >= 0
+    assert not hasattr(record, "note_content")  # never the content itself
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_logs_the_error_and_a_processing_time(caplog):
+    repo = FakeRepo(item={"id": "item-19", "type": "carrier_pigeon"})
+
+    with caplog.at_level(logging.WARNING, logger="app.services.processing_pipeline"):
+        await process_item("item-19", repo, lambda: FakeProvider())
+
+    record = next(r for r in caplog.records if r.message == "processing failed")
+    assert record.item_id == "item-19"
+    assert record.job_id == "job-1"
+    assert "carrier_pigeon" in record.error
+    assert record.processing_time_ms >= 0

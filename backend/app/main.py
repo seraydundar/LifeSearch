@@ -18,7 +18,7 @@ from app.api.ai.routes import router as ai_router
 from app.api.collections.routes import router as collections_router
 from app.api.search.routes import router as search_router
 from app.core.config import get_settings
-from app.core.logging import configure_logging
+from app.core.logging import configure_logging, request_logging_middleware
 
 settings = get_settings()
 configure_logging(debug=settings.debug)
@@ -36,6 +36,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last so it's the outermost layer — one structured log line per
+# request, timing everything below it including CORS handling.
+app.middleware("http")(request_logging_middleware)
 
 
 @app.get("/health", tags=["health"])

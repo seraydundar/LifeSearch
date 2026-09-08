@@ -11,6 +11,7 @@ app's request returns immediately — the item's `processing_status` and a
 """
 
 import logging
+import time
 from collections.abc import Callable
 
 from ..repositories.items_repository import SupabaseRestRepository
@@ -54,6 +55,7 @@ async def process_item(
     pipeline writes to, which infers ownership from the item itself.
     """
     job_id = await repo.create_job(item_id, job_type="chunk_and_embed")
+    started = time.monotonic()
 
     try:
         await repo.mark_job_started(job_id)
@@ -160,10 +162,28 @@ async def process_item(
 
         await repo.update_item_status(item_id, "completed")
         await repo.mark_job_completed(job_id)
+        logger.info(
+            "item processed",
+            extra={
+                "item_id": item_id,
+                "job_id": job_id,
+                "item_type": item_type,
+                "chunk_count": len(chunk_rows),
+                "processing_time_ms": round((time.monotonic() - started) * 1000, 1),
+            },
+        )
     except Exception as error:
         # Never log `text`/chunk content — only identifiers and the error
         # itself (requirements doc, section 53).
-        logger.warning("processing failed for item_id=%s: %s", item_id, error)
+        logger.warning(
+            "processing failed",
+            extra={
+                "item_id": item_id,
+                "job_id": job_id,
+                "error": str(error),
+                "processing_time_ms": round((time.monotonic() - started) * 1000, 1),
+            },
+        )
         await repo.update_item_status(item_id, "failed")
         await repo.mark_job_failed(job_id, str(error))
 
@@ -183,7 +203,9 @@ async def _check_for_duplicate(
         if candidate:
             await repo.mark_duplicate(item_id, candidate["item_id"], candidate["similarity"])
     except Exception as error:
-        logger.warning("duplicate check failed for item_id=%s: %s", item_id, error)
+        logger.warning(
+            "duplicate check failed", extra={"item_id": item_id, "error": str(error)}
+        )
 
 
 async def _attach_tags(
@@ -198,4 +220,4 @@ async def _attach_tags(
     try:
         await repo.attach_tags(item_id, user_id, tag_names)
     except Exception as error:
-        logger.warning("tagging failed for item_id=%s: %s", item_id, error)
+        logger.warning("tagging failed", extra={"item_id": item_id, "error": str(error)})

@@ -19,6 +19,7 @@ import httpx
 from fastapi import Header, HTTPException, status
 
 from .config import get_settings
+from .logging import user_id_var
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,4 +60,8 @@ async def get_current_user(authorization: str = Header(default="")) -> CurrentUs
         )
 
     body = response.json()
+    # Every log line for the rest of this request now carries this user's
+    # id, without threading it through every function signature — see
+    # core/logging.py.
+    user_id_var.set(body["id"])
     return CurrentUser(id=body["id"], email=body.get("email"), access_token=token)

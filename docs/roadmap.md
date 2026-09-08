@@ -188,15 +188,46 @@ Backend değişmedi (tamamen mobil tarafında). Mobile: `flutter analyze`
 temiz, 49 test yeşil (8 LocalSearchDataSource + 3 OfflineFallbackSearchRepository).
 Simülatörde regresyonsuz derlenip açıldı.
 
-### Henüz yapılmayanlar
+### Structured logging ✅
 
-- **Structured logging**: bölüm 53 `request_id`/`user_id`/`job_id`/
-  `item_id`/`processing_time` istiyor; şu an backend'de toplam 2 log
-  satırı var, ikisi de sadece hata durumunda.
+Bölüm 53: *"request_id, user_id, job_id, item_id, processing_time,
+error"* — backend'de toplam 2 log satırı vardı, ikisi de sadece hata
+durumunda; artık her satır tek bir JSON objesi ve gerektiğinde bu
+alanların hepsini taşıyor.
+
+- `core/logging.py`: `_JsonFormatter` her satırı `{timestamp, level,
+  logger, message, ...extra}` şeklinde tek satır JSON'a çeviriyor —
+  `extra={}` ile geçilmeyen alanlar (ör. `request_id` bir background
+  task içinde `None` ise) çıktıya hiç girmiyor, gürültü yaratmıyor.
+- `request_id`/`user_id`, her fonksiyon imzasından geçirmek yerine
+  `contextvars` ile taşınıyor — her istek kendi asyncio Task'ında
+  çalıştığı için (PEP 567) bir isteğin değerleri başka bir isteğe asla
+  sızmıyor. `_ContextFilter` bunu handler seviyesinde her log satırına
+  damgalıyor (logger seviyesinde değil — `Logger.filter()` yalnızca
+  çağrıyı yapan logger'ın kendi filtrelerine bakıyor, root'unkilere
+  değil; bu ayrım bir testte yanlış çıkıp düzeltildi).
+- `request_logging_middleware`: her istek için tek bir satır
+  (method/path/status_code/processing_time_ms), asla body/query içeriği
+  — `X-Request-Id` yanıt header'ı olarak da geri dönüyor, mobil taraftan
+  gelen bir hata raporu sunucu loglarıyla eşleştirilebilsin diye.
+- `core/security.py`: `get_current_user()` doğrulama sonrası
+  `user_id_var`'ı set ediyor — o andan sonraki her log satırı (AI
+  pipeline'ın içine kadar) bu kullanıcıyı taşıyor.
+- `processing_pipeline.py`: "item processed" (item_id, job_id,
+  item_type, chunk_count, processing_time_ms) ve zenginleştirilmiş
+  "processing failed" satırları; duplicate/tagging best-effort
+  satırları da item_id/error alanlarıyla structured hale geldi.
+
+Backend: 76 test yeşil (7 test_logging.py + 2 yeni processing_pipeline
+testi — caplog ile gerçek log kayıtlarının alanlarını doğruluyor).
+Mobile değişmedi.
+
+### Henüz yapılmayan
+
 - **Konum (location)**: `items.latitude/longitude/captured_at` kolonları
   Faz 4'ten beri duruyor, hiç kullanılmıyor — fotoğraf eklerken EXIF'ten
   okunabilir.
 
 Sıradaki adım: **bir OpenAI key ekleyip Faz 1-9'un tamamını gerçek
-veriyle uçtan uca görmek** — ya da yukarıdaki iki boşluktan birine devam
+veriyle uçtan uca görmek** — ya da yukarıdaki son boşluğa devam
 etmek.
