@@ -20,6 +20,7 @@ from .ai_provider import AIProvider
 from .chunking_service import chunk_text
 from .document_service import extract_pdf_text, normalize_text
 from .embedding_service import embed_chunks, format_embedding_literal
+from .exif_service import extract_exif_metadata
 from .ocr_service import extract_text as extract_ocr_text
 from .tagging_service import generate_tags
 from .url_service import fetch_and_extract
@@ -90,11 +91,20 @@ async def process_item(
             ocr_text = extract_ocr_text(analysis)
             description = analysis["description"]
             image_tags = analysis.get("tags") or []
+            exif_data = extract_exif_metadata(image_bytes)
 
             # AI-generated title/description replace the filename-based
-            # placeholder set at upload time (requirements doc, section 14).
+            # placeholder set at upload time (requirements doc, section 14);
+            # EXIF location/capture time (section 8-12) is `None` for most
+            # photos (screenshots, downloaded images, location off) and
+            # that's fine — it's optional metadata, not a failure.
             await repo.update_item_metadata(
-                item_id, title=analysis["title"], description=description
+                item_id,
+                title=analysis["title"],
+                description=description,
+                latitude=exif_data["latitude"],
+                longitude=exif_data["longitude"],
+                captured_at=exif_data["captured_at"],
             )
             await repo.replace_item_content(
                 item_id, raw_text=description, ocr_text=ocr_text, ai_description=description

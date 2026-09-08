@@ -121,6 +121,11 @@ class SyncService {
         duplicateOfItemId: Value(row['duplicate_of_item_id'] as String?),
         duplicateSimilarity: Value((row['duplicate_similarity'] as num?)?.toDouble()),
         duplicateDismissed: Value(row['duplicate_dismissed'] as bool? ?? false),
+        latitude: Value((row['latitude'] as num?)?.toDouble()),
+        longitude: Value((row['longitude'] as num?)?.toDouble()),
+        capturedAt: Value(
+          row['captured_at'] == null ? null : DateTime.parse(row['captured_at'] as String),
+        ),
         syncStatus: const Value('synced'),
       ));
     }

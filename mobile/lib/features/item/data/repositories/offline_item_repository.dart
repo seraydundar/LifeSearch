@@ -50,6 +50,9 @@ class OfflineItemRepository implements ItemRepository {
         duplicateOfItemId: row.duplicateOfItemId,
         duplicateSimilarity: row.duplicateSimilarity,
         duplicateDismissed: row.duplicateDismissed,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        capturedAt: row.capturedAt,
       );
 
   @override

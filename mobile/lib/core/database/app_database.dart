@@ -13,7 +13,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.connection);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -31,6 +31,14 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(localItems, localItems.duplicateOfItemId);
             await m.addColumn(localItems, localItems.duplicateSimilarity);
             await m.addColumn(localItems, localItems.duplicateDismissed);
+          }
+          // v4 (Faz 9 sonrası — Konum/EXIF): mirrors the backend's
+          // items.latitude/longitude/captured_at columns, populated from
+          // a photo's EXIF at processing time.
+          if (from < 4) {
+            await m.addColumn(localItems, localItems.latitude);
+            await m.addColumn(localItems, localItems.longitude);
+            await m.addColumn(localItems, localItems.capturedAt);
           }
         },
       );

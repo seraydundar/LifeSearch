@@ -42,5 +42,11 @@ sealed class Item with _$Item {
     String? duplicateOfItemId,
     double? duplicateSimilarity,
     @Default(false) bool duplicateDismissed,
+    // EXIF-derived capture location/time (requirements doc, section
+    // 8-12) — set by the backend pipeline from a photo's EXIF; `null`
+    // for screenshots, downloaded images, or location-off photos.
+    double? latitude,
+    double? longitude,
+    DateTime? capturedAt,
   }) = _Item;
 }

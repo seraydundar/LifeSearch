@@ -222,12 +222,43 @@ Backend: 76 test yeşil (7 test_logging.py + 2 yeni processing_pipeline
 testi — caplog ile gerçek log kayıtlarının alanlarını doğruluyor).
 Mobile değişmedi.
 
-### Henüz yapılmayan
+### Konum (EXIF) ✅
 
-- **Konum (location)**: `items.latitude/longitude/captured_at` kolonları
-  Faz 4'ten beri duruyor, hiç kullanılmıyor — fotoğraf eklerken EXIF'ten
-  okunabilir.
+`items.latitude/longitude/captured_at` kolonları Faz 4'ten beri
+duruyordu (`infra/supabase/migrations/0001_init.sql`), hiç
+kullanılmıyordu — bu dördüncü ve son boşluk, yeni bir Supabase
+migrasyonu gerektirmedi, kolonlar zaten canlıydı.
 
-Sıradaki adım: **bir OpenAI key ekleyip Faz 1-9'un tamamını gerçek
-veriyle uçtan uca görmek** — ya da yukarıdaki son boşluğa devam
-etmek.
+- `exif_service.py` (yeni, Pillow ile): bir fotoğrafın EXIF'inden GPS
+  koordinatlarını (derece/dakika/saniye'den ondalığa çevirerek, N/S/E/W
+  referanslarına göre işaretleyerek) ve `DateTimeOriginal`'i çıkarır.
+  Screenshot'lar, indirilen görseller, konum kapalıyken çekilmiş
+  fotoğraflar gibi EXIF'i olmayan/eksik her durumda hata fırlatmadan
+  `None` döner — bu isteğe bağlı metadata, pipeline'ı asla düşürmemeli.
+- `processing_pipeline.py`: image/screenshot dalında `analyze_image`
+  çağrısının yanına tek bir yerel EXIF okuma eklendi (AI provider
+  gerektirmiyor), sonucu `update_item_metadata`'nın yeni
+  `latitude`/`longitude`/`captured_at` parametreleriyle tek PATCH'te
+  yazıyor.
+- Mobil: `Item` entity'sine 3 yeni alan, local Drift şeması v3→v4
+  (`latitude`, `longitude`, `capturedAt` kolonları — `SyncService` pull
+  aşamasında dolduruluyor). Item detail'de "Çekim" tarihi satırı ve
+  koordinatları gösteren, dokunulunca Maps'i açan bir "Konum" satırı
+  (reverse geocoding yok — ayrı bir API/key gerektirir, ham koordinat
+  yeterli).
+
+Backend: 85 test yeşil (7 test_exif_service.py + 2 yeni
+processing_pipeline testi — biri gerçek GPS/tarih EXIF'i gömülü bir
+JPEG ile, biri EXIF'siz düz bir fotoğrafla). Mobile: `flutter analyze`
+temiz, 49 test (değişmedi — location UI'ı için ayrı bir ekran testi
+yazılmadı, item_detail_screen.dart'ın hiç kendi test dosyası yok, sadece
+alt widget'ları test ediliyor, mevcut kalıpla tutarlı); simülatörde
+local DB migration'ı (v3→v4) mevcut veri üzerinde veri kaybı olmadan
+çalıştı.
+
+---
+
+Requirements dokümanının 71 maddesi ve Faz 9 sonrası taramada bulunan
+dört boşluğun (tags, offline keyword search, structured logging,
+konum/EXIF) hepsi artık kod tarafında tamam. Sıradaki adım: **bir
+OpenAI key ekleyip her şeyi gerçek veriyle uçtan uca görmek.**

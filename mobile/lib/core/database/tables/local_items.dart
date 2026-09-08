@@ -35,6 +35,14 @@ class LocalItems extends Table {
   RealColumn get duplicateSimilarity => real().nullable()();
   BoolColumn get duplicateDismissed => boolean().withDefault(const Constant(false))();
 
+  /// EXIF-derived capture location/time (requirements doc, section
+  /// 8-12) — only ever set for photos with GPS EXIF; `null` for
+  /// everything else (screenshots, downloaded images, location off).
+  /// See backend/app/services/exif_service.py.
+  RealColumn get latitude => real().nullable()();
+  RealColumn get longitude => real().nullable()();
+  DateTimeColumn get capturedAt => dateTime().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }

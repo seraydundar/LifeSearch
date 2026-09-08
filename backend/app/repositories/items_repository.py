@@ -91,17 +91,32 @@ class SupabaseRestRepository:
             insert_response.raise_for_status()
 
     async def update_item_metadata(
-        self, item_id: str, *, title: str | None = None, description: str | None = None
+        self,
+        item_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        captured_at: datetime | None = None,
     ) -> None:
         """AI-generated title/description for an image (requirements doc,
         section 14's Dell-monitor example) — only overwrites the fields
-        that are actually given.
+        that are actually given. `latitude`/`longitude`/`captured_at`
+        come from EXIF instead (section 8-12), not the AI provider —
+        see `services/exif_service.py`.
         """
         fields: dict[str, Any] = {}
         if title:
             fields["title"] = title
         if description:
             fields["description"] = description
+        if latitude is not None:
+            fields["latitude"] = latitude
+        if longitude is not None:
+            fields["longitude"] = longitude
+        if captured_at is not None:
+            fields["captured_at"] = captured_at.isoformat()
         if not fields:
             return
         async with httpx.AsyncClient(timeout=15.0) as client:

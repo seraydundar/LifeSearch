@@ -204,6 +204,10 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
             _MetaRow(label: 'Dosya adı', value: _item.originalFilename ?? '—'),
           _MetaRow(label: 'Tür', value: _item.mimeType ?? '—'),
           _MetaRow(label: 'Eklenme', value: DateFormat('d MMM y, HH:mm').format(_item.createdAt)),
+          if (_item.capturedAt != null)
+            _MetaRow(label: 'Çekim', value: DateFormat('d MMM y, HH:mm').format(_item.capturedAt!)),
+          if (_item.latitude != null && _item.longitude != null)
+            _LocationRow(latitude: _item.latitude!, longitude: _item.longitude!),
           const SizedBox(height: 12),
           TagsRow(itemId: _item.id),
           const SizedBox(height: 24),
@@ -361,6 +365,43 @@ class _RelatedCard extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// EXIF capture location (requirements doc, section 8-12) — tapping opens
+/// it in Maps. Coordinates are shown as-is (no reverse geocoding — that
+/// needs its own API/key) rounded to ~11m precision, which is plenty for
+/// "where was I when I took this".
+class _LocationRow extends StatelessWidget {
+  const _LocationRow({required this.latitude, required this.longitude});
+
+  final double latitude;
+  final double longitude;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: () => launchUrl(
+        Uri.parse('https://maps.apple.com/?ll=$latitude,$longitude'),
+        mode: LaunchMode.externalApplication,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            SizedBox(width: 100, child: Text('Konum', style: theme.textTheme.bodySmall)),
+            Expanded(
+              child: Text(
+                '${latitude.toStringAsFixed(4)}, ${longitude.toStringAsFixed(4)}',
+                style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.primary),
+              ),
+            ),
+            Icon(Icons.open_in_new, size: 14, color: theme.colorScheme.primary),
+          ],
         ),
       ),
     );

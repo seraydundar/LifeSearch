@@ -1,9 +1,27 @@
 import logging
+from datetime import datetime
+from io import BytesIO
 
 import pytest
+from PIL import ExifTags, Image
 
 from app.services.ai_provider import AIProvider
 from app.services.processing_pipeline import process_item
+
+
+def _jpeg_with_exif(*, lat: float, lon: float, when: str) -> bytes:
+    image = Image.new("RGB", (4, 4), color="red")
+    exif = image.getexif()
+    exif[ExifTags.Base.DateTimeOriginal] = when
+    exif[ExifTags.IFD.GPSInfo] = {
+        ExifTags.GPS.GPSLatitudeRef: "N" if lat >= 0 else "S",
+        ExifTags.GPS.GPSLatitude: (abs(lat), 0.0, 0.0),
+        ExifTags.GPS.GPSLongitudeRef: "E" if lon >= 0 else "W",
+        ExifTags.GPS.GPSLongitude: (abs(lon), 0.0, 0.0),
+    }
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", exif=exif.tobytes())
+    return buffer.getvalue()
 
 
 class FakeProvider(AIProvider):
@@ -74,8 +92,23 @@ class FakeRepo:
     async def replace_chunks(self, item_id, chunks):
         self.inserted_chunks = chunks
 
-    async def update_item_metadata(self, item_id, *, title=None, description=None):
-        self.metadata_updates.append({"title": title, "description": description})
+    async def update_item_metadata(
+        self,
+        item_id,
+        *,
+        title=None,
+        description=None,
+        latitude=None,
+        longitude=None,
+        captured_at=None,
+    ):
+        self.metadata_updates.append({
+            "title": title,
+            "description": description,
+            "latitude": latitude,
+            "longitude": longitude,
+            "captured_at": captured_at,
+        })
 
     async def replace_item_content(
         self, item_id, *, raw_text=None, ocr_text=None, ai_description=None
@@ -163,10 +196,16 @@ async def test_processes_an_image_end_to_end():
 
     assert repo.status_history == ["processing", "completed"]
     # AI-generated title/description overwrite the filename placeholder.
+    # `image_bytes` here is fake (not a real JPEG), so EXIF fields are None
+    # — that path is covered separately in test_exif_service.py and the
+    # dedicated pipeline test below.
     assert repo.metadata_updates == [
         {
             "title": "Dell G2724D Monitor",
             "description": "A screenshot of an online shopping page for a gaming monitor.",
+            "latitude": None,
+            "longitude": None,
+            "captured_at": None,
         }
     ]
     assert repo.content_updates[0]["ocr_text"] == "Dell G2724D 27 inch 165Hz"
@@ -244,7 +283,13 @@ async def test_processes_a_url_item_end_to_end(monkeypatch):
 
     assert repo.status_history == ["processing", "completed"]
     assert repo.metadata_updates == [
-        {"title": "Docker Compose Guide", "description": "How to run multi-container apps."}
+        {
+            "title": "Docker Compose Guide",
+            "description": "How to run multi-container apps.",
+            "latitude": None,
+            "longitude": None,
+            "captured_at": None,
+        }
     ]
     assert repo.content_updates[0]["raw_text"] == (
         "Docker Compose lets you define and run multi-container Docker applications."
@@ -412,3 +457,47 @@ async def test_a_failed_run_logs_the_error_and_a_processing_time(caplog):
     assert record.job_id == "job-1"
     assert "carrier_pigeon" in record.error
     assert record.processing_time_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_a_photo_with_gps_exif_gets_its_location_and_capture_time_saved():
+    photo = _jpeg_with_exif(lat=39.9334, lon=32.8597, when="2026:03:15 10:30:00")
+    repo = FakeRepo(
+        item={
+            "id": "item-20",
+            "type": "image",
+            "storage_path": "u1/item-20/photo.jpg",
+            "mime_type": "image/jpeg",
+        },
+        image_bytes=photo,
+    )
+
+    await process_item("item-20", repo, lambda: FakeProvider())
+
+    update = repo.metadata_updates[0]
+    assert update["latitude"] == pytest.approx(39.9334, abs=1e-3)
+    assert update["longitude"] == pytest.approx(32.8597, abs=1e-3)
+    assert update["captured_at"] == datetime(2026, 3, 15, 10, 30, 0)
+
+
+@pytest.mark.asyncio
+async def test_a_photo_with_no_exif_leaves_location_fields_empty():
+    plain_photo = BytesIO()
+    Image.new("RGB", (4, 4), color="blue").save(plain_photo, format="JPEG")
+    repo = FakeRepo(
+        item={
+            "id": "item-21",
+            "type": "image",
+            "storage_path": "u1/item-21/photo.jpg",
+            "mime_type": "image/jpeg",
+        },
+        image_bytes=plain_photo.getvalue(),
+    )
+
+    await process_item("item-21", repo, lambda: FakeProvider())  # must not raise
+
+    update = repo.metadata_updates[0]
+    assert update["latitude"] is None
+    assert update["longitude"] is None
+    assert update["captured_at"] is None
+    assert repo.status_history == ["processing", "completed"]

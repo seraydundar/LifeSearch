@@ -40,6 +40,11 @@ class RemoteItemDataSource {
         duplicateOfItemId: row['duplicate_of_item_id'] as String?,
         duplicateSimilarity: (row['duplicate_similarity'] as num?)?.toDouble(),
         duplicateDismissed: row['duplicate_dismissed'] as bool? ?? false,
+        latitude: (row['latitude'] as num?)?.toDouble(),
+        longitude: (row['longitude'] as num?)?.toDouble(),
+        capturedAt: row['captured_at'] == null
+            ? null
+            : DateTime.parse(row['captured_at'] as String),
       );
 
   /// One-shot snapshot of every item the user has — used by `SyncService`
