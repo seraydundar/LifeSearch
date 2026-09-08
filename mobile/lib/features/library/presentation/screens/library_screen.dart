@@ -5,6 +5,9 @@ import '../../../collections/presentation/widgets/collection_suggestions_section
 import '../../../collections/presentation/widgets/collections_bar.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../../item/presentation/widgets/item_list_tile.dart';
+import '../../domain/library_sort.dart';
+import '../providers/library_view_providers.dart';
+import '../widgets/item_grid_tile.dart';
 
 class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});
@@ -19,11 +22,30 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
     final itemsAsync = ref.watch(itemsProvider);
+    final viewMode = ref.watch(libraryViewModeProvider);
+    final sort = ref.watch(librarySortProvider);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Library'),
         actions: [
+          PopupMenuButton<LibrarySort>(
+            icon: const Icon(Icons.sort),
+            tooltip: 'Sırala',
+            initialValue: sort,
+            onSelected: (value) => ref.read(librarySortProvider.notifier).state = value,
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: LibrarySort.newestFirst, child: Text('En yeni')),
+              PopupMenuItem(value: LibrarySort.oldestFirst, child: Text('En eski')),
+              PopupMenuItem(value: LibrarySort.nameAscending, child: Text('İsme göre (A-Z)')),
+            ],
+          ),
+          IconButton(
+            icon: Icon(viewMode == LibraryViewMode.list ? Icons.grid_view_outlined : Icons.view_list_outlined),
+            tooltip: viewMode == LibraryViewMode.list ? 'Grid görünümü' : 'Liste görünümü',
+            onPressed: () => ref.read(libraryViewModeProvider.notifier).state =
+                viewMode == LibraryViewMode.list ? LibraryViewMode.grid : LibraryViewMode.list,
+          ),
           IconButton(
             icon: Icon(_favoritesOnly ? Icons.star : Icons.star_border),
             tooltip: 'Sadece favoriler',
@@ -41,7 +63,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (error, _) => Center(child: Text('Yüklenemedi: $error')),
               data: (items) {
-                final visible = _favoritesOnly ? items.where((i) => i.favorite).toList() : items;
+                final filtered = _favoritesOnly ? items.where((i) => i.favorite).toList() : items;
+                final visible = sortItems(filtered, sort);
                 if (visible.isEmpty) {
                   return Center(
                     child: Padding(
@@ -65,6 +88,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                         ],
                       ),
                     ),
+                  );
+                }
+                if (viewMode == LibraryViewMode.grid) {
+                  return GridView.builder(
+                    padding: const EdgeInsets.all(12),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 0.85,
+                    ),
+                    itemCount: visible.length,
+                    itemBuilder: (context, index) => ItemGridTile(item: visible[index]),
                   );
                 }
                 return ListView.separated(

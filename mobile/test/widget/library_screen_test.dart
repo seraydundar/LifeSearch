@@ -6,6 +6,7 @@ import 'package:lifesearch/features/collections/presentation/providers/collectio
 import 'package:lifesearch/features/collections/presentation/providers/collection_suggestion_providers.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
+import 'package:lifesearch/features/item/presentation/widgets/item_list_tile.dart';
 import 'package:lifesearch/features/library/presentation/screens/library_screen.dart';
 
 import '../fakes/fake_collection_repository.dart';
@@ -83,5 +84,84 @@ void main() {
 
     expect(find.text('Not favorited'), findsNothing);
     expect(find.text('Henüz favori işaretlediğin bir şey yok.'), findsOneWidget);
+  });
+
+  testWidgets('starts in list view and switches to a grid on tap', (tester) async {
+    final repo = FakeItemRepository(initialItems: [
+      Item(
+        id: '1',
+        type: ItemType.note,
+        title: 'Docker Notes',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    ]);
+    await tester.pumpWidget(wrap(repo));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ItemListTile), findsOneWidget);
+    expect(find.byType(GridView), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.grid_view_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(GridView), findsOneWidget);
+    expect(find.byType(ItemListTile), findsNothing);
+    expect(find.text('Docker Notes'), findsOneWidget);
+  });
+
+  testWidgets('sorting reorders the list', (tester) async {
+    // "Banana notes" is newer but alphabetically after "Apple notes" — the
+    // three sort modes below each put a different one first, so a passing
+    // test proves the sort actually took effect rather than coincidentally
+    // matching the default order.
+    final repo = FakeItemRepository(initialItems: [
+      Item(
+        id: '1',
+        type: ItemType.note,
+        title: 'Banana notes',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 2),
+      ),
+      Item(
+        id: '2',
+        type: ItemType.note,
+        title: 'Apple notes',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    ]);
+    await tester.pumpWidget(wrap(repo));
+    await tester.pumpAndSettle();
+
+    List<String> renderedTitles() => tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data)
+        .whereType<String>()
+        .toList();
+
+    // Default: newest first — "Banana notes" (Jan 2) before "Apple notes"
+    // (Jan 1).
+    var titles = renderedTitles();
+    expect(titles.indexOf('Banana notes'), lessThan(titles.indexOf('Apple notes')));
+
+    await tester.tap(find.byIcon(Icons.sort));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('İsme göre (A-Z)'));
+    await tester.pumpAndSettle();
+
+    titles = renderedTitles();
+    expect(titles.indexOf('Apple notes'), lessThan(titles.indexOf('Banana notes')));
+
+    await tester.tap(find.byIcon(Icons.sort));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('En eski'));
+    await tester.pumpAndSettle();
+
+    titles = renderedTitles();
+    expect(titles.indexOf('Apple notes'), lessThan(titles.indexOf('Banana notes')));
   });
 }

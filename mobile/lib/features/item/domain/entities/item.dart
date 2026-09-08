@@ -54,3 +54,10 @@ sealed class Item with _$Item {
     int? fileSizeBytes,
   }) = _Item;
 }
+
+extension ItemDisplayX on Item {
+  /// The title shown wherever a single line is needed (list/grid tiles,
+  /// sorting by name) — notes have a real `title`, uploaded files fall
+  /// back to their filename, everything else to a placeholder.
+  String get displayTitle => title ?? originalFilename ?? 'Untitled';
+}

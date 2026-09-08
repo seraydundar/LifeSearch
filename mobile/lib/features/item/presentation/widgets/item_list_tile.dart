@@ -20,7 +20,7 @@ class ItemListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       leading: CircleAvatar(child: Icon(itemTypeIcon(item.type))),
-      title: Text(item.title ?? item.originalFilename ?? 'Untitled', maxLines: 1),
+      title: Text(item.displayTitle, maxLines: 1),
       subtitle: Text(
         '${itemTypeLabel(item.type)} · ${DateFormat('d MMM').format(item.createdAt)}',
       ),

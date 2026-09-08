@@ -421,10 +421,37 @@ Simulator'ün "Features → Face ID → Enrolled" menüsünü tıklamayı
 gerektiriyor — bu makinede Accessibility izni olmadığı için
 otomatikleştirilemedi; doğrulama akışının kendisi testlerle kapsandı.
 
+### Library — grid görünüm + sıralama ✅
+
+Bölüm 25-33: *"Library (grid/list, sorting)"*. Liste her zaman zaten
+vardı; eksik olan grid görünümü ve sıralama seçenekleriydi.
+
+- `LibrarySort` (`newestFirst` — varsayılan, `oldestFirst`,
+  `nameAscending`) + saf `sortItems()` fonksiyonu — favoriler filtresinden
+  sonra, list/grid'e vermeden önce uygulanıyor. AppBar'daki yeni sıralama
+  menüsünden seçiliyor.
+- `LibraryViewMode` (`list` — varsayılan, `grid`) — AppBar'daki yeni
+  ikonla değiştiriliyor. `themeModeProvider` ile aynı desen: in-memory,
+  soğuk başlangıçta her zaman liste.
+- `ItemGridTile`: image/screenshot item'lar için gerçek bir thumbnail
+  (item detail'in tek görseli için kullandığı aynı signed-URL deseni —
+  görünür her karo kendi URL'ini istiyor), diğer tüm tipler için (ve
+  signed URL yüklenemezse) tip ikonu + başlık. Favori item'larda sağ
+  üstte yıldız rozeti.
+- `Item.displayTitle` extension'ı eklendi (`title ?? originalFilename ??
+  'Untitled'`) — daha önce dört ayrı yerde tekrarlanan bu mantığı tek
+  yerde topluyor; `ItemListTile` de buna geçirildi.
+
+Backend değişmedi (tamamen mobil). Mobile: `flutter analyze` temiz, 87 →
+100 test (+13: `sortItems` için 6 birim testi, Library'nin grid/sıralama
+kontrolleri için 2 yeni widget testi, `ItemGridTile` için 5 widget testi
+— thumbnail, signed-URL hatasında fallback, favori rozeti, not/diğer
+tiplere doğru rotaya gitme). Simülatörde canlı doğrulandı — grid görünümü
+gerçek Supabase Storage'dan gelen bir thumbnail'i doğru render etti, not
+item'ı için fallback ikon + gradient overlay doğru çalıştı.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
-- **Library'de grid görünüm/sıralama yok** (bölüm 25-33): yalnızca liste,
-  hep en yeni önce.
 - **Integration testleri yok**: `integration_test` paketi pubspec'te yok,
   yalnızca unit + widget testleri var.
 - **README yüzeysel**: ekran görüntüsü/mimari diyagramı yok.
