@@ -9,6 +9,7 @@ import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../domain/storage_usage.dart';
 import '../providers/account_providers.dart';
+import '../providers/app_lock_providers.dart';
 import '../providers/export_providers.dart';
 import '../providers/theme_mode_provider.dart';
 
@@ -25,6 +26,8 @@ class SettingsScreen extends ConsumerWidget {
     final isExporting = ref.watch(exportControllerProvider).isLoading;
     final isDeletingAccount = ref.watch(accountControllerProvider).isLoading;
     final aiAvailable = ref.watch(apiClientProvider) != null;
+    final appLockEnabled = ref.watch(appLockEnabledProvider).valueOrNull ?? false;
+    final appLockSupported = ref.watch(appLockDeviceSupportedProvider).valueOrNull ?? false;
 
     ref.listen(exportControllerProvider, (previous, next) {
       if (next.hasError) context.showErrorSnackBar('Dışa aktarılamadı.');
@@ -111,6 +114,21 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const Divider(),
           ListTile(
+            leading: const Icon(Icons.privacy_tip_outlined),
+            title: const Text('Privacy'),
+            subtitle: Text(
+              appLockSupported
+                  ? 'Uygulamayı açarken biyometrik/PIN doğrulaması iste'
+                  : 'Bu cihazda biyometrik veya PIN kilidi ayarlı değil',
+            ),
+            trailing: Switch(
+              value: appLockEnabled,
+              onChanged:
+                  appLockSupported ? (value) => _onAppLockToggle(context, ref, value) : null,
+            ),
+          ),
+          const Divider(),
+          ListTile(
             leading: isSigningOut
                 ? const SizedBox(
                     width: 20,
@@ -165,5 +183,20 @@ class SettingsScreen extends ConsumerWidget {
     );
     if (confirmed != true) return;
     await ref.read(accountControllerProvider.notifier).deleteAccount();
+  }
+
+  /// Turning app-lock ON requires a successful authentication first — so a
+  /// user with, say, unreliable Face ID doesn't lock themselves out on the
+  /// very next launch. Turning it OFF doesn't need re-auth: reaching this
+  /// switch at all means the current session is already unlocked.
+  Future<void> _onAppLockToggle(BuildContext context, WidgetRef ref, bool value) async {
+    if (value) {
+      final success = await ref.read(appLockServiceProvider).authenticate();
+      if (!success) {
+        if (context.mounted) context.showErrorSnackBar('Doğrulanamadı, kilit açılmadı.');
+        return;
+      }
+    }
+    await ref.read(appLockEnabledProvider.notifier).setEnabled(value);
   }
 }

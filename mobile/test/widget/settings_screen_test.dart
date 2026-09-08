@@ -9,11 +9,14 @@ import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
 import 'package:lifesearch/features/settings/presentation/screens/settings_screen.dart';
 
+import 'package:lifesearch/features/settings/presentation/providers/app_lock_providers.dart';
+
+import '../fakes/fake_app_lock_service.dart';
 import '../fakes/fake_auth_repository.dart';
 import '../fakes/fake_item_repository.dart';
 
 void main() {
-  Widget wrap({FakeItemRepository? repo, bool aiAvailable = false}) {
+  Widget wrap({FakeItemRepository? repo, bool aiAvailable = false, FakeAppLockService? appLock}) {
     return ProviderScope(
       overrides: [
         authRepositoryProvider.overrideWithValue(
@@ -26,6 +29,7 @@ void main() {
         // actually needed (a one-shot write, never a live `.watch()`).
         pendingSyncCountProvider.overrideWith((ref) => Stream.value(0)),
         apiClientProvider.overrideWithValue(null),
+        appLockServiceProvider.overrideWithValue(appLock ?? FakeAppLockService()),
       ],
       child: MaterialApp.router(
         // The confirm dialog's buttons use go_router's `context.pop()`
@@ -133,5 +137,58 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Backend bağlantısı ayarlanmamış'), findsOneWidget);
+  });
+
+  testWidgets('Privacy switch is disabled on a device with no biometrics/PIN set',
+      (tester) async {
+    await tester.pumpWidget(wrap(appLock: FakeAppLockService(deviceSupported: false)));
+    await tester.pumpAndSettle();
+
+    final toggle = tester.widget<Switch>(find.byType(Switch));
+    expect(toggle.value, isFalse);
+    expect(toggle.onChanged, isNull);
+  });
+
+  testWidgets('Privacy switch reflects a persisted enabled value', (tester) async {
+    await tester.pumpWidget(wrap(appLock: FakeAppLockService(initiallyEnabled: true)));
+    await tester.pumpAndSettle();
+
+    final toggle = tester.widget<Switch>(find.byType(Switch));
+    expect(toggle.value, isTrue);
+  });
+
+  testWidgets('turning Privacy on asks for authentication first, then enables it',
+      (tester) async {
+    final appLock = FakeAppLockService();
+    await tester.pumpWidget(wrap(appLock: appLock));
+    await tester.pumpAndSettle();
+
+    // Unlike "Delete Account", the Switch's Element already exists here
+    // (it's within cache extent even off-screen), so `scrollUntilVisible`
+    // short-circuits to zero drags and its single `ensureVisible` call
+    // isn't enough to make it hit-testable — drag it into view directly.
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+
+    expect(appLock.authenticateCallCount, 1);
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+  });
+
+  testWidgets('a failed authentication leaves Privacy off and shows an error',
+      (tester) async {
+    final appLock = FakeAppLockService(authenticateResult: false);
+    await tester.pumpWidget(wrap(appLock: appLock));
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+
+    expect(appLock.authenticateCallCount, 1);
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
+    expect(find.textContaining('Doğrulanamadı, kilit açılmadı.'), findsOneWidget);
   });
 }

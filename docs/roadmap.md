@@ -370,17 +370,64 @@ yapılandırılmamış backend doğru hatayı gösteriyor mu). Simülatörde can
 doğrulandı — satır doğru render oluyor (kırmızı ikon/başlık, "Tüm
 verilerini kalıcı olarak sil" alt yazısı, "Log out"un altında).
 
+### Privacy — biometric/PIN kilidi ✅
+
+Settings ekranının son eksik maddesi. `local_auth` paketiyle uygulama
+açılışına (ve arka plandan her dönüşte) bir kilit ekranı eklendi;
+`flutter_secure_storage` da böylece ilk gerçek kullanımına kavuştu (kilit
+açık/kapalı tercihini saklamak için — kendisi hassas bir değer değil,
+paketi kullanan ilk özellik bu oldu).
+
+- `AppLockService`: `local_auth`'u sarmalıyor — `authenticate()`
+  (`biometricOnly: false`, cihazın kendi PIN/passcode fallback'ine izin
+  veriyor — özellik "biometric/PIN kilidi" olarak kapsandığı için, salt
+  parmak izi/Face ID değil), `isDeviceSupported()` (cihazda biyometri
+  veya passcode yoksa Settings'teki switch'i devre dışı bırakmak için).
+  Bir plugin hatası her iki metodda da exception fırlatmak yerine
+  güvenli bir varsayılana (false) düşüyor.
+- `AppLockGate` (`MaterialApp.router`'ın `builder`'ında, tüm uygulamayı
+  sarmalıyor): kilit açıksa ve mevcut oturum henüz doğrulanmamışsa,
+  uygulamanın kendisi yerine tam ekran bir kilit ekranı gösteriyor —
+  soğuk başlangıçta, ve `WidgetsBindingObserver` ile arka plana her
+  düşüşte (`AppLifecycleState.paused`) yeniden. Yalnızca `paused`'a
+  tepki veriyor, `inactive`'e değil — paylaşım sayfası veya bildirim
+  çekmecesi gibi geçici sistem UI'ları da `inactive` tetikliyor,
+  gerçekten arka plana atılmamış bir uygulamayı gereksiz yere
+  kilitlememek için.
+- `AppLockScreen`: açılır açılmaz otomatik olarak doğrulama istiyor,
+  başarısız olursa "Doğrulanamadı — tekrar dene." ile yeniden dene
+  butonu gösteriyor.
+- Settings'te "Privacy" satırı: cihaz desteklemiyorsa switch devre dışı
+  (asla açılamayacak bir switch sunmak yerine). Kilidi AÇMAK önce
+  başarılı bir doğrulama istiyor (güvenilmez Face ID'si olan biri
+  kendini bir sonraki açılışta dışarıda bırakmasın diye); KAPATMAK
+  yeniden doğrulama istemiyor — switch'e ulaşmış olmak zaten mevcut
+  oturumun kilitli olmadığı anlamına geliyor.
+- Android: `MainActivity` `FlutterFragmentActivity`'ye çevrildi
+  (`local_auth`'ın Android tarafı biyometri promptunu bir
+  DialogFragment olarak gösteriyor — düz `FlutterActivity` bunu
+  ClassCastException ile çökertiyordu), `USE_BIOMETRIC` izni eklendi.
+  iOS: `NSFaceIDUsageDescription` eklendi.
+
+Backend değişmedi (bu tamamen mobil bir özellik). Mobile: `flutter
+analyze` temiz, 87 test yeşil (70 → 87, +17: `AppLockService` birim
+testleri — mocktail ile `LocalAuthentication`/`FlutterSecureStorage`
+mock'lanarak — ve `AppLockGate` + Settings'teki switch için widget
+testleri, arka plana düşüp yeniden kilitlenme senaryosu dahil).
+Simülatörde canlı doğrulandı — Privacy satırı doğru render oluyor,
+switch etkileşimli (simülatörün Face ID donanımı `isDeviceSupported()`
+için yeterli). Simülatörde Face ID promptunu gerçekten tetiklemek,
+Simulator'ün "Features → Face ID → Enrolled" menüsünü tıklamayı
+gerektiriyor — bu makinede Accessibility izni olmadığı için
+otomatikleştirilemedi; doğrulama akışının kendisi testlerle kapsandı.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
-- **Privacy (biometric/PIN kilidi)**: `local_auth` paketi + uygulama
-  açılışına bir kilit ekranı — kendi başına ayrı bir özellik.
 - **Library'de grid görünüm/sıralama yok** (bölüm 25-33): yalnızca liste,
   hep en yeni önce.
 - **Integration testleri yok**: `integration_test` paketi pubspec'te yok,
   yalnızca unit + widget testleri var.
 - **README yüzeysel**: ekran görüntüsü/mimari diyagramı yok.
-- **`flutter_secure_storage` kurulu ama kullanılmıyor**: session Supabase
-  SDK'nın kendi local storage'ında.
 - **Collections offline değil**: diğer her şey Drift + sync queue ile
   offline çalışıyor, Collections hâlâ doğrudan Supabase'e konuşuyor.
 - **Entity extraction yok** (bölüm 44-48): "ileri aşama" olarak

@@ -49,5 +49,7 @@
 	<string>LifeSearch needs camera access to let you add photos to your library.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>LifeSearch needs microphone access to record voice notes.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>LifeSearch uses Face ID to unlock the app when app lock is turned on.</string>
 </dict>
 </plist>
