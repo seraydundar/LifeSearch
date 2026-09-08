@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/network/api_client_provider.dart';
+import '../../../../shared/extensions/build_context_x.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../item/presentation/providers/item_providers.dart';
+import '../../domain/storage_usage.dart';
+import '../providers/export_providers.dart';
 import '../providers/theme_mode_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -14,6 +18,13 @@ class SettingsScreen extends ConsumerWidget {
     final themeMode = ref.watch(themeModeProvider);
     final isSigningOut = ref.watch(authControllerProvider).isLoading;
     final pendingSync = ref.watch(pendingSyncCountProvider).valueOrNull ?? 0;
+    final items = ref.watch(itemsProvider).valueOrNull ?? const [];
+    final isExporting = ref.watch(exportControllerProvider).isLoading;
+    final aiAvailable = ref.watch(apiClientProvider) != null;
+
+    ref.listen(exportControllerProvider, (previous, next) {
+      if (next.hasError) context.showErrorSnackBar('Dışa aktarılamadı.');
+    });
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -35,6 +46,41 @@ class SettingsScreen extends ConsumerWidget {
                   ? 'Her şey senkronize edildi'
                   : '$pendingSync değişiklik senkronize edilmeyi bekliyor',
             ),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.storage_outlined),
+            title: const Text('Storage'),
+            subtitle: Text(
+              storageTotalIsIncomplete(items)
+                  ? '${formatBytes(totalStorageBytes(items))} kullanılıyor (bazı eski öğelerin boyutu bilinmiyor)'
+                  : '${formatBytes(totalStorageBytes(items))} kullanılıyor',
+            ),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.auto_awesome_outlined),
+            title: const Text('AI Settings'),
+            subtitle: Text(
+              aiAvailable
+                  ? 'AI destekli işleme aktif — embedding, arama ve Ask AI bu sunucu üzerinden çalışıyor'
+                  : 'Backend yapılandırılmamış — AI destekli işleme (arama, Ask AI) devre dışı',
+            ),
+          ),
+          const Divider(),
+          ListTile(
+            leading: isExporting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.ios_share_outlined),
+            title: const Text('Export'),
+            subtitle: const Text('Verilerini JSON olarak dışa aktar'),
+            onTap: isExporting
+                ? null
+                : () => ref.read(exportControllerProvider.notifier).exportAndShare(),
           ),
           const Divider(),
           ListTile(

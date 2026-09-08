@@ -43,6 +43,13 @@ class LocalItems extends Table {
   RealColumn get longitude => real().nullable()();
   DateTimeColumn get capturedAt => dateTime().nullable()();
 
+  /// Recorded once at upload time (the client already knows the file's
+  /// size before uploading) — Settings' "Storage" tile sums these rather
+  /// than recursively listing every item's Storage folder. `null` for
+  /// notes/links (nothing uploaded) and for anything uploaded before
+  /// this column existed.
+  IntColumn get fileSizeBytes => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }

@@ -48,5 +48,9 @@ sealed class Item with _$Item {
     double? latitude,
     double? longitude,
     DateTime? capturedAt,
+    // Set once at upload time — Settings' "Storage" tile sums these
+    // (requirements doc, section 49-52). `null` for notes/links, and for
+    // anything uploaded before this field existed.
+    int? fileSizeBytes,
   }) = _Item;
 }

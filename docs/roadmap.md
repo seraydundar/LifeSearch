@@ -285,22 +285,58 @@ backend lint, pytest)"* — `.github/workflows/` klasörü var ama boştu.
 - README'ye CI badge'i ve `ruff check` komutu eklendi; "early
   scaffolding" diyen aylar önceki durum satırı güncel duruma çekildi.
 
+### Settings ekranı — Export + Storage + AI Settings ✅
+
+Bölüm 49-52: Account/Sync/Theme/Logout vardı; Delete Account (service_role
+key gerektiriyor — henüz yok) ve Privacy (biometric/PIN, kendi başına
+büyük bir özellik) bilinçli olarak bu turun dışında bırakıldı.
+
+- **Storage**: `items.file_size_bytes` (yeni kolon,
+  `infra/supabase/migrations/0010_item_file_size.sql`) — her item'ın
+  boyutunu, Storage'ı her item'ın klasörünü tek tek listeyerek yeniden
+  hesaplamak yerine, upload anında bir kere kaydediyor (client dosyanın
+  boyutunu zaten biliyor). Settings sekmesi bunu var olan `itemsProvider`
+  akışından topluyor — ekstra bir sorgu yok, offline'da da çalışıyor. Bu
+  alan eklenmeden önce yüklenmiş item'lar için `null` — Storage satırı bu
+  durumda "bazı eski öğelerin boyutu bilinmiyor" diyor, sessizce yanlış
+  bir toplam göstermek yerine.
+- **Export**: `ExportService` (Supabase'e doğrudan) item'ları, not
+  içeriklerini ve etiketleri tek bir JSON'a topluyor, OS'un paylaşım
+  sayfasına (`share_plus`) veriyor. Yalnızca metin/metadata — fotoğraf/
+  PDF/ses dosyalarının kendisi dahil değil, bu JSON'un içinde açıkça
+  yazıyor. Şekillendirme mantığı (`export_payload.dart`) Supabase I/O'dan
+  ayrı tutuldu ki gerçek bir client olmadan test edilebilsin.
+- **AI Settings**: salt-okunur bir bilgi satırı — backend yapılandırılmış
+  mı (`apiClientProvider != null`), embedding/arama/Ask AI'ın bu sunucu
+  üzerinden çalıştığını açıklıyor.
+- Local Drift şeması v4→v5 (`fileSizeBytes` kolonu).
+
+Backend: 85 test (değişmedi — bu üçü tamamen mobil + zaten var olan
+Supabase şeması üzerinde). Mobile: `flutter analyze` temiz, 67 test yeşil
+(18 yeni: storage_usage, export_payload, ilk kez yazılan
+settings_screen_test.dart). Simülatörde canlı doğrulandı — Storage/AI
+Settings/Export satırları doğru render oluyor, v4→v5 migration'ı mevcut
+veri üzerinde veri kaybı olmadan çalıştı.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
-- **Settings ekranı eksik** (bölüm 49-52): Account/Sync/Theme/Logout var;
-  AI Settings, Storage, Privacy (biometric/PIN), Export, Delete Account
-  yok.
+- **Delete Account**: `service_role` key gerektiriyor (henüz yok) —
+  Supabase'in admin API'sinden `auth.admin.delete_user()` çağırmak,
+  `on delete cascade` sayesinde kullanıcının tüm verisini de siler;
+  Storage'daki dosyalar ayrıca temizlenmeli.
+- **Privacy (biometric/PIN kilidi)**: `local_auth` paketi + uygulama
+  açılışına bir kilit ekranı — kendi başına ayrı bir özellik.
 - **Library'de grid görünüm/sıralama yok** (bölüm 25-33): yalnızca liste,
   hep en yeni önce.
 - **Integration testleri yok**: `integration_test` paketi pubspec'te yok,
   yalnızca unit + widget testleri var.
-- **README yüzeysel**: 95 satır, ekran görüntüsü/mimari diyagramı yok.
+- **README yüzeysel**: ekran görüntüsü/mimari diyagramı yok.
 - **`flutter_secure_storage` kurulu ama kullanılmıyor**: session Supabase
   SDK'nın kendi local storage'ında.
 - **Collections offline değil**: diğer her şey Drift + sync queue ile
   offline çalışıyor, Collections hâlâ doğrudan Supabase'e konuşuyor.
-- **Entity extraction, Privacy mode yok** (bölüm 44-48): "ileri aşama"
-  olarak işaretli, hiç başlanmadı.
+- **Entity extraction yok** (bölüm 44-48): "ileri aşama" olarak
+  işaretli, hiç başlanmadı.
 
 Sıradaki adım: **bir OpenAI key ekleyip her şeyi gerçek veriyle uçtan
 uca görmek** — ya da yukarıdaki listeden birine devam etmek.

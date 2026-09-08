@@ -45,6 +45,7 @@ class RemoteItemDataSource {
         capturedAt: row['captured_at'] == null
             ? null
             : DateTime.parse(row['captured_at'] as String),
+        fileSizeBytes: (row['file_size_bytes'] as num?)?.toInt(),
       );
 
   /// One-shot snapshot of every item the user has — used by `SyncService`
@@ -119,6 +120,7 @@ class RemoteItemDataSource {
     required String originalFilename,
     required String mimeType,
     required ItemType type,
+    int? fileSizeBytes,
   }) async {
     final storagePath = '$userId/$id/$originalFilename';
 
@@ -141,6 +143,7 @@ class RemoteItemDataSource {
         'original_filename': originalFilename,
         'mime_type': mimeType,
         'storage_path': storagePath,
+        'file_size_bytes': fileSizeBytes,
         // No worker consumes this yet — Phase 4 wires OCR/chunking/embedding.
         'processing_status': 'pending',
       });

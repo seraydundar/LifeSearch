@@ -13,7 +13,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.connection);
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -39,6 +39,11 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(localItems, localItems.latitude);
             await m.addColumn(localItems, localItems.longitude);
             await m.addColumn(localItems, localItems.capturedAt);
+          }
+          // v5 (Settings — Storage): mirrors
+          // infra/supabase/migrations/0010_item_file_size.sql.
+          if (from < 5) {
+            await m.addColumn(localItems, localItems.fileSizeBytes);
           }
         },
       );

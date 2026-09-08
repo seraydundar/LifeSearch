@@ -126,6 +126,7 @@ class SyncService {
         capturedAt: Value(
           row['captured_at'] == null ? null : DateTime.parse(row['captured_at'] as String),
         ),
+        fileSizeBytes: Value((row['file_size_bytes'] as num?)?.toInt()),
         syncStatus: const Value('synced'),
       ));
     }
@@ -175,6 +176,7 @@ class SyncService {
               originalFilename: payload['originalFilename'] as String,
               mimeType: payload['mimeType'] as String,
               type: ItemTypeX.fromDbValue(payload['type'] as String),
+              fileSizeBytes: (payload['fileSizeBytes'] as num?)?.toInt(),
             );
           default:
             // Unknown op from a future app version — drop it rather than

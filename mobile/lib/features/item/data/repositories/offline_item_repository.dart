@@ -53,6 +53,7 @@ class OfflineItemRepository implements ItemRepository {
         latitude: row.latitude,
         longitude: row.longitude,
         capturedAt: row.capturedAt,
+        fileSizeBytes: row.fileSizeBytes,
       );
 
   @override
@@ -139,6 +140,10 @@ class OfflineItemRepository implements ItemRepository {
     // free to clear before we're back online — copy it into our own
     // documents dir so a queued upload survives that.
     final persistedPath = await _persistPickedFile(id, localFilePath, originalFilename);
+    // Known immediately (no need to wait for the upload to reach Supabase)
+    // — recorded now so Settings' "Storage" tile reflects it right away,
+    // and carried in the queued payload so the remote row gets it too.
+    final fileSizeBytes = await File(persistedPath).length();
 
     await _local.upsert(LocalItemsCompanion.insert(
       id: id,
@@ -149,6 +154,7 @@ class OfflineItemRepository implements ItemRepository {
       mimeType: Value(mimeType),
       processingStatus: const Value('pending'),
       createdAt: now,
+      fileSizeBytes: Value(fileSizeBytes),
       syncStatus: const Value('pending'),
     ));
     await _queue.enqueue(
@@ -159,6 +165,7 @@ class OfflineItemRepository implements ItemRepository {
         'originalFilename': originalFilename,
         'mimeType': mimeType,
         'type': type.dbValue,
+        'fileSizeBytes': fileSizeBytes,
       },
     );
     _syncService.syncSoon();
@@ -172,6 +179,7 @@ class OfflineItemRepository implements ItemRepository {
       processingStatus: 'pending',
       favorite: false,
       createdAt: now,
+      fileSizeBytes: fileSizeBytes,
     );
   }
 
