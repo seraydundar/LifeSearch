@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lifesearch/core/network/api_client_provider.dart';
 import 'package:lifesearch/features/auth/presentation/providers/auth_providers.dart';
 import 'package:lifesearch/features/auth/domain/entities/app_user.dart';
@@ -26,7 +27,15 @@ void main() {
         pendingSyncCountProvider.overrideWith((ref) => Stream.value(0)),
         apiClientProvider.overrideWithValue(null),
       ],
-      child: const MaterialApp(home: SettingsScreen()),
+      child: MaterialApp.router(
+        // The confirm dialog's buttons use go_router's `context.pop()`
+        // (consistent with the rest of the app's confirm dialogs), which
+        // needs a real GoRouter ancestor — a plain `MaterialApp(home:)`
+        // doesn't have one.
+        routerConfig: GoRouter(routes: [
+          GoRoute(path: '/', builder: (context, state) => const SettingsScreen()),
+        ]),
+      ),
     );
   }
 
@@ -75,5 +84,54 @@ void main() {
 
     expect(find.text('Export'), findsOneWidget);
     expect(find.byIcon(Icons.ios_share_outlined), findsOneWidget);
+  });
+
+  testWidgets('tapping Delete Account asks for confirmation first', (tester) async {
+    await tester.pumpWidget(wrap());
+    await tester.pumpAndSettle();
+
+    // A plain `ListView(children:)` still only mounts elements within the
+    // viewport + cache extent — `ensureVisible` needs the element to
+    // already exist, so scroll it into view instead.
+    await tester.scrollUntilVisible(find.text('Delete Account'), 200);
+    await tester.tap(find.text('Delete Account'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bu işlem GERİ ALINAMAZ. Tüm içeriklerin, koleksiyonların ve hesabın '
+        'kalıcı olarak silinecek.'), findsOneWidget);
+  });
+
+  testWidgets('cancelling the confirmation does not attempt deletion', (tester) async {
+    await tester.pumpWidget(wrap());
+    await tester.pumpAndSettle();
+
+    // A plain `ListView(children:)` still only mounts elements within the
+    // viewport + cache extent — `ensureVisible` needs the element to
+    // already exist, so scroll it into view instead.
+    await tester.scrollUntilVisible(find.text('Delete Account'), 200);
+    await tester.tap(find.text('Delete Account'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Vazgeç'));
+    await tester.pumpAndSettle();
+
+    // No backend configured (apiClientProvider is null) — if deletion had
+    // been attempted, this error snackbar would be showing.
+    expect(find.textContaining('Backend bağlantısı ayarlanmamış'), findsNothing);
+  });
+
+  testWidgets('confirming without a configured backend surfaces the error', (tester) async {
+    await tester.pumpWidget(wrap());
+    await tester.pumpAndSettle();
+
+    // A plain `ListView(children:)` still only mounts elements within the
+    // viewport + cache extent — `ensureVisible` needs the element to
+    // already exist, so scroll it into view instead.
+    await tester.scrollUntilVisible(find.text('Delete Account'), 200);
+    await tester.tap(find.text('Delete Account'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hesabı Sil'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Backend bağlantısı ayarlanmamış'), findsOneWidget);
   });
 }

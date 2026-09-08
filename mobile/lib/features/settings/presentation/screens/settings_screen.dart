@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../../core/error/failure.dart';
 import '../../../../core/network/api_client_provider.dart';
 import '../../../../shared/extensions/build_context_x.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../domain/storage_usage.dart';
+import '../providers/account_providers.dart';
 import '../providers/export_providers.dart';
 import '../providers/theme_mode_provider.dart';
 
@@ -20,10 +23,18 @@ class SettingsScreen extends ConsumerWidget {
     final pendingSync = ref.watch(pendingSyncCountProvider).valueOrNull ?? 0;
     final items = ref.watch(itemsProvider).valueOrNull ?? const [];
     final isExporting = ref.watch(exportControllerProvider).isLoading;
+    final isDeletingAccount = ref.watch(accountControllerProvider).isLoading;
     final aiAvailable = ref.watch(apiClientProvider) != null;
 
     ref.listen(exportControllerProvider, (previous, next) {
       if (next.hasError) context.showErrorSnackBar('Dışa aktarılamadı.');
+    });
+    ref.listen(accountControllerProvider, (previous, next) {
+      if (next.hasError) {
+        context.showErrorSnackBar(
+          next.error is Failure ? (next.error! as Failure).message : 'Hesap silinemedi.',
+        );
+      }
     });
 
     return Scaffold(
@@ -110,8 +121,49 @@ class SettingsScreen extends ConsumerWidget {
             title: Text('Log out', style: TextStyle(color: Theme.of(context).colorScheme.error)),
             onTap: isSigningOut ? null : () => ref.read(authControllerProvider.notifier).signOut(),
           ),
+          const Divider(),
+          ListTile(
+            leading: isDeletingAccount
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(Icons.delete_forever_outlined, color: Theme.of(context).colorScheme.error),
+            title: Text(
+              'Delete Account',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+            subtitle: const Text('Tüm verilerini kalıcı olarak sil'),
+            onTap: isDeletingAccount ? null : () => _confirmDeleteAccount(context, ref),
+          ),
         ],
       ),
     );
+  }
+
+  Future<void> _confirmDeleteAccount(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hesabını sil'),
+        content: const Text(
+          'Bu işlem GERİ ALINAMAZ. Tüm içeriklerin, koleksiyonların ve hesabın '
+          'kalıcı olarak silinecek.',
+        ),
+        actions: [
+          TextButton(onPressed: () => context.pop(false), child: const Text('Vazgeç')),
+          TextButton(
+            onPressed: () => context.pop(true),
+            child: Text(
+              'Hesabı Sil',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ref.read(accountControllerProvider.notifier).deleteAccount();
   }
 }

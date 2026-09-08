@@ -318,12 +318,60 @@ settings_screen_test.dart). Simülatörde canlı doğrulandı — Storage/AI
 Settings/Export satırları doğru render oluyor, v4→v5 migration'ı mevcut
 veri üzerinde veri kaybı olmadan çalıştı.
 
+### Delete Account ✅
+
+Bölüm 49-52'nin geri kalanı: Settings ekranındaki son madde. `on delete
+cascade` sayesinde `auth.users` satırını silmek kullanıcının tüm verisini
+(items, notes, collections, ...) otomatik temizliyor; buna ek olarak
+Storage'daki dosyalar ayrıca (best-effort) siliniyor.
+
+- Backend — `DELETE /account/`:
+  - `AccountRepository.delete_own_files()`: kullanıcının **kendi**
+    token'ıyla (mobile'ın tekil item silmede kullandığı aynı RLS izni)
+    `storage_path`'i olan item'ları çekip Storage'dan
+    `{"prefixes": [...]}` ile toplu siliyor. Bu adım başarısız olsa bile
+    (`logger.warning`, kullanıcıya hata dönmüyor) auth silme adımına
+    devam ediliyor — kısmi bir Storage temizliği, tüm işlemi
+    engellememeli.
+  - `AccountRepository.delete_auth_user()`: Supabase Admin Auth API,
+    `DELETE {url}/auth/v1/admin/users/{user_id}`, `service_role` key
+    ile. Key yapılandırılmamışsa (`backend/.env`'de hâlâ boş —
+    OpenAI key'le aynı kategoride, bekleyen bir secret)
+    `AccountDeletionUnavailable` fırlatıyor, route bunu `503`'e
+    çeviriyor.
+  - `account_service.delete_account()`: yukarıdaki iki adımı sırayla
+    çağıran, iş mantığını repo'dan ayıran ince bir servis katmanı.
+- Mobile — Settings'te "Delete Account" satırı (kırmızı, "Log out"un
+  altında): `showDialog` ile "Bu işlem GERİ ALINAMAZ..." onayı istiyor,
+  onaylanırsa `AccountService.deleteAccount()` → backend `204` dönerse
+  `authControllerProvider.notifier.signOut()` ile yerel session'ı da
+  temizliyor (go_router redirect zaten `/login`'e atıyor). Backend
+  yapılandırılmamışsa (`apiClientProvider == null`, dev'de sık
+  karşılaşılan durum) kullanıcıya "Backend bağlantısı ayarlanmamış"
+  hatası gösteriliyor, sessizce başarısız olmuyor.
+- **Canlı uçtan uca doğrulanmadı**: `SUPABASE_SERVICE_ROLE_KEY` henüz
+  `backend/.env`'de yok, dolayısıyla gerçek bir hesabı gerçekten silme
+  yolu hiç çalıştırılmadı — yalnızca mantık (`FakeAccountRepo` ile) test
+  edildi. Key eklenince önce tek kullanımlık bir test hesabıyla
+  doğrulanmalı.
+- İki gerçek Flutter test hatası bulunup düzeltildi: (1) düz
+  `ListView(children:)` viewport dışındaki elemanları mount etmiyor,
+  `ensureVisible` "No element" veriyordu — `scrollUntilVisible` ile
+  çözüldü; (2) onay dialogunun `context.pop()` çağrısı (go_router'ın
+  uzantısı, uygulamanın var olan onay-dialog deseni) test harness'inde
+  düz `MaterialApp(home:)` yerine `MaterialApp.router(...)` gerektirdi.
+
+Backend: 89 test (85 → 89, +4: dosya temizliği önce çalışıyor mu, dosya
+temizliği başarısız olsa da auth silme engellenmiyor mu,
+`AccountDeletionUnavailable` doğru mu yayılıyor, başka bir auth hatası
+doğru mu yayılıyor). Mobile: `flutter analyze` temiz, 70 test yeşil (67 →
+70, +3: onay isteniyor mu, "Vazgeç" silmeyi engelliyor mu, "Hesabı Sil" +
+yapılandırılmamış backend doğru hatayı gösteriyor mu). Simülatörde canlı
+doğrulandı — satır doğru render oluyor (kırmızı ikon/başlık, "Tüm
+verilerini kalıcı olarak sil" alt yazısı, "Log out"un altında).
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
-- **Delete Account**: `service_role` key gerektiriyor (henüz yok) —
-  Supabase'in admin API'sinden `auth.admin.delete_user()` çağırmak,
-  `on delete cascade` sayesinde kullanıcının tüm verisini de siler;
-  Storage'daki dosyalar ayrıca temizlenmeli.
 - **Privacy (biometric/PIN kilidi)**: `local_auth` paketi + uygulama
   açılışına bir kilit ekranı — kendi başına ayrı bir özellik.
 - **Library'de grid görünüm/sıralama yok** (bölüm 25-33): yalnızca liste,
