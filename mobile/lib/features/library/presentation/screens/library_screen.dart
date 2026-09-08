@@ -100,7 +100,18 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                       childAspectRatio: 0.85,
                     ),
                     itemCount: visible.length,
-                    itemBuilder: (context, index) => ItemGridTile(item: visible[index]),
+                    itemBuilder: (context, index) {
+                      final item = visible[index];
+                      // A stable per-item key, not just position — without
+                      // it, Flutter reuses a tile's State by position when
+                      // the sorted list reorders (e.g. a new note becomes
+                      // newest and pushes everything else down a slot).
+                      // ItemGridTile fetches its signed URL once in
+                      // initState(), so a reused tile would keep showing
+                      // the *previous* occupant's already-resolved
+                      // thumbnail under the new item's title.
+                      return ItemGridTile(key: ValueKey(item.id), item: item);
+                    },
                   );
                 }
                 return ListView.separated(
