@@ -11,6 +11,7 @@ import '../../../search/presentation/providers/search_providers.dart';
 import '../../domain/entities/item.dart';
 import '../providers/item_providers.dart';
 import '../widgets/item_type_icon.dart';
+import '../widgets/tags_row.dart';
 
 /// Read-only detail view for non-note items (image/pdf/document/...).
 /// Notes use `NoteEditorScreen` instead — see `app_router.dart`.
@@ -203,6 +204,8 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
             _MetaRow(label: 'Dosya adı', value: _item.originalFilename ?? '—'),
           _MetaRow(label: 'Tür', value: _item.mimeType ?? '—'),
           _MetaRow(label: 'Eklenme', value: DateFormat('d MMM y, HH:mm').format(_item.createdAt)),
+          const SizedBox(height: 12),
+          TagsRow(itemId: _item.id),
           const SizedBox(height: 24),
           if (_item.type == ItemType.url)
             FilledButton.icon(

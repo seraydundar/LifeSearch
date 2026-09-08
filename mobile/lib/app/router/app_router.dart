@@ -66,7 +66,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: AppRoutes.search,
-        builder: (context, state) => const SearchHubScreen(),
+        // `extra`, when given, is an initial query to run immediately —
+        // used by tag chips (see item_detail_screen.dart) to jump
+        // straight to that tag's results instead of an empty search box.
+        builder: (context, state) => SearchHubScreen(initialQuery: state.extra as String?),
       ),
       GoRoute(
         path: '/collections/:id',

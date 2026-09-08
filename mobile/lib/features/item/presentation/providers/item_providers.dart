@@ -78,6 +78,13 @@ final pendingSyncCountProvider = StreamProvider<int>((ref) {
   return ref.watch(syncQueueDataSourceProvider).watchPendingCount();
 });
 
+/// AI-generated tags for an item (requirements doc, section 8-12) — item
+/// detail/note editor show these; empty while processing hasn't reached
+/// the tagging step yet, or if it produced none.
+final itemTagsProvider = FutureProvider.autoDispose.family<List<String>, String>((ref, itemId) {
+  return ref.watch(itemRepositoryProvider).fetchTags(itemId);
+});
+
 final noteEditorControllerProvider =
     AsyncNotifierProvider<NoteEditorController, void>(NoteEditorController.new);
 

@@ -41,6 +41,8 @@ class FakeRepo:
         self.metadata_updates: list[dict] = []
         self.content_updates: list[dict] = []
         self.duplicate_marks: list[dict] = []
+        self.tag_calls: list[dict] = []
+        self.tag_error: Exception | None = None
         self._job_id = "job-1"
 
     async def create_job(self, item_id, job_type):
@@ -84,6 +86,11 @@ class FakeRepo:
         self.duplicate_marks.append(
             {"item_id": item_id, "duplicate_of_item_id": duplicate_of_item_id, "similarity": similarity}
         )
+
+    async def attach_tags(self, item_id, user_id, tag_names):
+        if self.tag_error is not None:
+            raise self.tag_error
+        self.tag_calls.append({"item_id": item_id, "user_id": user_id, "tag_names": tag_names})
 
 
 class FakeSearchRepo:
@@ -317,5 +324,57 @@ async def test_a_failing_duplicate_check_does_not_fail_the_item():
     await process_item("item-13", repo, lambda: FakeProvider(), lambda: search_repo)
 
     assert repo.duplicate_marks == []
+    assert repo.status_history == ["processing", "completed"]
+    assert repo.job_updates[-1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_image_tags_come_from_the_vision_analysis_no_extra_call():
+    repo = FakeRepo(
+        item={
+            "id": "item-14",
+            "type": "screenshot",
+            "storage_path": "u1/item-14/shot.png",
+            "mime_type": "image/png",
+        },
+    )
+
+    await process_item("item-14", repo, lambda: FakeProvider(), user_id="user-1")
+
+    assert repo.tag_calls == [
+        {"item_id": "item-14", "user_id": "user-1", "tag_names": ["dell", "monitor", "gaming"]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_note_tags_come_from_a_text_completion_call():
+    repo = FakeRepo(item={"id": "item-15", "type": "note"}, note_content="Docker notes.")
+
+    await process_item("item-15", repo, lambda: FakeProvider(), user_id="user-1")
+
+    # FakeProvider.generate_text always returns "fake answer" regardless
+    # of the prompt — this only checks the wiring, not real tag quality.
+    assert repo.tag_calls == [
+        {"item_id": "item-15", "user_id": "user-1", "tag_names": ["fake answer"]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_user_id_means_no_tagging_attempt():
+    repo = FakeRepo(item={"id": "item-16", "type": "note"}, note_content="Docker notes.")
+
+    await process_item("item-16", repo, lambda: FakeProvider())  # no user_id
+
+    assert repo.tag_calls == []
+    assert repo.status_history == ["processing", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_tag_attach_does_not_fail_the_item():
+    repo = FakeRepo(item={"id": "item-17", "type": "note"}, note_content="Docker notes.")
+    repo.tag_error = RuntimeError("tags table unavailable")
+
+    await process_item("item-17", repo, lambda: FakeProvider(), user_id="user-1")
+
     assert repo.status_history == ["processing", "completed"]
     assert repo.job_updates[-1]["status"] == "completed"

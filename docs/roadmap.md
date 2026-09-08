@@ -124,6 +124,55 @@ seviyesinde sahte ama kontrollü embedding'lerle doğrulandı); doğal dil
 filtreleme, Collections ve Smart Collections'ın kümeleme kısmı key
 gerektirmediği için tam doğrulandı.
 
+## Faz 9 sonrası — dokümanı tekrar tarayıp bulunan boşluklar
+
+9 fazın hepsi bittikten sonra `requirements.md`, kod tabanıyla satır satır
+karşılaştırılarak tekrar tarandı; dört gerçek boşluk bulundu (tags, offline
+keyword search, structured logging, konum/EXIF). İlk ikisi (tags,
+key gerektirmeyenler öncelikli) burada işleniyor.
+
+### Tags ✅
+
+Bölüm 8-12: *"tags / item_tags: kullanıcı ve AI tarafından üretilen
+etiketler"* — tablolar Faz 4'ten beri RLS'iyle duruyordu ama hiçbir yere
+bağlı değildi. Daha da çarpıcısı: vision AI zaten etiket üretiyordu
+(`analyze_image()`'ın döndürdüğü `tags` alanı), pipeline bunu çöpe
+atıyordu.
+
+- **Görseller**: vision call'dan gelen tag'ler ekstra bir istek olmadan
+  kullanılıyor.
+- **Diğer tüm tipler** (not/PDF/ses/link): yeni `tagging_service.generate_tags()`
+  — normalize edilmiş metni tek bir `generate_text` çağrısına verip
+  virgülle ayrılmış en fazla 5 kısa etiket istiyor, provider hata verirse
+  boş liste dönüyor (asla pipeline'ı düşürmüyor).
+- `items_repository.attach_tags()`: `tags` tablosuna `(user_id, name)`
+  üzerinden upsert, `item_tags`'i `replace_chunks` ile aynı idempotent
+  desenle değiştiriyor (yeniden işleme eski etiket setini tamamen
+  yeniliyor, biriktirmiyor).
+- Etiketleme tamamen best-effort — RPC/HTTP hatası item'ın "completed"
+  durumunu asla etkilemiyor (duplicate detection'la aynı sözleşme).
+- Mobil: `ItemRepository.fetchTags()` (Supabase'e doğrudan join sorgusu,
+  henüz cache'lenmiyor), item detail ve not editöründe paylaşılan bir
+  `TagsRow` widget'ı — bir etikete dokunmak Search sekmesini o etiketle
+  önceden doldurup otomatik çalıştırıyor (`SearchTab.initialQuery`).
+
+Backend: 67 test yeşil (5 tagging_service + 4 processing_pipeline).
+Mobile: `flutter analyze` temiz, 38 test yeşil (3 TagsRow + 1
+initialQuery). Simülatörde regresyonsuz derlenip açıldı.
+
+### Henüz yapılmayanlar
+
+- **Offline keyword search**: dokümanın "offline-first (... + offline
+  keyword search)" ifadesine rağmen Search sekmesi hep backend'e gidiyor;
+  internet yokken hiç çalışmıyor. Drift'teki not/başlık metniyle basit
+  bir `LIKE` fallback'i eklenebilir.
+- **Structured logging**: bölüm 53 `request_id`/`user_id`/`job_id`/
+  `item_id`/`processing_time` istiyor; şu an backend'de toplam 2 log
+  satırı var, ikisi de sadece hata durumunda.
+- **Konum (location)**: `items.latitude/longitude/captured_at` kolonları
+  Faz 4'ten beri duruyor, hiç kullanılmıyor — fotoğraf eklerken EXIF'ten
+  okunabilir.
+
 Sıradaki adım: **bir OpenAI key ekleyip Faz 1-9'un tamamını gerçek
-veriyle uçtan uca görmek** — dokümandaki 71 maddenin kod tarafı
-tamamlandı, geriye kalan tek şey bunu gerçek verilerle izlemek.
+veriyle uçtan uca görmek** — ya da yukarıdaki üç boşluktan birine devam
+etmek.

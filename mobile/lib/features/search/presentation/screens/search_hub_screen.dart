@@ -7,7 +7,11 @@ import 'search_tab.dart';
 /// two ways to find something in the archive: type a query, or ask a
 /// question and get a sourced answer.
 class SearchHubScreen extends StatefulWidget {
-  const SearchHubScreen({super.key});
+  const SearchHubScreen({super.key, this.initialQuery});
+
+  /// Run immediately on open (e.g. a tag chip tapped from item detail)
+  /// instead of landing on an empty search box.
+  final String? initialQuery;
 
   @override
   State<SearchHubScreen> createState() => _SearchHubScreenState();
@@ -38,7 +42,7 @@ class _SearchHubScreenState extends State<SearchHubScreen>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: const [SearchTab(), AiChatTab()],
+        children: [SearchTab(initialQuery: widget.initialQuery), const AiChatTab()],
       ),
     );
   }

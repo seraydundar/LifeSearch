@@ -17,7 +17,7 @@ void main() {
   // real footgun it's meant to catch, so it's just noise here.
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
 
-  Widget wrap(FakeSearchRepository repo, {List<String> recent = const []}) {
+  Widget wrap(FakeSearchRepository repo, {List<String> recent = const [], String? initialQuery}) {
     return ProviderScope(
       overrides: [
         searchRepositoryProvider.overrideWithValue(repo),
@@ -26,7 +26,7 @@ void main() {
         // on success — give it an in-memory db instead of touching a real file.
         appDatabaseProvider.overrideWithValue(AppDatabase.forTesting(NativeDatabase.memory())),
       ],
-      child: const MaterialApp(home: Scaffold(body: SearchTab())),
+      child: MaterialApp(home: Scaffold(body: SearchTab(initialQuery: initialQuery))),
     );
   }
 
@@ -82,5 +82,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Arama şu anda kullanılamıyor.'), findsOneWidget);
+  });
+
+  testWidgets('an initialQuery (e.g. a tapped tag) runs automatically', (tester) async {
+    final repo = FakeSearchRepository(resultsToReturn: [fakeSearchResult()]);
+    await tester.pumpWidget(wrap(repo, initialQuery: 'docker'));
+    await tester.pumpAndSettle();
+
+    expect(repo.lastQuery, 'docker');
+    expect(find.text('Docker Notes'), findsOneWidget);
   });
 }

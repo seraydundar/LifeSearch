@@ -65,6 +65,9 @@ class OfflineItemRepository implements ItemRepository {
   }
 
   @override
+  Future<List<String>> fetchTags(String itemId) => _remote.fetchTags(itemId);
+
+  @override
   Future<Item?> findById(String itemId) async {
     final local = await _local.findById(itemId);
     return local == null ? null : _toItem(local);

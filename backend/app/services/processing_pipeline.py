@@ -20,6 +20,7 @@ from .chunking_service import chunk_text
 from .document_service import extract_pdf_text, normalize_text
 from .embedding_service import embed_chunks, format_embedding_literal
 from .ocr_service import extract_text as extract_ocr_text
+from .tagging_service import generate_tags
 from .url_service import fetch_and_extract
 from .vision_service import analyze_image
 
@@ -37,6 +38,7 @@ async def process_item(
     repo: SupabaseRestRepository,
     get_provider: Callable[[], AIProvider],
     get_search_repo: Callable[[], SearchRepository] | None = None,
+    user_id: str | None = None,
 ) -> None:
     """`get_provider` is resolved *inside* the try block, deliberately —
     a missing API key or bad AI_PROVIDER config is exactly the kind of
@@ -45,7 +47,11 @@ async def process_item(
 
     `get_search_repo` is optional (and `None` in tests that don't care
     about it) — it powers the best-effort duplicate check after
-    embedding, see `_check_for_duplicate`.
+    embedding, see `_check_for_duplicate`. `user_id` is likewise optional
+    and, when given, powers the best-effort tagging step, see
+    `_attach_tags` — `tags`/`item_tags` need an explicit owner
+    (requirements doc, section 8-12), unlike every other table this
+    pipeline writes to, which infers ownership from the item itself.
     """
     job_id = await repo.create_job(item_id, job_type="chunk_and_embed")
 
@@ -58,6 +64,10 @@ async def process_item(
         item_type = item["type"]
         if item_type not in SUPPORTED_TYPES:
             raise UnsupportedItemType(f"Processing for type '{item_type}' isn't implemented yet.")
+
+        # Images get theirs for free from the vision call below; everything
+        # else falls back to a text-completion call once `text` is ready.
+        image_tags: list[str] = []
 
         if item_type == "note":
             raw_text = await repo.get_note_content(item_id)
@@ -77,6 +87,7 @@ async def process_item(
             analysis = await analyze_image(image_bytes, mime_type, provider)
             ocr_text = extract_ocr_text(analysis)
             description = analysis["description"]
+            image_tags = analysis.get("tags") or []
 
             # AI-generated title/description replace the filename-based
             # placeholder set at upload time (requirements doc, section 14).
@@ -139,6 +150,14 @@ async def process_item(
         if get_search_repo is not None:
             await _check_for_duplicate(item_id, repo, get_search_repo)
 
+        if user_id is not None:
+            tag_names = (
+                image_tags
+                if item_type in {"image", "screenshot"}
+                else await generate_tags(text, provider)
+            )
+            await _attach_tags(item_id, user_id, tag_names, repo)
+
         await repo.update_item_status(item_id, "completed")
         await repo.mark_job_completed(job_id)
     except Exception as error:
@@ -165,3 +184,18 @@ async def _check_for_duplicate(
             await repo.mark_duplicate(item_id, candidate["item_id"], candidate["similarity"])
     except Exception as error:
         logger.warning("duplicate check failed for item_id=%s: %s", item_id, error)
+
+
+async def _attach_tags(
+    item_id: str,
+    user_id: str,
+    tag_names: list[str],
+    repo: SupabaseRestRepository,
+) -> None:
+    """Best-effort, same contract as `_check_for_duplicate` — tags are a
+    nice-to-have on top of a working item, never a reason to fail one.
+    """
+    try:
+        await repo.attach_tags(item_id, user_id, tag_names)
+    except Exception as error:
+        logger.warning("tagging failed for item_id=%s: %s", item_id, error)

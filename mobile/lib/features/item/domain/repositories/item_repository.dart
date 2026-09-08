@@ -12,6 +12,12 @@ abstract interface class ItemRepository {
 
   Future<String> fetchNoteContent(String itemId);
 
+  /// Tags attached to an item — AI-generated during processing (vision
+  /// analysis for images, a text-completion call for everything else),
+  /// see backend/app/services/tagging_service.py. Not cached locally yet,
+  /// same as `getSignedUrl` — needs a connection to show.
+  Future<List<String>> fetchTags(String itemId);
+
   /// Single item by id from the local cache, or `null` if it isn't known
   /// yet — used for the duplicate-candidate banner on item detail, which
   /// needs the *other* item's title/type without loading the whole list.

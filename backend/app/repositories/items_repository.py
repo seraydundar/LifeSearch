@@ -150,6 +150,53 @@ class SupabaseRestRepository:
             )
             insert_response.raise_for_status()
 
+    async def attach_tags(self, item_id: str, user_id: str, tag_names: list[str]) -> None:
+        """Idempotent by design, same replace pattern as `replace_chunks` —
+        reprocessing an item replaces its tag set rather than accumulating
+        duplicates from every run.
+        """
+        names = [n for n in dict.fromkeys(t.strip().lower() for t in tag_names) if n]
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            if names:
+                # Upsert-by-name so re-tagging with an already-existing tag
+                # reuses its row instead of violating the (user_id, name)
+                # unique constraint.
+                upsert_response = await client.post(
+                    f"{self._base_url}/rest/v1/tags",
+                    params={"on_conflict": "user_id,name"},
+                    headers={
+                        **self._headers,
+                        "Content-Type": "application/json",
+                        "Prefer": "resolution=merge-duplicates,return=representation",
+                    },
+                    json=[{"user_id": user_id, "name": name} for name in names],
+                )
+                upsert_response.raise_for_status()
+                tag_ids = [row["id"] for row in upsert_response.json()]
+            else:
+                tag_ids = []
+
+            delete_response = await client.delete(
+                f"{self._base_url}/rest/v1/item_tags",
+                params={"item_id": f"eq.{item_id}"},
+                headers=self._headers,
+            )
+            delete_response.raise_for_status()
+
+            if not tag_ids:
+                return
+            insert_response = await client.post(
+                f"{self._base_url}/rest/v1/item_tags",
+                headers={
+                    **self._headers,
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal",
+                },
+                json=[{"item_id": item_id, "tag_id": tag_id} for tag_id in tag_ids],
+            )
+            insert_response.raise_for_status()
+
     async def mark_duplicate(
         self, item_id: str, duplicate_of_item_id: str, similarity: float
     ) -> None:

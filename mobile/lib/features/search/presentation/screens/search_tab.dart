@@ -44,7 +44,10 @@ extension on _DatePreset {
 /// The Search half of the "Tab: Search | Ask AI" layout (requirements
 /// doc, section 23) — hosted inside `SearchHubScreen`'s `TabBarView`.
 class SearchTab extends ConsumerStatefulWidget {
-  const SearchTab({super.key});
+  const SearchTab({super.key, this.initialQuery});
+
+  /// Run once on first build, e.g. a tag chip tapped from item detail.
+  final String? initialQuery;
 
   @override
   ConsumerState<SearchTab> createState() => _SearchTabState();
@@ -52,9 +55,18 @@ class SearchTab extends ConsumerStatefulWidget {
 
 class _SearchTabState extends ConsumerState<SearchTab>
     with AutomaticKeepAliveClientMixin<SearchTab> {
-  final _controller = TextEditingController();
+  late final _controller = TextEditingController(text: widget.initialQuery);
   Timer? _debounce;
   _DatePreset _datePreset = _DatePreset.anytime;
+
+  @override
+  void initState() {
+    super.initState();
+    final initialQuery = widget.initialQuery;
+    if (initialQuery != null && initialQuery.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _runSearch(initialQuery));
+    }
+  }
 
   @override
   bool get wantKeepAlive => true; // keep query/results when switching to Ask AI and back

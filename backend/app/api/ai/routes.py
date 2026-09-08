@@ -38,6 +38,7 @@ async def process_item_endpoint(
         repo,
         lambda: get_ai_provider(get_settings()),
         lambda: SearchRepository(user.access_token),
+        user_id=user.id,
     )
     return ProcessItemResponse(status="accepted", item_id=body.item_id)
 

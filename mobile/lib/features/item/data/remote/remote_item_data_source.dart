@@ -57,6 +57,13 @@ class RemoteItemDataSource {
     return (row?['raw_text'] as String?) ?? '';
   }
 
+  /// Joins through `item_tags` to `tags` — nested select syntax, RLS
+  /// applies to both tables so this only ever returns the caller's own.
+  Future<List<String>> fetchTags(String itemId) async {
+    final rows = await _client.from('item_tags').select('tags(name)').eq('item_id', itemId);
+    return rows.map((row) => (row['tags'] as Map<String, dynamic>)['name'] as String).toList();
+  }
+
   Future<void> createNote({
     required String id,
     required String title,
