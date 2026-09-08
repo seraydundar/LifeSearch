@@ -2,14 +2,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/database/database_provider.dart';
 import '../../../../core/network/api_client_provider.dart';
+import '../../../../core/network/supabase_client_provider.dart';
+import '../../data/local/local_search_data_source.dart';
+import '../../data/local/offline_fallback_search_repository.dart';
 import '../../data/local/recent_searches_data_source.dart';
 import '../../data/remote/api_search_repository.dart';
 import '../../domain/entities/search_filters.dart';
 import '../../domain/entities/search_result.dart';
 import '../../domain/repositories/search_repository.dart';
 
+final localSearchDataSourceProvider = Provider<LocalSearchDataSource>((ref) {
+  return LocalSearchDataSource(ref.watch(appDatabaseProvider));
+});
+
 final searchRepositoryProvider = Provider<SearchRepository>((ref) {
-  return ApiSearchRepository(ref.watch(apiClientProvider));
+  return OfflineFallbackSearchRepository(
+    remote: ApiSearchRepository(ref.watch(apiClientProvider)),
+    local: ref.watch(localSearchDataSourceProvider),
+    currentUserId: () => ref.read(supabaseClientProvider).auth.currentUser?.id,
+  );
 });
 
 final recentSearchesDataSourceProvider = Provider<RecentSearchesDataSource>((ref) {

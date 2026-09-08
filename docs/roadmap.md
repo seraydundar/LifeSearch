@@ -160,12 +160,36 @@ Backend: 67 test yeşil (5 tagging_service + 4 processing_pipeline).
 Mobile: `flutter analyze` temiz, 38 test yeşil (3 TagsRow + 1
 initialQuery). Simülatörde regresyonsuz derlenip açıldı.
 
+### Offline keyword search ✅
+
+Dokümanın "offline-first (... + offline keyword search)" ifadesine
+rağmen Search sekmesi hep backend'e gidiyordu; internet/backend
+yokken hiç çalışmıyordu.
+
+- `LocalSearchDataSource`: Drift'teki `LocalItems` üzerinde büyük/küçük
+  harf duyarsız bir alt-dize araması — sırasıyla not içeriği,
+  açıklama, başlık, link URL'i taranıyor; eşleşme etrafında ~60
+  karakterlik bir "…eşleşme…" özeti üretiliyor. Tür/tarih filtreleri
+  (`SearchFilters`) online aramayla aynı şekilde uygulanıyor.
+  OCR metni/AI açıklaması gibi yalnızca Supabase'de duran alanlar
+  Drift'e hiç senkronize olmadığı için offline aranamıyor — bu, "telefonda
+  o metnin kopyası yok" gerçeğinden gelen sınırlı ama dürüst bir kapsam.
+- `OfflineFallbackSearchRepository`: gerçek (semantic/hybrid) aramayı
+  sarmalıyor — remote çağrı başarısız olursa (bağlantı yok, backend
+  ulaşılamıyor, `BACKEND_URL` hiç ayarlanmamış) local aramaya düşüyor.
+  İlk tercih asla local değil, çünkü anahtar kelime eşleşmesi AI
+  destekli sonuçtan her zaman daha zayıf. `related()`'ın offline
+  karşılığı yok (embedding gerektiriyor), her zaman doğrudan remote'a
+  gidiyor.
+- Sıralama offline'da anlamlı bir skor olmadığı için (ne embedding ne
+  ts_rank) en yeni eklenen önce geliyor.
+
+Backend değişmedi (tamamen mobil tarafında). Mobile: `flutter analyze`
+temiz, 49 test yeşil (8 LocalSearchDataSource + 3 OfflineFallbackSearchRepository).
+Simülatörde regresyonsuz derlenip açıldı.
+
 ### Henüz yapılmayanlar
 
-- **Offline keyword search**: dokümanın "offline-first (... + offline
-  keyword search)" ifadesine rağmen Search sekmesi hep backend'e gidiyor;
-  internet yokken hiç çalışmıyor. Drift'teki not/başlık metniyle basit
-  bir `LIKE` fallback'i eklenebilir.
 - **Structured logging**: bölüm 53 `request_id`/`user_id`/`job_id`/
   `item_id`/`processing_time` istiyor; şu an backend'de toplam 2 log
   satırı var, ikisi de sadece hata durumunda.
@@ -174,5 +198,5 @@ initialQuery). Simülatörde regresyonsuz derlenip açıldı.
   okunabilir.
 
 Sıradaki adım: **bir OpenAI key ekleyip Faz 1-9'un tamamını gerçek
-veriyle uçtan uca görmek** — ya da yukarıdaki üç boşluktan birine devam
+veriyle uçtan uca görmek** — ya da yukarıdaki iki boşluktan birine devam
 etmek.
