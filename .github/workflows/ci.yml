@@ -50,6 +50,13 @@ jobs:
 
       - run: flutter pub get
 
+      # pubspec.yaml bundles .env as an asset; it's gitignored (real
+      # Supabase keys never get committed — see README's "Environment
+      # variables" section), so a clean checkout has none and `flutter
+      # analyze` fails on a missing-asset warning. Empty values are fine:
+      # nothing analyze/test does actually reads them.
+      - run: cp .env.example .env
+
       # freezed/drift generated files are gitignored (mobile/**/*.g.dart,
       # mobile/**/*.freezed.dart) — every checkout needs to regenerate
       # them before analyze/test can even resolve the code.
