@@ -450,6 +450,21 @@ tiplere doğru rotaya gitme). Simülatörde canlı doğrulandı — grid görün
 gerçek Supabase Storage'dan gelen bir thumbnail'i doğru render etti, not
 item'ı için fallback ikon + gradient overlay doğru çalıştı.
 
+**Sonradan bulunan bug (kullanıcı gerçek cihazda buldu) ✅ düzeltildi**:
+Yeni bir not oluşturunca ("deneme2"), o not grid'de gerçek bir fotoğrafın
+thumbnail'iyle görünüyordu; fotoğrafın kendi karosu ise boş kalıyordu.
+Kök neden: `GridView.builder`'ın `itemBuilder`'ı `ItemGridTile`'ları key
+vermeden oluşturuyordu — "en yeni önce" sıralaması yeni notu index 0'a
+taşıyıp fotoğrafı 1'e itince, Flutter key olmadan State nesnelerini
+POZİSYONA göre yeniden kullandı; index 0'daki State hâlâ eski sakini
+fotoğrafın çözülmüş signed URL'ini tutup göstermeye devam etti, index
+1'deki State ise (önceden hiç fetch yapmamış bir karoydu) hiç fetch
+yapmadı. Düzeltme: her karoya `key: ValueKey(item.id)` verildi — artık
+Flutter karoları pozisyona değil item kimliğine göre takip ediyor.
+Regresyon testi eklendi (fix geri alınınca kırmızı olduğu elle
+doğrulandı). Mobile: 100 → 101 test. Simülatörde kullanıcının bildirdiği
+tam senaryoyla doğrulandı.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
 - **Integration testleri yok**: `integration_test` paketi pubspec'te yok,
