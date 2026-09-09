@@ -532,12 +532,58 @@ doğrulandı).
   değiştirilmemiş boilerplate'ti (hâlâ "A new Flutter project." diyordu)
   — kök README'ye yönlendiren kısa bir nota çevrildi.
 
+### Collections offline ✅
+
+Diğer her şey Drift + sync queue ile offline çalışırken, Collections
+hâlâ doğrudan Supabase'e konuşuyordu (`SupabaseCollectionRepository`,
+"no offline cache yet" yorumuyla) — artık `OfflineItemRepository` ile
+birebir aynı desende: her okuma local cache'ten, her yazma önce oraya,
+sonra sync queue'ya.
+
+- İki yeni Drift tablosu: `LocalCollections`, `LocalCollectionItems`
+  (junction) — şema v5→v6. sqlite FK cascade yapmadığı için bir
+  koleksiyonu silmek `CollectionLocalDataSource.delete()`'in kendisinin
+  önce üyelik satırlarını silmesini gerektiriyor.
+- `RemoteCollectionDataSource`: `RemoteItemDataSource` ile aynı desen —
+  her yazma çağıranın ürettiği id'yi alıyor (Postgres'in
+  `gen_random_uuid()` varsayılanı yerine), böylece kuyruğa alınmış bir
+  create'in tekrar denenmesi idempotent oluyor.
+- `OfflineCollectionRepository`: `CollectionRepository`'nin
+  `OfflineItemRepository`'yle birebir aynı desende offline-first
+  implementasyonu.
+- **`SyncService`'in kendisi genelleştirildi** — `features/item/data/sync/`
+  yerine `core/sync/`'e taşındı, artık hem item'ları hem koleksiyonları
+  aynı geçişte pull/push ediyor. Bilinçli mimari karar: tüm mutasyonlar
+  TEK bir `sync_queue` tablosunu paylaşıyor (`operationType`'a göre
+  ayrışıyor); iki bağımsız `SyncService` çalıştırmak birbirinin
+  kuyruğuyla yarışırdı — mevcut kod, tanımadığı bir `operationType`'ı
+  yeniden denemek yerine sessizce SİLİYOR, yani ikinci bir servis
+  eklemek ilk servisin diğerinin girişlerini sessizce yutmasına yol
+  açardı. Provider dairesel bağımlılığı (SyncService her iki feature'ın
+  local/remote source'larına ihtiyaç duyuyor, her iki feature'ın
+  repository'si de SyncService'e) `core/sync/sync_providers.dart`
+  adında nötr bir üçüncü dosyaya taşınarak çözüldü.
+- `LocalItem → Item` eşlemesi tekrarlanan private bir metottu
+  (`OfflineItemRepository._toItem`); paylaşılan bir `LocalItemX.toDomainItem()`
+  extension'ına çıkarıldı — artık koleksiyon içindeki item'ları
+  (`LocalCollectionItems` ⋈ `LocalItems`) okurken de aynı kod kullanılıyor.
+
+Backend değişmedi (şema zaten client-supplied id'yi destekliyordu).
+Mobile: `flutter analyze` temiz, 101 → 108 test (+7: her yeni
+operationType için bir push testi, pending bir rename'i stale pull'un
+ezmediğini doğrulayan bir test, stale bir üyelik satırının
+düşürülüp yenisinin eklendiğini doğrulayan bir test —
+`test/unit/sync_service_test.dart`'a eklendi, var olan pattern'i
+izleyerek: repository/data-source seviyesinde ayrı bir test dosyası
+yok, item tarafında da hiç olmadığı gibi). Simülatörde canlı
+doğrulandı: v5→v6 migration'ı mevcut veri (bir fotoğraf + bir not)
+üzerinde veri kaybı olmadan çalıştı, Library'nin Collections şeridi
+gerçek Supabase backend'ine karşı hatasız render oldu.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
-- **Collections offline değil**: diğer her şey Drift + sync queue ile
-  offline çalışıyor, Collections hâlâ doğrudan Supabase'e konuşuyor.
 - **Entity extraction yok** (bölüm 44-48): "ileri aşama" olarak
   işaretli, hiç başlanmadı.
 
 Sıradaki adım: **bir OpenAI key ekleyip her şeyi gerçek veriyle uçtan
-uca görmek** — ya da yukarıdaki listeden birine devam etmek.
+uca görmek** — ya da Entity extraction'a devam etmek.

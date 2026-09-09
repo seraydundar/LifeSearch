@@ -5,12 +5,13 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../../core/database/app_database.dart';
+import '../../../../core/sync/sync_service.dart';
 import '../../domain/entities/item.dart';
 import '../../domain/repositories/item_repository.dart';
 import '../local/item_local_data_source.dart';
+import '../local/local_item_x.dart';
 import '../local/sync_queue_data_source.dart';
 import '../remote/remote_item_data_source.dart';
-import '../sync/sync_service.dart';
 
 /// Offline-first `ItemRepository`: every read comes from the local cache
 /// (`ItemLocalDataSource`), every write lands there immediately and is
@@ -35,30 +36,9 @@ class OfflineItemRepository implements ItemRepository {
 
   String get _userId => _remote.userId;
 
-  Item _toItem(LocalItem row) => Item(
-        id: row.id,
-        type: ItemTypeX.fromDbValue(row.type),
-        title: row.title,
-        description: row.description,
-        originalFilename: row.originalFilename,
-        mimeType: row.mimeType,
-        storagePath: row.storagePath,
-        sourceUrl: row.sourceUrl,
-        processingStatus: row.processingStatus,
-        favorite: row.favorite,
-        createdAt: row.createdAt,
-        duplicateOfItemId: row.duplicateOfItemId,
-        duplicateSimilarity: row.duplicateSimilarity,
-        duplicateDismissed: row.duplicateDismissed,
-        latitude: row.latitude,
-        longitude: row.longitude,
-        capturedAt: row.capturedAt,
-        fileSizeBytes: row.fileSizeBytes,
-      );
-
   @override
   Stream<List<Item>> watchItems() {
-    return _local.watchAll(_userId).map((rows) => rows.map(_toItem).toList());
+    return _local.watchAll(_userId).map((rows) => rows.map((r) => r.toDomainItem()).toList());
   }
 
   @override
@@ -74,7 +54,7 @@ class OfflineItemRepository implements ItemRepository {
   @override
   Future<Item?> findById(String itemId) async {
     final local = await _local.findById(itemId);
-    return local == null ? null : _toItem(local);
+    return local?.toDomainItem();
   }
 
   @override

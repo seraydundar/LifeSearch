@@ -3,13 +3,15 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart' show Value;
 
-import '../../../../core/database/app_database.dart';
-import '../../../../core/error/failure.dart';
-import '../../domain/entities/item.dart';
-import '../local/item_local_data_source.dart';
-import '../local/sync_queue_data_source.dart';
-import '../remote/ai_processing_trigger.dart';
-import '../remote/remote_item_data_source.dart';
+import '../../features/collections/data/local/collection_local_data_source.dart';
+import '../../features/collections/data/remote/remote_collection_data_source.dart';
+import '../../features/item/data/local/item_local_data_source.dart';
+import '../../features/item/data/local/sync_queue_data_source.dart';
+import '../../features/item/data/remote/ai_processing_trigger.dart';
+import '../../features/item/data/remote/remote_item_data_source.dart';
+import '../../features/item/domain/entities/item.dart';
+import '../database/app_database.dart';
+import '../error/failure.dart';
 
 /// Upload item types the backend's AI pipeline actually supports for the
 /// `upload_file` op — see backend/app/services/processing_pipeline.py
@@ -17,9 +19,27 @@ import '../remote/remote_item_data_source.dart';
 /// instead (see `_shouldTriggerAi`), since a link has no upload step.
 const _aiSupportedUploadTypes = {'pdf', 'image', 'screenshot', 'audio'};
 
-/// Bridges the local cache and Supabase in both directions:
-///  - pulls the server's current state into `LocalItems` (skipping any item
-///    that has a not-yet-synced local edit, so it doesn't get clobbered)
+/// Sync-queue operation types that target a collection itself (as opposed
+/// to an item, or a collection's membership). Kept as a Set rather than a
+/// per-case check so `_flushQueue`'s post-switch bookkeeping only needs one
+/// membership test to know which local data source (and which id) a given
+/// queue entry's `itemId` column actually refers to.
+const _collectionOps = {'create_collection', 'rename_collection', 'delete_collection'};
+
+/// Operation types for a (collectionId, itemId) membership row — for
+/// these, the queue's `itemId` column holds the *collection* id, and the
+/// actual item id lives in the payload (see `OfflineCollectionRepository`).
+const _membershipOps = {'add_to_collection', 'remove_from_collection'};
+
+/// Bridges the local cache and Supabase in both directions, for both items
+/// and collections (they share one `sync_queue` table — see
+/// `SyncQueueEntries` — so one coordinator has to own draining it; two
+/// independent services would race and silently drop each other's
+/// entries, since an unrecognized `operationType` is dropped rather than
+/// retried):
+///  - pulls the server's current state into the local cache (skipping
+///    anything that has a not-yet-synced local edit, so it doesn't get
+///    clobbered)
 ///  - pushes queued local writes to Supabase, oldest first
 ///
 /// Framework-agnostic on purpose (no Riverpod `Ref` here) so it's easy to
@@ -29,15 +49,21 @@ class SyncService {
   SyncService({
     required ItemLocalDataSource local,
     required RemoteItemDataSource remote,
+    required CollectionLocalDataSource localCollections,
+    required RemoteCollectionDataSource remoteCollections,
     required SyncQueueDataSource queue,
     required AiProcessingTrigger aiTrigger,
   })  : _local = local,
         _remote = remote,
+        _localCollections = localCollections,
+        _remoteCollections = remoteCollections,
         _queue = queue,
         _aiTrigger = aiTrigger;
 
   final ItemLocalDataSource _local;
   final RemoteItemDataSource _remote;
+  final CollectionLocalDataSource _localCollections;
+  final RemoteCollectionDataSource _remoteCollections;
   final SyncQueueDataSource _queue;
   final AiProcessingTrigger _aiTrigger;
 
@@ -66,6 +92,7 @@ class SyncService {
       if (userId == null) return; // not signed in yet — nothing to sync
 
       await _pullRemote(userId);
+      await _pullRemoteCollections(userId);
       await _flushQueue();
     } catch (_) {
       // Best-effort: a network blip here shouldn't crash the app. The next
@@ -138,6 +165,61 @@ class SyncService {
     if (staleIds.isNotEmpty) await _local.deleteMany(staleIds.toList());
   }
 
+  Future<void> _pullRemoteCollections(String userId) async {
+    final pending = await _queue.pendingEntries();
+    final pendingCollectionIds =
+        pending.where((e) => _collectionOps.contains(e.operationType)).map((e) => e.itemId).toSet();
+    final pendingMemberships = pending
+        .where((e) => _membershipOps.contains(e.operationType))
+        .map((e) => (e.itemId, jsonDecode(e.payload)['itemId'] as String))
+        .toSet();
+
+    final rows = await _remoteCollections.fetchAllRows();
+    final remoteIds = <String>{};
+    for (final row in rows) {
+      final id = row['id'] as String;
+      remoteIds.add(id);
+      if (pendingCollectionIds.contains(id)) continue; // local edit still queued
+
+      await _localCollections.upsert(LocalCollectionsCompanion.insert(
+        id: id,
+        userId: userId,
+        name: row['name'] as String,
+        isSmart: Value(row['is_smart'] as bool? ?? false),
+        createdAt: DateTime.parse(row['created_at'] as String),
+        syncStatus: const Value('synced'),
+      ));
+    }
+
+    final localIds = await _localCollections.allIds(userId);
+    final staleIds =
+        localIds.where((id) => !remoteIds.contains(id) && !pendingCollectionIds.contains(id));
+    if (staleIds.isNotEmpty) await _localCollections.deleteMany(staleIds.toList());
+
+    // Membership rows — reconciled the same way, keyed on the pair rather
+    // than a single id.
+    final itemRows = await _remoteCollections.fetchAllItemRows(remoteIds.toList());
+    final remoteMemberships = <(String, String)>{};
+    for (final row in itemRows) {
+      final pair = (row['collection_id'] as String, row['item_id'] as String);
+      remoteMemberships.add(pair);
+      if (pendingMemberships.contains(pair)) continue;
+      await _localCollections.addItem(
+        pair.$1,
+        pair.$2,
+        syncStatus: 'synced',
+        addedAt: DateTime.parse(row['added_at'] as String),
+      );
+    }
+
+    final localMemberships = await _localCollections.allMemberships();
+    for (final pair in localMemberships) {
+      if (!remoteMemberships.contains(pair) && !pendingMemberships.contains(pair)) {
+        await _localCollections.removeItem(pair.$1, pair.$2);
+      }
+    }
+  }
+
   Future<void> _flushQueue() async {
     for (final entry in await _queue.pendingEntries()) {
       try {
@@ -178,25 +260,76 @@ class SyncService {
               type: ItemTypeX.fromDbValue(payload['type'] as String),
               fileSizeBytes: (payload['fileSizeBytes'] as num?)?.toInt(),
             );
+          case 'create_collection':
+            await _remoteCollections.createCollection(
+              id: entry.itemId,
+              name: payload['name'] as String,
+              isSmart: payload['isSmart'] as bool? ?? false,
+            );
+          case 'rename_collection':
+            await _remoteCollections.renameCollection(entry.itemId, payload['name'] as String);
+          case 'delete_collection':
+            await _remoteCollections.deleteCollection(entry.itemId);
+          case 'add_to_collection':
+            await _remoteCollections.addItemToCollection(
+              collectionId: entry.itemId,
+              itemId: payload['itemId'] as String,
+            );
+          case 'remove_from_collection':
+            await _remoteCollections.removeItemFromCollection(
+              collectionId: entry.itemId,
+              itemId: payload['itemId'] as String,
+            );
           default:
             // Unknown op from a future app version — drop it rather than
             // retry forever.
             break;
         }
         await _queue.remove(entry.id);
-        if (entry.operationType != 'delete_item') {
-          await _local.markSynced(entry.itemId);
-        }
+        await _markSynced(entry.operationType, entry.itemId, payload);
         if (_shouldTriggerAi(entry.operationType, payload)) {
           unawaited(_aiTrigger.triggerProcessing(entry.itemId));
         }
       } catch (e) {
         await _queue.recordFailure(entry.id, e.toString());
-        await _local.markFailed(entry.itemId);
+        await _markFailed(entry.operationType, entry.itemId);
         // Keep processing the rest of the queue — one bad entry shouldn't
         // block every other pending change.
       }
     }
+  }
+
+  Future<void> _markSynced(
+    String operationType,
+    String queuedId,
+    Map<String, dynamic> payload,
+  ) async {
+    if (_membershipOps.contains(operationType)) {
+      if (operationType == 'add_to_collection') {
+        await _localCollections.markMembershipSynced(queuedId, payload['itemId'] as String);
+      }
+      // 'remove_from_collection': the local row is already gone — nothing
+      // left to mark.
+      return;
+    }
+    if (_collectionOps.contains(operationType)) {
+      if (operationType != 'delete_collection') {
+        await _localCollections.markSynced(queuedId);
+      }
+      return;
+    }
+    if (operationType != 'delete_item') {
+      await _local.markSynced(queuedId);
+    }
+  }
+
+  Future<void> _markFailed(String operationType, String queuedId) async {
+    if (_membershipOps.contains(operationType)) return; // nothing local to flag as failed
+    if (_collectionOps.contains(operationType)) {
+      await _localCollections.markFailed(queuedId);
+      return;
+    }
+    await _local.markFailed(queuedId);
   }
 
   bool _shouldTriggerAi(String operationType, Map<String, dynamic> payload) {

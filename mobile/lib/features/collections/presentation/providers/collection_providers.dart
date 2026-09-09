@@ -1,16 +1,30 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/database/database_provider.dart';
 import '../../../../core/network/supabase_client_provider.dart';
+import '../../../../core/sync/sync_providers.dart';
 import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
-import '../../data/remote/supabase_collection_repository.dart';
+import '../../data/local/collection_local_data_source.dart';
+import '../../data/remote/remote_collection_data_source.dart';
+import '../../data/repositories/offline_collection_repository.dart';
 import '../../domain/entities/collection.dart';
 import '../../domain/repositories/collection_repository.dart';
 
+final collectionLocalDataSourceProvider = Provider<CollectionLocalDataSource>((ref) {
+  return CollectionLocalDataSource(ref.watch(appDatabaseProvider));
+});
+
+final remoteCollectionDataSourceProvider = Provider<RemoteCollectionDataSource>((ref) {
+  return RemoteCollectionDataSource(ref.watch(supabaseClientProvider));
+});
+
 final collectionRepositoryProvider = Provider<CollectionRepository>((ref) {
-  return SupabaseCollectionRepository(
-    ref.watch(supabaseClientProvider),
-    ref.watch(remoteItemDataSourceProvider),
+  return OfflineCollectionRepository(
+    local: ref.watch(collectionLocalDataSourceProvider),
+    remote: ref.watch(remoteCollectionDataSourceProvider),
+    queue: ref.watch(syncQueueDataSourceProvider),
+    syncService: ref.watch(syncServiceProvider),
   );
 });
 

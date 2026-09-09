@@ -2,15 +2,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/database/database_provider.dart';
 import '../../../../core/network/api_client_provider.dart';
-import '../../../../core/network/connectivity_provider.dart';
 import '../../../../core/network/supabase_client_provider.dart';
-import '../../../auth/presentation/providers/auth_providers.dart';
+import '../../../../core/sync/sync_providers.dart';
 import '../../data/local/item_local_data_source.dart';
 import '../../data/local/sync_queue_data_source.dart';
 import '../../data/remote/ai_processing_trigger.dart';
 import '../../data/remote/remote_item_data_source.dart';
 import '../../data/repositories/offline_item_repository.dart';
-import '../../data/sync/sync_service.dart';
 import '../../domain/entities/item.dart';
 import '../../domain/repositories/item_repository.dart';
 
@@ -28,32 +26,6 @@ final itemLocalDataSourceProvider = Provider<ItemLocalDataSource>((ref) {
 
 final syncQueueDataSourceProvider = Provider<SyncQueueDataSource>((ref) {
   return SyncQueueDataSource(ref.watch(appDatabaseProvider));
-});
-
-/// Reconciles local cache ↔ Supabase. Kicked off whenever connectivity
-/// returns or the user signs in; `itemRepositoryProvider` also nudges it
-/// after every local write (see `SyncService.syncSoon`).
-final syncServiceProvider = Provider<SyncService>((ref) {
-  final service = SyncService(
-    local: ref.watch(itemLocalDataSourceProvider),
-    remote: ref.watch(remoteItemDataSourceProvider),
-    queue: ref.watch(syncQueueDataSourceProvider),
-    aiTrigger: ref.watch(aiProcessingTriggerProvider),
-  );
-
-  final onlineSub = ref.listen(isOnlineProvider, (previous, next) {
-    if (next.valueOrNull == true) service.syncSoon();
-  });
-  final authSub = ref.listen(authStateChangesProvider, (previous, next) {
-    if (next.valueOrNull != null) service.syncSoon();
-  });
-  ref.onDispose(() {
-    onlineSub.close();
-    authSub.close();
-  });
-
-  service.syncSoon();
-  return service;
 });
 
 final itemRepositoryProvider = Provider<ItemRepository>((ref) {

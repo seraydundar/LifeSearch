@@ -1,19 +1,23 @@
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 
+import 'tables/local_collection_items.dart';
+import 'tables/local_collections.dart';
 import 'tables/local_items.dart';
 import 'tables/recent_searches.dart';
 import 'tables/sync_queue_entries.dart';
 
 part 'app_database.g.dart';
 
-@DriftDatabase(tables: [LocalItems, SyncQueueEntries, RecentSearches])
+@DriftDatabase(
+  tables: [LocalItems, SyncQueueEntries, RecentSearches, LocalCollections, LocalCollectionItems],
+)
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
   AppDatabase.forTesting(super.connection);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -44,6 +48,14 @@ class AppDatabase extends _$AppDatabase {
           // infra/supabase/migrations/0010_item_file_size.sql.
           if (from < 5) {
             await m.addColumn(localItems, localItems.fileSizeBytes);
+          }
+          // v6 (Collections offline): mirrors
+          // infra/supabase/migrations/0008_collections.sql — Collections
+          // gets the same Drift + sync queue treatment every other
+          // feature already had.
+          if (from < 6) {
+            await m.createTable(localCollections);
+            await m.createTable(localCollectionItems);
           }
         },
       );
