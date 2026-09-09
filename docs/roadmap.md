@@ -580,10 +580,52 @@ doğrulandı: v5→v6 migration'ı mevcut veri (bir fotoğraf + bir not)
 üzerinde veri kaybı olmadan çalıştı, Library'nin Collections şeridi
 gerçek Supabase backend'ine karşı hatasız render oldu.
 
+### Entity extraction ✅
+
+Bölüm 44-48'in son maddesi, "ileri aşama" — kişi/yer/kurum/tarih gibi
+yapılandırılmış, tipli varlıklar. Tags'in (serbest metin) tamamlayıcısı:
+aynı içerik, farklı bir soru sorularak.
+
+- **Şema**: `entities` + `item_entities` — `tags`/`item_tags`'le
+  (0001_init.sql) birebir aynı şekil, `type` için bir check constraint
+  (`person`/`place`/`organization`/`date`) eklenmiş hâli. Realtime
+  publication'a eklenmedi — tags gibi, mobile bunu tek seferlik bir
+  sorguyla çekiyor, canlı izlemiyor. Canlı projede uygulandı.
+- **`entity_extraction_service.py`**: `tagging_service.py` ile aynı
+  "best-effort, provider hatası boş liste döndürür" sözleşmesi. JSON
+  yerine satır-satır `'tür: ad'` formatı seçildi — `generate_tags`'in
+  virgülle-ayrılmış formatı seçme gerekçesiyle aynı: LLM'in yanıtındaki
+  tek bir bozuk karakter tüm JSON parse'ını çökertmez, sadece o satır
+  atlanır.
+- **Pipeline'a bağlandı**: tag'lerin aksine — image'lar vision call'dan
+  "bedava" tag alıyor, ama entity çıkarmıyor — her içerik tipi (image
+  dahil) aynı normalize edilmiş metne karşı çalıştırılıyor.
+- **Mobile**: `ExtractedEntity` (name+type) domain modeli, `fetchTags`
+  ile birebir aynı desende `fetchEntities` (Supabase'e doğrudan,
+  item_tags→tags join'iyle aynı şekilde item_entities→entities). Item
+  detail ve not editörde `TagsRow`'un hemen altında yeni bir
+  `EntitiesRow` — her chip'te türe özel bir ikon (kişi/yer/kurum/tarih),
+  dokununca aynı `TagsRow` gibi arama sonuçlarına gidiyor.
+
+Backend: `flutter analyze`/`ruff` temiz, 89 → **98** backend testi
+(+9: `entity_extraction_service` için 6 birim testi, pipeline'a entegre
+edildiğini doğrulayan 3 test). Mobile: 108 → **111** test (+3,
+`entities_row_test.dart`). **Canlı doğrulanamadı**: hem gerçek varlık
+üretimi bir OpenAI key'e bağlı (henüz yok — tags'te de aynı durum
+vardı), hem de item detail ekranına bu oturumda kullanılan
+"initialLocation router hack'i" ile ulaşılamıyor (rota `state.extra`
+olarak tam bir `Item` nesnesi bekliyor, gerçek bir tıklama/push
+gerektiriyor). Sorgu şekli, production'da zaten kanıtlanmış
+`fetchTags`'le birebir aynı olduğu için düşük risk.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
-- **Entity extraction yok** (bölüm 44-48): "ileri aşama" olarak
-  işaretli, hiç başlanmadı.
+Doküman kapsamında bilinen bir boşluk kalmadı — geriye yalnızca iki
+bekleyen secret var:
 
-Sıradaki adım: **bir OpenAI key ekleyip her şeyi gerçek veriyle uçtan
-uca görmek** — ya da Entity extraction'a devam etmek.
+- **OpenAI key**: embedding/vision/Whisper/RAG/tags/**entities**/Smart
+  Collections'ın gerçek kalitesini görmek için.
+- **Supabase `service_role` key**: Delete Account'un canlı silme
+  yolunu uçtan uca doğrulamak için.
+
+Sıradaki adım: bu iki key'den birini eklemek.

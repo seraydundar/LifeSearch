@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../../core/database/app_database.dart';
 import '../../../../core/sync/sync_service.dart';
+import '../../domain/entities/extracted_entity.dart';
 import '../../domain/entities/item.dart';
 import '../../domain/repositories/item_repository.dart';
 import '../local/item_local_data_source.dart';
@@ -50,6 +51,9 @@ class OfflineItemRepository implements ItemRepository {
 
   @override
   Future<List<String>> fetchTags(String itemId) => _remote.fetchTags(itemId);
+
+  @override
+  Future<List<ExtractedEntity>> fetchEntities(String itemId) => _remote.fetchEntities(itemId);
 
   @override
   Future<Item?> findById(String itemId) async {

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/error/failure.dart';
+import '../../domain/entities/extracted_entity.dart';
 import '../../domain/entities/item.dart';
 
 /// Talks to Supabase directly. Every write takes an explicit `id` supplied
@@ -68,6 +69,19 @@ class RemoteItemDataSource {
   Future<List<String>> fetchTags(String itemId) async {
     final rows = await _client.from('item_tags').select('tags(name)').eq('item_id', itemId);
     return rows.map((row) => (row['tags'] as Map<String, dynamic>)['name'] as String).toList();
+  }
+
+  /// Same join-through-the-junction-table shape as `fetchTags`.
+  Future<List<ExtractedEntity>> fetchEntities(String itemId) async {
+    final rows =
+        await _client.from('item_entities').select('entities(name, type)').eq('item_id', itemId);
+    return rows.map((row) {
+      final entity = row['entities'] as Map<String, dynamic>;
+      return ExtractedEntity(
+        name: entity['name'] as String,
+        type: EntityTypeX.fromDbValue(entity['type'] as String),
+      );
+    }).toList();
   }
 
   Future<void> createNote({

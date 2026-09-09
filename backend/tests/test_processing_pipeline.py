@@ -63,6 +63,8 @@ class FakeRepo:
         self.duplicate_marks: list[dict] = []
         self.tag_calls: list[dict] = []
         self.tag_error: Exception | None = None
+        self.entity_calls: list[dict] = []
+        self.entity_error: Exception | None = None
         self._job_id = "job-1"
 
     async def create_job(self, item_id, job_type):
@@ -128,6 +130,11 @@ class FakeRepo:
         if self.tag_error is not None:
             raise self.tag_error
         self.tag_calls.append({"item_id": item_id, "user_id": user_id, "tag_names": tag_names})
+
+    async def attach_entities(self, item_id, user_id, entities):
+        if self.entity_error is not None:
+            raise self.entity_error
+        self.entity_calls.append({"item_id": item_id, "user_id": user_id, "entities": entities})
 
 
 class FakeSearchRepo:
@@ -415,6 +422,7 @@ async def test_no_user_id_means_no_tagging_attempt():
     await process_item("item-16", repo, lambda: FakeProvider())  # no user_id
 
     assert repo.tag_calls == []
+    assert repo.entity_calls == []
     assert repo.status_history == ["processing", "completed"]
 
 
@@ -424,6 +432,73 @@ async def test_a_failing_tag_attach_does_not_fail_the_item():
     repo.tag_error = RuntimeError("tags table unavailable")
 
     await process_item("item-17", repo, lambda: FakeProvider(), user_id="user-1")
+
+    assert repo.status_history == ["processing", "completed"]
+    assert repo.job_updates[-1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_entities_come_from_a_text_completion_call():
+    repo = FakeRepo(
+        item={"id": "item-19", "type": "note"},
+        note_content="Ahmet ile 15 Ocak'ta İstanbul'da buluştuk.",
+    )
+
+    class EntityProvider(FakeProvider):
+        async def generate_text(self, prompt, *, system=None):
+            if "varlık" in prompt:
+                return "person: Ahmet\nplace: İstanbul\ndate: 15 Ocak"
+            return await super().generate_text(prompt, system=system)
+
+    await process_item("item-19", repo, lambda: EntityProvider(), user_id="user-1")
+
+    assert repo.entity_calls == [
+        {
+            "item_id": "item-19",
+            "user_id": "user-1",
+            "entities": [
+                {"name": "Ahmet", "type": "person"},
+                {"name": "İstanbul", "type": "place"},
+                {"name": "15 Ocak", "type": "date"},
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_images_also_get_entity_extraction_unlike_the_free_vision_tags():
+    repo = FakeRepo(
+        item={
+            "id": "item-20",
+            "type": "screenshot",
+            "storage_path": "u1/item-20/shot.png",
+            "mime_type": "image/png",
+        },
+    )
+
+    class EntityProvider(FakeProvider):
+        async def generate_text(self, prompt, *, system=None):
+            if "varlık" in prompt:
+                return "organization: Dell"
+            return await super().generate_text(prompt, system=system)
+
+    await process_item("item-20", repo, lambda: EntityProvider(), user_id="user-1")
+
+    assert repo.entity_calls == [
+        {
+            "item_id": "item-20",
+            "user_id": "user-1",
+            "entities": [{"name": "Dell", "type": "organization"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_entity_attach_does_not_fail_the_item():
+    repo = FakeRepo(item={"id": "item-21", "type": "note"}, note_content="Docker notes.")
+    repo.entity_error = RuntimeError("entities table unavailable")
+
+    await process_item("item-21", repo, lambda: FakeProvider(), user_id="user-1")
 
     assert repo.status_history == ["processing", "completed"]
     assert repo.job_updates[-1]["status"] == "completed"

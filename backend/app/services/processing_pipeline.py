@@ -20,6 +20,7 @@ from .ai_provider import AIProvider
 from .chunking_service import chunk_text
 from .document_service import extract_pdf_text, normalize_text
 from .embedding_service import embed_chunks, format_embedding_literal
+from .entity_extraction_service import extract_entities
 from .exif_service import extract_exif_metadata
 from .ocr_service import extract_text as extract_ocr_text
 from .tagging_service import generate_tags
@@ -50,10 +51,11 @@ async def process_item(
     `get_search_repo` is optional (and `None` in tests that don't care
     about it) — it powers the best-effort duplicate check after
     embedding, see `_check_for_duplicate`. `user_id` is likewise optional
-    and, when given, powers the best-effort tagging step, see
-    `_attach_tags` — `tags`/`item_tags` need an explicit owner
-    (requirements doc, section 8-12), unlike every other table this
-    pipeline writes to, which infers ownership from the item itself.
+    and, when given, powers the best-effort tagging and entity-extraction
+    steps, see `_attach_tags`/`_attach_entities` — `tags`/`item_tags` and
+    `entities`/`item_entities` need an explicit owner (requirements doc,
+    section 8-12, 44-48), unlike every other table this pipeline writes
+    to, which infers ownership from the item itself.
     """
     job_id = await repo.create_job(item_id, job_type="chunk_and_embed")
     started = time.monotonic()
@@ -169,6 +171,8 @@ async def process_item(
                 else await generate_tags(text, provider)
             )
             await _attach_tags(item_id, user_id, tag_names, repo)
+            entities = await extract_entities(text, provider)
+            await _attach_entities(item_id, user_id, entities, repo)
 
         await repo.update_item_status(item_id, "completed")
         await repo.mark_job_completed(job_id)
@@ -231,3 +235,16 @@ async def _attach_tags(
         await repo.attach_tags(item_id, user_id, tag_names)
     except Exception as error:
         logger.warning("tagging failed", extra={"item_id": item_id, "error": str(error)})
+
+
+async def _attach_entities(
+    item_id: str,
+    user_id: str,
+    entities: list[dict[str, str]],
+    repo: SupabaseRestRepository,
+) -> None:
+    """Best-effort, same contract as `_attach_tags`."""
+    try:
+        await repo.attach_entities(item_id, user_id, entities)
+    except Exception as error:
+        logger.warning("entity attach failed", extra={"item_id": item_id, "error": str(error)})

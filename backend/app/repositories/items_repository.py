@@ -16,6 +16,11 @@ import httpx
 from ..core.config import get_settings
 
 _BUCKET = "item-files"
+# Mirrors entities.type's check constraint in
+# infra/supabase/migrations/0011_entities.sql — kept here too (rather than
+# imported from the services layer, which repositories don't depend on)
+# so a bad type never reaches Postgres and is silently dropped instead.
+_VALID_ENTITY_TYPES = {"person", "place", "organization", "date"}
 
 
 def _now_iso() -> str:
@@ -209,6 +214,62 @@ class SupabaseRestRepository:
                     "Prefer": "return=minimal",
                 },
                 json=[{"item_id": item_id, "tag_id": tag_id} for tag_id in tag_ids],
+            )
+            insert_response.raise_for_status()
+
+    async def attach_entities(
+        self, item_id: str, user_id: str, entities: list[dict[str, str]]
+    ) -> None:
+        """Idempotent, same replace pattern as `attach_tags` — reprocessing
+        an item replaces its entity set rather than accumulating
+        duplicates from every run.
+        """
+        deduped: dict[tuple[str, str], str] = {}
+        for entity in entities:
+            name = str(entity.get("name", "")).strip()
+            entity_type = str(entity.get("type", "")).strip().lower()
+            if not name or entity_type not in _VALID_ENTITY_TYPES:
+                continue
+            deduped.setdefault((name.lower(), entity_type), name)
+        rows = [{"name": name, "type": t} for (_, t), name in deduped.items()]
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            if rows:
+                # Upsert-by-(name, type) so re-extracting an already-known
+                # entity reuses its row instead of violating the
+                # (user_id, name, type) unique constraint.
+                upsert_response = await client.post(
+                    f"{self._base_url}/rest/v1/entities",
+                    params={"on_conflict": "user_id,name,type"},
+                    headers={
+                        **self._headers,
+                        "Content-Type": "application/json",
+                        "Prefer": "resolution=merge-duplicates,return=representation",
+                    },
+                    json=[{"user_id": user_id, **row} for row in rows],
+                )
+                upsert_response.raise_for_status()
+                entity_ids = [row["id"] for row in upsert_response.json()]
+            else:
+                entity_ids = []
+
+            delete_response = await client.delete(
+                f"{self._base_url}/rest/v1/item_entities",
+                params={"item_id": f"eq.{item_id}"},
+                headers=self._headers,
+            )
+            delete_response.raise_for_status()
+
+            if not entity_ids:
+                return
+            insert_response = await client.post(
+                f"{self._base_url}/rest/v1/item_entities",
+                headers={
+                    **self._headers,
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal",
+                },
+                json=[{"item_id": item_id, "entity_id": eid} for eid in entity_ids],
             )
             insert_response.raise_for_status()
 

@@ -6,6 +6,7 @@ import '../../../../shared/extensions/build_context_x.dart';
 import '../../../collections/presentation/widgets/add_to_collection_sheet.dart';
 import '../../domain/entities/item.dart';
 import '../providers/item_providers.dart';
+import '../widgets/entities_row.dart';
 import '../widgets/tags_row.dart';
 
 /// Create mode when [item] is null, edit mode otherwise. Content is loaded
@@ -114,6 +115,8 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                   const Divider(height: 24),
                   if (_isEditing) ...[
                     TagsRow(itemId: widget.item!.id),
+                    const SizedBox(height: 8),
+                    EntitiesRow(itemId: widget.item!.id),
                     const SizedBox(height: 12),
                   ],
                   Expanded(

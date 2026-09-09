@@ -10,6 +10,7 @@ import '../../../search/domain/entities/search_result.dart';
 import '../../../search/presentation/providers/search_providers.dart';
 import '../../domain/entities/item.dart';
 import '../providers/item_providers.dart';
+import '../widgets/entities_row.dart';
 import '../widgets/item_type_icon.dart';
 import '../widgets/tags_row.dart';
 
@@ -210,6 +211,8 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
             _LocationRow(latitude: _item.latitude!, longitude: _item.longitude!),
           const SizedBox(height: 12),
           TagsRow(itemId: _item.id),
+          const SizedBox(height: 8),
+          EntitiesRow(itemId: _item.id),
           const SizedBox(height: 24),
           if (_item.type == ItemType.url)
             FilledButton.icon(

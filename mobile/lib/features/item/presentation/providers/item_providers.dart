@@ -9,6 +9,7 @@ import '../../data/local/sync_queue_data_source.dart';
 import '../../data/remote/ai_processing_trigger.dart';
 import '../../data/remote/remote_item_data_source.dart';
 import '../../data/repositories/offline_item_repository.dart';
+import '../../domain/entities/extracted_entity.dart';
 import '../../domain/entities/item.dart';
 import '../../domain/repositories/item_repository.dart';
 
@@ -55,6 +56,13 @@ final pendingSyncCountProvider = StreamProvider<int>((ref) {
 /// the tagging step yet, or if it produced none.
 final itemTagsProvider = FutureProvider.autoDispose.family<List<String>, String>((ref, itemId) {
   return ref.watch(itemRepositoryProvider).fetchTags(itemId);
+});
+
+/// AI-extracted named entities for an item (requirements doc, section
+/// 44-48) — same lifecycle as `itemTagsProvider`.
+final itemEntitiesProvider =
+    FutureProvider.autoDispose.family<List<ExtractedEntity>, String>((ref, itemId) {
+  return ref.watch(itemRepositoryProvider).fetchEntities(itemId);
 });
 
 final noteEditorControllerProvider =

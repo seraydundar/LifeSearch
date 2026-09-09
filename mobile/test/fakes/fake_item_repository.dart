@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:lifesearch/features/item/domain/entities/extracted_entity.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/domain/repositories/item_repository.dart';
 
@@ -42,6 +43,12 @@ class FakeItemRepository implements ItemRepository {
 
   @override
   Future<List<String>> fetchTags(String itemId) async => tagsByItemId[itemId] ?? const [];
+
+  Map<String, List<ExtractedEntity>> entitiesByItemId = {};
+
+  @override
+  Future<List<ExtractedEntity>> fetchEntities(String itemId) async =>
+      entitiesByItemId[itemId] ?? const [];
 
   @override
   Future<Item> createNote({required String title, required String content}) async {
