@@ -16,6 +16,13 @@ Future<void> showCaptureSheet(BuildContext context) {
   return showModalBottomSheet(
     context: context,
     showDragHandle: true,
+    // Without this, the sheet is capped at roughly half the screen height
+    // by default — the six options plus header overflow that on shorter
+    // screens or with a larger system text size (an integration test on
+    // the simulator caught this as a real RenderFlex overflow, not just a
+    // cosmetic one: `isScrollControlled: false` clips the sheet's content
+    // instead of letting it grow or scroll).
+    isScrollControlled: true,
     builder: (context) => const _CaptureSheet(),
   );
 }
@@ -38,9 +45,13 @@ class _CaptureSheet extends ConsumerWidget {
     if (file?.path == null) return; // user cancelled
 
     if (!context.mounted) return;
-    Navigator.of(context).pop(); // close the sheet, show progress on the screen behind it
+    Navigator.of(
+      context,
+    ).pop(); // close the sheet, show progress on the screen behind it
 
-    final ok = await ref.read(captureControllerProvider.notifier).uploadFile(
+    final ok = await ref
+        .read(captureControllerProvider.notifier)
+        .uploadFile(
           localFilePath: file!.path!,
           originalFilename: file.name,
           mimeType: _guessMimeType(file.extension),
@@ -55,14 +66,19 @@ class _CaptureSheet extends ConsumerWidget {
   }
 
   Future<void> _takePhoto(BuildContext context, WidgetRef ref) async {
-    final path = await Navigator.of(context, rootNavigator: true).push<String>(
-      MaterialPageRoute(builder: (_) => const CameraScreen()),
-    );
+    final path = await Navigator.of(
+      context,
+      rootNavigator: true,
+    ).push<String>(MaterialPageRoute(builder: (_) => const CameraScreen()));
     if (!context.mounted) return;
-    Navigator.of(context).pop(); // close the sheet now that we're back from the camera
+    Navigator.of(
+      context,
+    ).pop(); // close the sheet now that we're back from the camera
     if (path == null) return; // backed out without taking a photo
 
-    final ok = await ref.read(captureControllerProvider.notifier).uploadFile(
+    final ok = await ref
+        .read(captureControllerProvider.notifier)
+        .uploadFile(
           localFilePath: path,
           originalFilename: p.basename(path),
           mimeType: 'image/jpeg',
@@ -81,10 +97,14 @@ class _CaptureSheet extends ConsumerWidget {
       MaterialPageRoute(builder: (_) => const AudioRecorderScreen()),
     );
     if (!context.mounted) return;
-    Navigator.of(context).pop(); // close the sheet now that we're back from recording
+    Navigator.of(
+      context,
+    ).pop(); // close the sheet now that we're back from recording
     if (path == null) return; // backed out without saving a recording
 
-    final ok = await ref.read(captureControllerProvider.notifier).uploadFile(
+    final ok = await ref
+        .read(captureControllerProvider.notifier)
+        .uploadFile(
           localFilePath: path,
           originalFilename: p.basename(path),
           mimeType: 'audio/m4a',
@@ -134,64 +154,75 @@ class _CaptureSheet extends ConsumerWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-              child: Text('Add to LifeSearch', style: Theme.of(context).textTheme.titleMedium),
-            ),
-            const SizedBox(height: 8),
-            _CaptureTile(
-              icon: Icons.note_add_outlined,
-              label: 'Create Note',
-              onTap: () {
-                Navigator.of(context).pop();
-                context.push('/item/new');
-              },
-            ),
-            _CaptureTile(
-              icon: Icons.image_outlined,
-              label: 'Choose Image',
-              enabled: !isUploading,
-              onTap: () => _pickAndUpload(
-                context,
-                ref,
-                fileType: FileType.image,
-                itemType: ItemType.image,
+        // `isScrollControlled: true` lets the sheet grow to fit this, but
+        // it's still bounded by the screen — a scrollable fallback for
+        // very small screens or a large system text size.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 4,
+                ),
+                child: Text(
+                  'Add to LifeSearch',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
-            ),
-            _CaptureTile(
-              icon: Icons.picture_as_pdf_outlined,
-              label: 'Upload Document',
-              enabled: !isUploading,
-              onTap: () => _pickAndUpload(
-                context,
-                ref,
-                fileType: FileType.custom,
-                allowedExtensions: const ['pdf'],
-                itemType: ItemType.pdf,
+              const SizedBox(height: 8),
+              _CaptureTile(
+                icon: Icons.note_add_outlined,
+                label: 'Create Note',
+                onTap: () {
+                  Navigator.of(context).pop();
+                  context.push('/item/new');
+                },
               ),
-            ),
-            _CaptureTile(
-              icon: Icons.camera_alt_outlined,
-              label: 'Take Photo',
-              enabled: !isUploading,
-              onTap: () => _takePhoto(context, ref),
-            ),
-            _CaptureTile(
-              icon: Icons.mic_none_outlined,
-              label: 'Record Audio',
-              enabled: !isUploading,
-              onTap: () => _recordAudio(context, ref),
-            ),
-            _CaptureTile(
-              icon: Icons.link,
-              label: 'Add Link',
-              enabled: !isUploading,
-              onTap: () => _addLink(context, ref),
-            ),
-          ],
+              _CaptureTile(
+                icon: Icons.image_outlined,
+                label: 'Choose Image',
+                enabled: !isUploading,
+                onTap: () => _pickAndUpload(
+                  context,
+                  ref,
+                  fileType: FileType.image,
+                  itemType: ItemType.image,
+                ),
+              ),
+              _CaptureTile(
+                icon: Icons.picture_as_pdf_outlined,
+                label: 'Upload Document',
+                enabled: !isUploading,
+                onTap: () => _pickAndUpload(
+                  context,
+                  ref,
+                  fileType: FileType.custom,
+                  allowedExtensions: const ['pdf'],
+                  itemType: ItemType.pdf,
+                ),
+              ),
+              _CaptureTile(
+                icon: Icons.camera_alt_outlined,
+                label: 'Take Photo',
+                enabled: !isUploading,
+                onTap: () => _takePhoto(context, ref),
+              ),
+              _CaptureTile(
+                icon: Icons.mic_none_outlined,
+                label: 'Record Audio',
+                enabled: !isUploading,
+                onTap: () => _recordAudio(context, ref),
+              ),
+              _CaptureTile(
+                icon: Icons.link,
+                label: 'Add Link',
+                enabled: !isUploading,
+                onTap: () => _addLink(context, ref),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -244,7 +275,10 @@ class _AddLinkDialogState extends State<_AddLinkDialog> {
         onSubmitted: (_) => _submit(),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Vazgeç')),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Vazgeç'),
+        ),
         FilledButton(onPressed: _submit, child: const Text('Ekle')),
       ],
     );

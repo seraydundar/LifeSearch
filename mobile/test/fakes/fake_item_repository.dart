@@ -1,16 +1,31 @@
+import 'dart:async';
+
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/domain/repositories/item_repository.dart';
 
-/// In-memory `ItemRepository` used by widget tests so they never touch
-/// Supabase.
+/// In-memory `ItemRepository` used by widget/integration tests so they
+/// never touch Supabase.
+///
+/// `watchItems()` is genuinely reactive — matching the real
+/// `OfflineItemRepository`, which is backed by a live Drift stream — so a
+/// screen that's already watching it sees a `createNote`/`uploadFile`/etc.
+/// immediately, without needing a manual refresh. A plain one-shot
+/// `Stream.value(...)` (the original version of this fake) can't do that:
+/// it closes right after its single emission, so any mutation made after
+/// a screen started watching would silently never show up.
 class FakeItemRepository implements ItemRepository {
-  FakeItemRepository({List<Item> initialItems = const []})
-      : _items = List.of(initialItems);
+  FakeItemRepository({List<Item> initialItems = const []}) : _items = List.of(initialItems);
 
   final List<Item> _items;
+  final _controller = StreamController<List<Item>>.broadcast();
+
+  void _notify() => _controller.add(List.of(_items));
 
   @override
-  Stream<List<Item>> watchItems() => Stream.value(List.of(_items));
+  Stream<List<Item>> watchItems() async* {
+    yield List.of(_items);
+    yield* _controller.stream;
+  }
 
   @override
   Future<String> fetchNoteContent(String itemId) async => 'fake content';
@@ -39,6 +54,7 @@ class FakeItemRepository implements ItemRepository {
       createdAt: DateTime.now(),
     );
     _items.insert(0, item);
+    _notify();
     return item;
   }
 
@@ -68,6 +84,7 @@ class FakeItemRepository implements ItemRepository {
       createdAt: DateTime.now(),
     );
     _items.insert(0, item);
+    _notify();
     return item;
   }
 
@@ -83,6 +100,7 @@ class FakeItemRepository implements ItemRepository {
       createdAt: DateTime.now(),
     );
     _items.insert(0, item);
+    _notify();
     return item;
   }
 
@@ -90,7 +108,12 @@ class FakeItemRepository implements ItemRepository {
   Future<String> getSignedUrl(String storagePath) async => 'https://example.test/$storagePath';
 
   @override
-  Future<void> setFavorite(String itemId, bool favorite) async {}
+  Future<void> setFavorite(String itemId, bool favorite) async {
+    final index = _items.indexWhere((i) => i.id == itemId);
+    if (index == -1) return;
+    _items[index] = _items[index].copyWith(favorite: favorite);
+    _notify();
+  }
 
   @override
   Future<void> dismissDuplicate(String itemId) async {}
@@ -98,5 +121,6 @@ class FakeItemRepository implements ItemRepository {
   @override
   Future<void> deleteItem(Item item) async {
     _items.removeWhere((i) => i.id == item.id);
+    _notify();
   }
 }

@@ -465,10 +465,55 @@ Regresyon testi eklendi (fix geri alınınca kırmızı olduğu elle
 doğrulandı). Mobile: 100 → 101 test. Simülatörde kullanıcının bildirdiği
 tam senaryoyla doğrulandı.
 
+### Integration testleri ✅
+
+`integration_test` paketi eklendi. Var olan unit/widget testlerinden
+farkı: `test/widget/*` her ekranı kendi başına, sahte (fake)
+repository'lerle ve `flutter_test`'in **taklit** render pipeline'ıyla
+test ediyor — `integration_test/app_test.dart` ise gerçek `LifeSearchApp`
+widget ağacını (gerçek go_router, gerçek ekran geçişleri), gerçek bir
+simülatör/cihazda, **gerçek** Skia render pipeline'ıyla çalıştırıyor.
+Yalnızca Supabase/backend'e dokunan sınır (auth, item storage,
+collections, app-lock) sahte — geri kalan her şey (routing, provider
+kompozisyonu, gerçek widget'lar, gerçek gesture'lar) baştan sona
+gerçek.
+
+- 5 senaryo: signed-out kullanıcı login ekranına düşüyor mu, bottom nav
+  Home/Library/Settings arasında doğru geçiyor mu, Home'dan bir not
+  oluşturunca **elle yenilemeden** Library'de görünüyor mu (aşağıdaki
+  reaktiflik düzeltmesini de kapsıyor), app-lock kilit ekranını gerçekten
+  gösterip başarılı doğrulamada gerçekten açıyor mu.
+- **`FakeItemRepository` gerçekten reaktif hale getirildi**: eskiden
+  `watchItems()` tek seferlik bir `Stream.value(...)` dönüyordu — bir ekran
+  onu izlemeye başladıktan SONRA `createNote`/`uploadFile` gibi bir
+  mutasyon olursa asla görünmüyordu (gerçek `OfflineItemRepository`'nin
+  canlı Drift stream'i tam tersini yapıyor). `StreamController.broadcast()`
+  ile düzeltildi; `setFavorite`/`deleteItem` de artık gerçekten
+  mutasyon+bildirim yapıyor. Bu, hem integration testler için gerekliydi
+  hem de var olan tüm widget testlerini daha gerçekçi hale getirdi.
+- **Gerçek bug bulundu ve düzeltildi**: "+" menüsünün
+  `showModalBottomSheet`'i `isScrollControlled: true` vermeden
+  açılıyordu — varsayılan olarak ekranın yaklaşık yarısıyla sınırlı.
+  Altı seçenek + başlık bu sınırı simülatörde 3.5px aşıyordu
+  (`RenderFlex overflowed`) — hiçbir widget testi bu ekranı hiç
+  render etmediği için (gerçek boyutlarda hiç çalıştırılmadığı için)
+  hiç yakalanmamıştı. `isScrollControlled: true` + içeriği
+  `SingleChildScrollView`'e sarmak (küçük ekranlar/büyük sistem yazı
+  tipinde ek güvence) ile düzeltildi.
+- **CI'da çalışmıyor — bilinçli bir sınır**: gerçek bir cihaz/simülatör
+  gerektiriyor; mevcut CI'ın mobile job'ı `ubuntu-latest` üzerinde
+  koşuyor. Bunu eklemek `macos-latest`'e geçmeyi (daha yavaş + daha
+  pahalı GitHub Actions dakikaları) ve bir simülatör boot etme adımını
+  gerektirirdi — şimdilik yerel bir adım olarak kalıyor:
+  `flutter test integration_test/app_test.dart -d <device-id>`.
+
+Backend değişmedi. Mobile: `flutter analyze` temiz, 101 unit/widget testi
+hâlâ yeşil (reaktif fake ile), + 5 integration testi simülatörde canlı
+yeşil (2 geçiş: overflow bulunup düzeltildikten sonra tekrar çalıştırılıp
+doğrulandı).
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
-- **Integration testleri yok**: `integration_test` paketi pubspec'te yok,
-  yalnızca unit + widget testleri var.
 - **README yüzeysel**: ekran görüntüsü/mimari diyagramı yok.
 - **Collections offline değil**: diğer her şey Drift + sync queue ile
   offline çalışıyor, Collections hâlâ doğrudan Supabase'e konuşuyor.
