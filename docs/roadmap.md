@@ -512,9 +512,28 @@ hâlâ yeşil (reaktif fake ile), + 5 integration testi simülatörde canlı
 yeşil (2 geçiş: overflow bulunup düzeltildikten sonra tekrar çalıştırılıp
 doğrulandı).
 
+### README derinliği ✅
+
+- **Ekran görüntüleri**: gerçek hesapla (Delete Account'un service_role
+  ihtiyacı gibi başka bir yarım-yamalak demo değil), simülatörde canlı
+  çekildi — Home, Library (grid), Settings. 3x simülatör çözünürlüğünden
+  500px genişliğe küçültüldü (`sips`) — toplam ~460 KB, üç PNG.
+- **Mimari diyagramı**: bir Mermaid `flowchart` — Mobile (Screens →
+  Repositories → Drift) / Supabase (Auth, Postgres+pgvector, Storage,
+  Realtime) / Backend (FastAPI → pipeline → AIProvider) / OpenAI arasındaki
+  gerçek veri akışını gösteriyor (kimin kime, hangi kimlikle konuştuğu
+  dahil — backend'in `service_role` değil, çağıranın kendi JWT'siyle
+  çalıştığı gibi). GitHub markdown'da native render ediliyor; mermaid-cli
+  (`npx @mermaid-js/mermaid-cli`) ile syntax hatası olmadığı doğrulandı.
+- **Status satırı** güncellendi — artık iki "doküman ötesi" turu da
+  (gap-kapatma + ürünleştirme) ve güncel test sayısını (195) yansıtıyor.
+- **Tests bölümüne** `integration_test` komutu eklendi.
+- **`mobile/README.md`**: `flutter create`'in bıraktığı hiç
+  değiştirilmemiş boilerplate'ti (hâlâ "A new Flutter project." diyordu)
+  — kök README'ye yönlendiren kısa bir nota çevrildi.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
-- **README yüzeysel**: ekran görüntüsü/mimari diyagramı yok.
 - **Collections offline değil**: diğer her şey Drift + sync queue ile
   offline çalışıyor, Collections hâlâ doğrudan Supabase'e konuşuyor.
 - **Entity extraction yok** (bölüm 44-48): "ileri aşama" olarak

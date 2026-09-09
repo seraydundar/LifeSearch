@@ -7,11 +7,78 @@ notes, voice memos and links from daily life, then find them again with
 natural-language, semantic search — *"Google Search, but for your personal
 digital life."*
 
-> Status: all 9 planned phases done, plus a post-Phase-9 pass that closed
-> four gaps found by re-reading the requirements doc (tags, offline
-> keyword search, structured logging, EXIF location). See
-> [`docs/roadmap.md`](docs/roadmap.md) for the phase-by-phase detail.
-> Full requirements: [`docs/requirements.md`](docs/requirements.md).
+> Status: all 9 planned phases done, plus two passes beyond the
+> requirements doc's own scope — first closing 4 gaps found by
+> re-reading it (tags, offline keyword search, structured logging, EXIF
+> location), then a productization pass (CI/CD, a complete Settings
+> screen including Delete Account and biometric/PIN app-lock, a
+> grid/sort Library view, and `integration_test` coverage running the
+> real app end-to-end on a simulator). 195 tests green across
+> backend + mobile. See [`docs/roadmap.md`](docs/roadmap.md) for the
+> phase-by-phase detail. Full requirements:
+> [`docs/requirements.md`](docs/requirements.md).
+
+## Screenshots
+
+<table>
+<tr>
+<td><img src="docs/screenshots/home.png" width="260" alt="Home screen"></td>
+<td><img src="docs/screenshots/library.png" width="260" alt="Library, grid view"></td>
+<td><img src="docs/screenshots/settings.png" width="260" alt="Settings screen"></td>
+</tr>
+<tr>
+<td align="center">Home</td>
+<td align="center">Library (grid)</td>
+<td align="center">Settings</td>
+</tr>
+</table>
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Mobile["Flutter app (mobile/)"]
+        UI["Screens\n(Riverpod ConsumerWidgets)"]
+        Repo["Repositories\n(Item / Auth / Search / Collection)"]
+        Drift[("Drift\nlocal cache + sync queue")]
+        UI --> Repo
+        Repo <--> Drift
+    end
+
+    subgraph Supabase["Supabase"]
+        Auth["Auth"]
+        PG[("Postgres + pgvector\nRLS on every table")]
+        Storage["Private Storage bucket\n(signed URLs)"]
+        Realtime["Realtime"]
+    end
+
+    subgraph Backend["FastAPI AI service (backend/)"]
+        API["/ai/process-item\n/search/\n/rag/ask\n/account/"]
+        Pipeline["Processing pipeline\nchunk → embed → tag → EXIF"]
+        Provider["AIProvider interface"]
+        API --> Pipeline --> Provider
+    end
+
+    AI["OpenAI\n(embeddings, vision, Whisper, chat)"]
+
+    Repo -- "REST + signed URLs" --> Storage
+    Repo -- "auth, CRUD, RPCs" --> PG
+    Repo -- "sign in / sign up" --> Auth
+    Realtime -- "live item updates" --> Repo
+    Repo -- "process/search/ask\n(own Supabase JWT, never a service key)" --> API
+    Pipeline -- "reads/writes" --> PG
+    Pipeline -- "reads files" --> Storage
+    Provider --> AI
+```
+
+Every mobile write goes to Drift first, then syncs to Supabase in the
+background (offline-first — see requirements doc, rule "yazma önce
+local'e"). The backend never gets the user's Supabase password or the
+`service_role` key from the app; it verifies the caller's own JWT
+against `/auth/v1/user` on every request and never touches Storage or
+Postgres except as that user. `AIProvider` is an interface, not a
+hard dependency on OpenAI — swapping providers doesn't touch the
+pipeline.
 
 ## Monorepo layout
 
@@ -92,6 +159,15 @@ cd backend && DYLD_LIBRARY_PATH="$(brew --prefix expat)/lib" .venv/bin/ruff chec
 # Mobile
 cd mobile && flutter analyze
 cd mobile && flutter test
+```
+
+There's also an `integration_test/` suite that runs the real app (real
+go_router, real screen wiring, real rendering) on an actual
+simulator/device — only the Supabase/backend boundary is faked. It needs
+a booted device, so it isn't part of `flutter test` or CI:
+
+```bash
+cd mobile && flutter test integration_test/app_test.dart -d <device-id>
 ```
 
 Every push/PR to `main` runs the same checks in CI — see
