@@ -65,6 +65,7 @@ class ParsedQuery:
     cleaned_query: str
     item_types: list[str] | None
     date_from: datetime | None
+    date_to: datetime | None
 
 
 def _strip(text: str, phrase: str) -> str:
@@ -86,34 +87,81 @@ def _start_of_day(moment: datetime) -> datetime:
     return moment.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def _date_from_phrase(phrase: str, *, now: datetime) -> datetime:
+def _start_of_week(moment: datetime) -> datetime:
+    start = _start_of_day(moment)
+    return start - timedelta(days=start.weekday())  # Monday
+
+
+def _start_of_month(moment: datetime) -> datetime:
+    return _start_of_day(moment).replace(day=1)
+
+
+def _start_of_year(moment: datetime) -> datetime:
+    return _start_of_day(moment).replace(month=1, day=1)
+
+
+def _last_instant_before(period_start: datetime) -> datetime:
+    """The latest representable moment strictly before `period_start` —
+    closes off a "geçen X" (last X) range at an inclusive upper bound
+    (the hybrid RPC's `created_at <= filter_before` treats both bounds
+    as inclusive, see infra/supabase/migrations/0006_hybrid_and_related.sql)
+    without it leaking one microsecond into the period that follows.
+    """
+    return period_start - timedelta(microseconds=1)
+
+
+def _date_range_for_phrase(phrase: str, *, now: datetime) -> tuple[datetime, datetime | None]:
+    """Calendar-correct ranges, not rolling windows — "geçen ay" (last
+    month) used to be `today - 30 days`, which is wrong for any month
+    that isn't exactly 30 days long (11 of the 12 are), and "bugün"/"dün"
+    had no upper bound at all, so "dün" (yesterday) actually matched
+    everything from yesterday onward, today included (see docs/roadmap.md,
+    Faz 10c, madde 2). "bu X" (this X, still ongoing) legitimately has no
+    upper bound — nothing can be dated in the future — but every "geçen X"
+    (last X) is a *closed* period and needs one.
+    """
     today = _start_of_day(now)
-    return {
-        "bugün": today,
-        "dün": today - timedelta(days=1),
-        "bu hafta": today - timedelta(days=today.weekday()),
-        "geçen hafta": today - timedelta(days=7),
-        "bu ay": today.replace(day=1),
-        "geçen ay": today - timedelta(days=30),
-        "bu yıl": today.replace(month=1, day=1),
-        "geçen yıl": today - timedelta(days=365),
-    }[phrase]
+    this_week = _start_of_week(today)
+    this_month = _start_of_month(today)
+    this_year = _start_of_year(today)
+
+    if phrase == "bugün":
+        return today, None
+    if phrase == "dün":
+        return today - timedelta(days=1), _last_instant_before(today)
+    if phrase == "bu hafta":
+        return this_week, None
+    if phrase == "geçen hafta":
+        return this_week - timedelta(days=7), _last_instant_before(this_week)
+    if phrase == "bu ay":
+        return this_month, None
+    if phrase == "geçen ay":
+        # The day before the 1st of this month always falls in the
+        # previous month, whatever that month's actual length was.
+        last_month = _start_of_month(this_month - timedelta(days=1))
+        return last_month, _last_instant_before(this_month)
+    if phrase == "bu yıl":
+        return this_year, None
+    if phrase == "geçen yıl":
+        return this_year.replace(year=this_year.year - 1), _last_instant_before(this_year)
+    raise AssertionError(f"unhandled date phrase: {phrase!r}")  # unreachable: see _DATE_PHRASES
 
 
-def _extract_date(text: str, *, now: datetime) -> tuple[str, datetime | None]:
+def _extract_date(text: str, *, now: datetime) -> tuple[str, datetime | None, datetime | None]:
     for phrase in _DATE_PHRASES:
         pattern = r"\b" + re.escape(phrase) + r"\b"
         if re.search(pattern, text, flags=re.IGNORECASE):
             remaining = re.sub(pattern, " ", text, flags=re.IGNORECASE)
-            return remaining, _date_from_phrase(phrase, now=now)
-    return text, None
+            date_from, date_to = _date_range_for_phrase(phrase, now=now)
+            return remaining, date_from, date_to
+    return text, None, None
 
 
 def parse_query(text: str, *, now: datetime | None = None) -> ParsedQuery:
     now = now or datetime.now(UTC)
 
     remaining, item_types = _extract_types(text)
-    remaining, date_from = _extract_date(remaining, now=now)
+    remaining, date_from, date_to = _extract_date(remaining, now=now)
     cleaned = re.sub(r"\s+", " ", remaining).strip()
 
     return ParsedQuery(
@@ -123,4 +171,5 @@ def parse_query(text: str, *, now: datetime | None = None) -> ParsedQuery:
         cleaned_query=cleaned or text.strip(),
         item_types=item_types or None,
         date_from=date_from,
+        date_to=date_to,
     )

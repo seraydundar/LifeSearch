@@ -9,7 +9,11 @@ def test_extracts_a_type_keyword_and_cleans_the_query():
     result = parse_query("geçen ay baktığım PDF'ler", now=_NOW)
 
     assert result.item_types == ["pdf"]
-    assert result.date_from == datetime(2026, 8, 8)  # 30 days before _NOW
+    # The full previous calendar month (August), not a rolling 30 days
+    # back from _NOW (which would have been Aug 8) — see
+    # test_gecen_ay_is_the_full_previous_calendar_month_not_a_rolling_window.
+    assert result.date_from == datetime(2026, 8, 1)
+    assert result.date_to == datetime(2026, 8, 31, 23, 59, 59, 999999)
     assert "pdf" not in result.cleaned_query.lower()
     assert "baktığım" in result.cleaned_query
 
@@ -20,25 +24,85 @@ def test_extracts_multiple_type_keywords():
     assert result.item_types == ["image", "note"]
 
 
-def test_bugun_resolves_to_start_of_today():
+def test_bugun_resolves_to_start_of_today_with_no_upper_bound():
     result = parse_query("bugün eklediğim not", now=_NOW)
 
     assert result.date_from == datetime(2026, 9, 7)
+    # Nothing is dated in the future, so "today" doesn't need a closing
+    # bound the way "dün" (a *past*, closed day) does.
+    assert result.date_to is None
     assert result.item_types == ["note"]
 
 
-def test_dun_resolves_to_start_of_yesterday():
+def test_dun_is_a_closed_range_that_does_not_bleed_into_today():
     result = parse_query("dün aldığım ekran görüntüsü", now=_NOW)
 
     assert result.date_from == datetime(2026, 9, 6)
+    # The actual bug this fixes: "dün" used to have no upper bound at
+    # all, so it matched everything from yesterday onward — today
+    # included. It's now closed off at the last instant of yesterday.
+    assert result.date_to == datetime(2026, 9, 6, 23, 59, 59, 999999)
+    assert result.date_to < datetime(2026, 9, 7)  # never reaches into today
     assert result.item_types == ["screenshot"]
 
 
-def test_bu_ay_resolves_to_the_1st_of_this_month():
+def test_bu_hafta_resolves_to_monday_with_no_upper_bound():
+    result = parse_query("bu hafta eklediğim notlar", now=_NOW)
+
+    assert result.date_from == datetime(2026, 9, 7)  # _NOW is itself a Monday
+    assert result.date_to is None
+
+
+def test_gecen_hafta_is_the_full_previous_calendar_week():
+    result = parse_query("GEÇEN HAFTA EKLEDİĞİM NOTLAR", now=_NOW)
+
+    assert result.item_types == ["note"]
+    assert result.date_from == datetime(2026, 8, 31)  # Monday of the week before
+    assert result.date_to == datetime(2026, 9, 6, 23, 59, 59, 999999)  # Sunday, end of day
+
+
+def test_bu_ay_resolves_to_the_1st_of_this_month_with_no_upper_bound():
     result = parse_query("bu ay kaydettiğim linkler", now=_NOW)
 
     assert result.date_from == datetime(2026, 9, 1)
+    assert result.date_to is None
     assert result.item_types == ["url"]
+
+
+def test_gecen_ay_is_the_full_previous_calendar_month_not_a_rolling_window():
+    # August has 31 days — the old `today - timedelta(days=30)` gave
+    # Aug 8, missing the first week of the actual previous month
+    # entirely and reaching one week into the wrong (August, correctly)
+    # month regardless. A month-length-independent check needs a month
+    # that isn't 30 days; August (31) already isn't, but the case that
+    # would have broken the old code hardest is a short February.
+    now = datetime(2026, 3, 1, 9, 0, 0)  # 2026 is not a leap year: Feb has 28 days
+    result = parse_query("geçen ay aldığım notlar", now=now)
+
+    assert result.date_from == datetime(2026, 2, 1)
+    assert result.date_to == datetime(2026, 2, 28, 23, 59, 59, 999999)
+
+
+def test_gecen_ay_crosses_a_year_boundary_correctly():
+    now = datetime(2026, 1, 15, 9, 0, 0)
+    result = parse_query("geçen ay aldığım notlar", now=now)
+
+    assert result.date_from == datetime(2025, 12, 1)
+    assert result.date_to == datetime(2025, 12, 31, 23, 59, 59, 999999)
+
+
+def test_bu_yil_resolves_to_jan_1st_with_no_upper_bound():
+    result = parse_query("bu yıl aldığım fotoğraflar", now=_NOW)
+
+    assert result.date_from == datetime(2026, 1, 1)
+    assert result.date_to is None
+
+
+def test_gecen_yil_is_the_full_previous_calendar_year():
+    result = parse_query("geçen yıl aldığım fotoğraflar", now=_NOW)
+
+    assert result.date_from == datetime(2025, 1, 1)
+    assert result.date_to == datetime(2025, 12, 31, 23, 59, 59, 999999)
 
 
 def test_no_filter_words_leaves_the_query_untouched():
@@ -46,6 +110,7 @@ def test_no_filter_words_leaves_the_query_untouched():
 
     assert result.item_types is None
     assert result.date_from is None
+    assert result.date_to is None
     assert result.cleaned_query == "Docker container ile image arasındaki fark"
 
 
@@ -54,6 +119,7 @@ def test_a_query_that_is_only_filter_words_falls_back_to_the_original_text():
 
     assert result.item_types == ["pdf"]
     assert result.date_from is not None
+    assert result.date_to is not None
     # Stripping both filter phrases would leave nothing to embed — the
     # original text is a better search input than an empty string.
     assert result.cleaned_query == "geçen ay pdfler"

@@ -60,6 +60,11 @@ async def search_endpoint(
     parsed = parse_query(body.query)
     item_types = body.item_types or parsed.item_types
     date_from = body.date_from or parsed.date_from
+    # Previously always `body.date_to` — silently dropping the parser's
+    # own upper bound (see query_parser.py's "geçen X" phrases) whenever
+    # the client hadn't sent one of its own, so e.g. "dün" kept matching
+    # everything from yesterday onward instead of yesterday alone.
+    date_to = body.date_to or parsed.date_to
 
     matches = await semantic_search(
         parsed.cleaned_query,
@@ -68,7 +73,7 @@ async def search_endpoint(
         limit=body.limit,
         item_types=item_types,
         date_after=date_from,
-        date_before=body.date_to,
+        date_before=date_to,
     )
 
     return SearchResponse(query=body.query, results=[_to_result(m) for m in matches])

@@ -1354,6 +1354,48 @@ düzeltmenin kapsamının dışında tutuldu; `flutter analyze`'ın
 `_documentItemTypeFor`/`_guessMimeType` üzerindeki tip kontrolü ve
 mevcut 135 testin hâlâ geçmesi tek doğrulama).
 
+#### Faz 10c, madde 2: doğal dil tarih filtreleri artık takvim aralığı ✅
+
+`query_parser.py` her "geçen X"/"bu X" ifadesi için yalnızca bir alt
+sınır (`date_from`) üretiyordu, hiç üst sınır (`date_to`) yoktu. İki
+farklı sorun buradan çıkıyordu: "geçen ay" takvim ayı yerine
+`today - timedelta(days=30)` (kayan 30 gün) olarak hesaplanıyordu —
+31 günlük bir ay için yanlış, Şubat gibi 28 günlük bir ay için daha da
+yanlış; "dün" ise üst sınırı olmadığı için gerçekte "dünden itibaren
+her şey" anlamına geliyordu, bugünü de kapsayarak.
+
+- **`_date_range_for_phrase()`** (yeniden yazıldı — eski adı
+  `_date_from_phrase`, tek bir `datetime` döndürüyordu): artık her ifade
+  için `(date_from, date_to)` çifti döndürüyor. "bu X" ifadeleri (bu
+  hafta/ay/yıl) hâlâ üst sınırsız — henüz sürüyorlar, gelecekte
+  tarihli bir item olamayacağı için buna gerek yok. "geçen X" ifadeleri
+  artık **kapalı** bir aralık: "geçen ay" gerçek önceki takvim ayının
+  1'inden son gününe (`_last_instant_before` ile bir sonraki ayın
+  başından bir mikrosaniye öncesine — hybrid RPC'nin
+  `created_at <= filter_before` karşılaştırması dahil olduğu için, tam
+  gece yarısı sınırında yanlışlıkla bir sonraki döneme sızmaması için),
+  "dün" tam olarak dünün 00:00:00.000000'ından 23:59:59.999999'una,
+  "geçen hafta"/"geçen yıl" de aynı desende kapalı aralıklara çekildi.
+- **`ParsedQuery`**'e `date_to` alanı eklendi.
+- **`api/search/routes.py`**: `date_to = body.date_to or parsed.date_to`
+  eklendi — önceden her zaman `body.date_to` kullanılıyordu, yani
+  istemci kendi `date_to`'sunu göndermediğinde parser'ın ürettiği üst
+  sınır sessizce atılıyordu (bu satır olmadan, `date_from` düzeltmesi
+  tek başına "dün"ü hâlâ bugüne kadar açık bırakırdı).
+
+Backend: `ruff check` temiz, testler 151 → **157** (yeniden yazılan
+`test_query_parser.py` — "geçen ay"ın gerçek takvim ayı olduğunu hem
+31 günlük hem 28 günlük bir ayla hem de yıl sınırını aşan bir örnekle
+doğruluyor, "dün"ün `date_to`'sunun kesinlikle bugünden önce kaldığını
+doğruluyor, "bu X" ifadelerinin hâlâ üst sınırsız olduğunu, "geçen
+hafta"/"geçen yıl"ın da kapalı aralık olduğunu doğruluyor).
+
+**Kapsam dışı bırakılan**: mobilde özel tarih aralığı seçimi (Search
+sekmesinin üç sabit preset'i — bugün/bu hafta/bu ay — hâlâ aynı;
+kullanıcının kendi başlangıç/bitiş tarihini seçmesi ayrı, planlanmamış
+bir özellik) — denetim raporunun bu maddesi özellikle NLP parser'ın
+takvim matematiğiydi, mobil UI değil.
+
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):
 
@@ -1369,9 +1411,9 @@ maddeler (öncelik sırasıyla, denetim raporundan):
    kurtarmıyor; mobilde işleme sonucu için Realtime/polling yok~~ ✅
    üçü de düzeltildi — bkz. yukarıdaki iki alt bölüm (Faz 10b, madde 1 ve
    madde 2).
-7. "Geçen ay" takvim ayı yerine "son 30 gün" olarak yorumlanıyor; "dün"
-   bitiş sınırı yok, bugünü de kapsıyor
-   ([query_parser.py](../backend/app/services/query_parser.py)).
+7. ~~"Geçen ay" takvim ayı yerine "son 30 gün" olarak yorumlanıyor;
+   "dün" bitiş sınırı yok, bugünü de kapsıyor~~ ✅ düzeltildi — bkz.
+   yukarıdaki alt bölüm.
 8. ~~`replace_chunks`/`replace_item_content` bağımsız DELETE+INSERT —
    aynı item için eşzamanlı iki job iki kez INSERT yapabilir~~ ✅
    düzeltildi — bkz. yukarıdaki alt bölüm.
@@ -1397,9 +1439,9 @@ uyumlu hale getirildi):
    güncelleme~~, ~~backend job restart-kurtarma~~, ~~chunk/content
    replace idempotency~~, ~~URL fetch SSRF koruması~~, ~~Android
    INTERNET izni~~ (madde 11'de).
-3. **Faz 10c (içerik kapsamı)**: ~~genel belge desteği~~ ✅, taranmış
-   PDF için OCR fallback (hâlâ açık), doğal dil tarih filtrelerinin
-   takvim aralığına düzeltilmesi (hâlâ açık).
+3. **Faz 10c (içerik kapsamı)**: ~~genel belge desteği~~ ✅, ~~doğal dil
+   tarih filtrelerinin takvim aralığına düzeltilmesi~~ ✅, taranmış PDF
+   için OCR fallback (Faz 10c'de kalan tek madde).
 4. **Doğrulama**: gerçek OpenAI + `service_role` key'leriyle, iki ayrı
    hesabı da içeren izole bir ortamda dokümanın 66. bölümündeki MVP
    senaryosunu uçtan uca çalıştırmak — yalnızca o zaman "MVP tamamlandı"
