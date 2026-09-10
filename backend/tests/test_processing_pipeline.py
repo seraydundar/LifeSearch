@@ -66,6 +66,10 @@ class FakeRepo:
         self.entity_calls: list[dict] = []
         self.entity_error: Exception | None = None
         self._job_id = "job-1"
+        self.closed = False
+
+    async def aclose(self):
+        self.closed = True
 
     async def create_job(self, item_id, job_type):
         return self._job_id
@@ -578,3 +582,27 @@ async def test_a_photo_with_no_exif_leaves_location_fields_empty():
     assert update["longitude"] is None
     assert update["captured_at"] is None
     assert repo.status_history == ["processing", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_the_repo_is_closed_after_a_successful_run():
+    """Regression guard: `SupabaseRestRepository` reuses one HTTP client
+    across the whole run instead of opening one per call (see its own
+    docstring) — this only pays off if something actually closes it
+    afterward. `process_item` owns that, via a `finally` block.
+    """
+    repo = FakeRepo(item={"id": "item-22", "type": "note"}, note_content="Docker notes.")
+
+    await process_item("item-22", repo, lambda: FakeProvider())
+
+    assert repo.closed is True
+
+
+@pytest.mark.asyncio
+async def test_the_repo_is_closed_even_after_a_failure():
+    repo = FakeRepo(item={"id": "item-23", "type": "carrier_pigeon"})
+
+    await process_item("item-23", repo, lambda: FakeProvider())
+
+    assert repo.status_history[-1] == "failed"
+    assert repo.closed is True

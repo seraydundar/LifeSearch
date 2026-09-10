@@ -35,65 +35,72 @@ class SupabaseRestRepository:
             "apikey": settings.supabase_anon_key,
             "Authorization": f"Bearer {access_token}",
         }
+        # One shared client for this repository's lifetime instead of a
+        # fresh TCP+TLS handshake per method call. `process_item()` alone
+        # makes 15-20 calls against a single item (get_item, download_file,
+        # replace_item_content, replace_chunks, attach_tags,
+        # attach_entities, job/status updates, ...) — those used to each
+        # open and close their own connection. `headers` set here apply to
+        # every request by default; a call site only needs to pass what
+        # differs (Content-Type, Prefer) — httpx merges per-request headers
+        # on top of the client's, it doesn't replace them.
+        self._client = httpx.AsyncClient(headers=self._headers, timeout=15.0)
+
+    async def aclose(self) -> None:
+        """Call once this repository is done being used — see
+        `processing_pipeline.process_item()`'s `finally` block, its only
+        caller today. Safe to await even if nothing was ever requested.
+        """
+        await self._client.aclose()
 
     async def get_item(self, item_id: str) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(
-                f"{self._base_url}/rest/v1/items",
-                params={"id": f"eq.{item_id}", "select": "*"},
-                headers=self._headers,
-            )
-            response.raise_for_status()
-            rows = response.json()
-            if not rows:
-                raise LookupError(f"Item {item_id} not found (or not owned by this user).")
-            return rows[0]
+        response = await self._client.get(
+            f"{self._base_url}/rest/v1/items",
+            params={"id": f"eq.{item_id}", "select": "*"},
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows:
+            raise LookupError(f"Item {item_id} not found (or not owned by this user).")
+        return rows[0]
 
     async def get_note_content(self, item_id: str) -> str:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(
-                f"{self._base_url}/rest/v1/item_contents",
-                params={"item_id": f"eq.{item_id}", "select": "raw_text"},
-                headers=self._headers,
-            )
-            response.raise_for_status()
-            rows = response.json()
-            return rows[0]["raw_text"] or "" if rows else ""
+        response = await self._client.get(
+            f"{self._base_url}/rest/v1/item_contents",
+            params={"item_id": f"eq.{item_id}", "select": "raw_text"},
+        )
+        response.raise_for_status()
+        rows = response.json()
+        return rows[0]["raw_text"] or "" if rows else ""
 
     async def download_file(self, storage_path: str) -> bytes:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                f"{self._base_url}/storage/v1/object/{_BUCKET}/{storage_path}",
-                headers=self._headers,
-            )
-            response.raise_for_status()
-            return response.content
+        response = await self._client.get(
+            f"{self._base_url}/storage/v1/object/{_BUCKET}/{storage_path}",
+            timeout=30.0,  # larger files (PDFs, audio) need more room than the 15s default
+        )
+        response.raise_for_status()
+        return response.content
 
     async def replace_chunks(self, item_id: str, chunks: list[dict[str, Any]]) -> None:
         """Idempotent by design (requirements doc, rule 17): re-processing
         an item deletes its old chunks first, so running the same job
         twice never leaves duplicates behind.
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            delete_response = await client.delete(
-                f"{self._base_url}/rest/v1/chunks",
-                params={"item_id": f"eq.{item_id}"},
-                headers=self._headers,
-            )
-            delete_response.raise_for_status()
+        delete_response = await self._client.delete(
+            f"{self._base_url}/rest/v1/chunks",
+            params={"item_id": f"eq.{item_id}"},
+        )
+        delete_response.raise_for_status()
 
-            if not chunks:
-                return
-            insert_response = await client.post(
-                f"{self._base_url}/rest/v1/chunks",
-                headers={
-                    **self._headers,
-                    "Content-Type": "application/json",
-                    "Prefer": "return=minimal",
-                },
-                json=chunks,
-            )
-            insert_response.raise_for_status()
+        if not chunks:
+            return
+        insert_response = await self._client.post(
+            f"{self._base_url}/rest/v1/chunks",
+            headers={"Content-Type": "application/json", "Prefer": "return=minimal"},
+            json=chunks,
+            timeout=30.0,  # a full item's worth of chunks in one insert
+        )
+        insert_response.raise_for_status()
 
     async def update_item_metadata(
         self,
@@ -124,14 +131,13 @@ class SupabaseRestRepository:
             fields["captured_at"] = captured_at.isoformat()
         if not fields:
             return
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.patch(
-                f"{self._base_url}/rest/v1/items",
-                params={"id": f"eq.{item_id}"},
-                headers={**self._headers, "Content-Type": "application/json"},
-                json=fields,
-            )
-            response.raise_for_status()
+        response = await self._client.patch(
+            f"{self._base_url}/rest/v1/items",
+            params={"id": f"eq.{item_id}"},
+            headers={"Content-Type": "application/json"},
+            json=fields,
+        )
+        response.raise_for_status()
 
     async def replace_item_content(
         self,
@@ -146,29 +152,23 @@ class SupabaseRestRepository:
         `item_contents` rows behind. Notes write their body once at
         creation instead and never call this.
         """
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            delete_response = await client.delete(
-                f"{self._base_url}/rest/v1/item_contents",
-                params={"item_id": f"eq.{item_id}"},
-                headers=self._headers,
-            )
-            delete_response.raise_for_status()
+        delete_response = await self._client.delete(
+            f"{self._base_url}/rest/v1/item_contents",
+            params={"item_id": f"eq.{item_id}"},
+        )
+        delete_response.raise_for_status()
 
-            insert_response = await client.post(
-                f"{self._base_url}/rest/v1/item_contents",
-                headers={
-                    **self._headers,
-                    "Content-Type": "application/json",
-                    "Prefer": "return=minimal",
-                },
-                json={
-                    "item_id": item_id,
-                    "raw_text": raw_text,
-                    "ocr_text": ocr_text,
-                    "ai_description": ai_description,
-                },
-            )
-            insert_response.raise_for_status()
+        insert_response = await self._client.post(
+            f"{self._base_url}/rest/v1/item_contents",
+            headers={"Content-Type": "application/json", "Prefer": "return=minimal"},
+            json={
+                "item_id": item_id,
+                "raw_text": raw_text,
+                "ocr_text": ocr_text,
+                "ai_description": ai_description,
+            },
+        )
+        insert_response.raise_for_status()
 
     async def attach_tags(self, item_id: str, user_id: str, tag_names: list[str]) -> None:
         """Idempotent by design, same replace pattern as `replace_chunks` —
@@ -177,45 +177,38 @@ class SupabaseRestRepository:
         """
         names = [n for n in dict.fromkeys(t.strip().lower() for t in tag_names) if n]
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            if names:
-                # Upsert-by-name so re-tagging with an already-existing tag
-                # reuses its row instead of violating the (user_id, name)
-                # unique constraint.
-                upsert_response = await client.post(
-                    f"{self._base_url}/rest/v1/tags",
-                    params={"on_conflict": "user_id,name"},
-                    headers={
-                        **self._headers,
-                        "Content-Type": "application/json",
-                        "Prefer": "resolution=merge-duplicates,return=representation",
-                    },
-                    json=[{"user_id": user_id, "name": name} for name in names],
-                )
-                upsert_response.raise_for_status()
-                tag_ids = [row["id"] for row in upsert_response.json()]
-            else:
-                tag_ids = []
-
-            delete_response = await client.delete(
-                f"{self._base_url}/rest/v1/item_tags",
-                params={"item_id": f"eq.{item_id}"},
-                headers=self._headers,
-            )
-            delete_response.raise_for_status()
-
-            if not tag_ids:
-                return
-            insert_response = await client.post(
-                f"{self._base_url}/rest/v1/item_tags",
+        if names:
+            # Upsert-by-name so re-tagging with an already-existing tag
+            # reuses its row instead of violating the (user_id, name)
+            # unique constraint.
+            upsert_response = await self._client.post(
+                f"{self._base_url}/rest/v1/tags",
+                params={"on_conflict": "user_id,name"},
                 headers={
-                    **self._headers,
                     "Content-Type": "application/json",
-                    "Prefer": "return=minimal",
+                    "Prefer": "resolution=merge-duplicates,return=representation",
                 },
-                json=[{"item_id": item_id, "tag_id": tag_id} for tag_id in tag_ids],
+                json=[{"user_id": user_id, "name": name} for name in names],
             )
-            insert_response.raise_for_status()
+            upsert_response.raise_for_status()
+            tag_ids = [row["id"] for row in upsert_response.json()]
+        else:
+            tag_ids = []
+
+        delete_response = await self._client.delete(
+            f"{self._base_url}/rest/v1/item_tags",
+            params={"item_id": f"eq.{item_id}"},
+        )
+        delete_response.raise_for_status()
+
+        if not tag_ids:
+            return
+        insert_response = await self._client.post(
+            f"{self._base_url}/rest/v1/item_tags",
+            headers={"Content-Type": "application/json", "Prefer": "return=minimal"},
+            json=[{"item_id": item_id, "tag_id": tag_id} for tag_id in tag_ids],
+        )
+        insert_response.raise_for_status()
 
     async def attach_entities(
         self, item_id: str, user_id: str, entities: list[dict[str, str]]
@@ -233,45 +226,38 @@ class SupabaseRestRepository:
             deduped.setdefault((name.lower(), entity_type), name)
         rows = [{"name": name, "type": t} for (_, t), name in deduped.items()]
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            if rows:
-                # Upsert-by-(name, type) so re-extracting an already-known
-                # entity reuses its row instead of violating the
-                # (user_id, name, type) unique constraint.
-                upsert_response = await client.post(
-                    f"{self._base_url}/rest/v1/entities",
-                    params={"on_conflict": "user_id,name,type"},
-                    headers={
-                        **self._headers,
-                        "Content-Type": "application/json",
-                        "Prefer": "resolution=merge-duplicates,return=representation",
-                    },
-                    json=[{"user_id": user_id, **row} for row in rows],
-                )
-                upsert_response.raise_for_status()
-                entity_ids = [row["id"] for row in upsert_response.json()]
-            else:
-                entity_ids = []
-
-            delete_response = await client.delete(
-                f"{self._base_url}/rest/v1/item_entities",
-                params={"item_id": f"eq.{item_id}"},
-                headers=self._headers,
-            )
-            delete_response.raise_for_status()
-
-            if not entity_ids:
-                return
-            insert_response = await client.post(
-                f"{self._base_url}/rest/v1/item_entities",
+        if rows:
+            # Upsert-by-(name, type) so re-extracting an already-known
+            # entity reuses its row instead of violating the
+            # (user_id, name, type) unique constraint.
+            upsert_response = await self._client.post(
+                f"{self._base_url}/rest/v1/entities",
+                params={"on_conflict": "user_id,name,type"},
                 headers={
-                    **self._headers,
                     "Content-Type": "application/json",
-                    "Prefer": "return=minimal",
+                    "Prefer": "resolution=merge-duplicates,return=representation",
                 },
-                json=[{"item_id": item_id, "entity_id": eid} for eid in entity_ids],
+                json=[{"user_id": user_id, **row} for row in rows],
             )
-            insert_response.raise_for_status()
+            upsert_response.raise_for_status()
+            entity_ids = [row["id"] for row in upsert_response.json()]
+        else:
+            entity_ids = []
+
+        delete_response = await self._client.delete(
+            f"{self._base_url}/rest/v1/item_entities",
+            params={"item_id": f"eq.{item_id}"},
+        )
+        delete_response.raise_for_status()
+
+        if not entity_ids:
+            return
+        insert_response = await self._client.post(
+            f"{self._base_url}/rest/v1/item_entities",
+            headers={"Content-Type": "application/json", "Prefer": "return=minimal"},
+            json=[{"item_id": item_id, "entity_id": eid} for eid in entity_ids],
+        )
+        insert_response.raise_for_status()
 
     async def mark_duplicate(
         self, item_id: str, duplicate_of_item_id: str, similarity: float
@@ -280,52 +266,44 @@ class SupabaseRestRepository:
         doc, section 46) — never blocks or merges anything, just records
         the best candidate for the client to show a dismissible banner for.
         """
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.patch(
-                f"{self._base_url}/rest/v1/items",
-                params={"id": f"eq.{item_id}"},
-                headers={**self._headers, "Content-Type": "application/json"},
-                json={
-                    "duplicate_of_item_id": duplicate_of_item_id,
-                    "duplicate_similarity": similarity,
-                    "duplicate_dismissed": False,
-                },
-            )
-            response.raise_for_status()
+        response = await self._client.patch(
+            f"{self._base_url}/rest/v1/items",
+            params={"id": f"eq.{item_id}"},
+            headers={"Content-Type": "application/json"},
+            json={
+                "duplicate_of_item_id": duplicate_of_item_id,
+                "duplicate_similarity": similarity,
+                "duplicate_dismissed": False,
+            },
+        )
+        response.raise_for_status()
 
     async def update_item_status(self, item_id: str, status: str) -> None:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.patch(
-                f"{self._base_url}/rest/v1/items",
-                params={"id": f"eq.{item_id}"},
-                headers={**self._headers, "Content-Type": "application/json"},
-                json={"processing_status": status},
-            )
-            response.raise_for_status()
+        response = await self._client.patch(
+            f"{self._base_url}/rest/v1/items",
+            params={"id": f"eq.{item_id}"},
+            headers={"Content-Type": "application/json"},
+            json={"processing_status": status},
+        )
+        response.raise_for_status()
 
     async def create_job(self, item_id: str, job_type: str) -> str:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                f"{self._base_url}/rest/v1/processing_jobs",
-                headers={
-                    **self._headers,
-                    "Content-Type": "application/json",
-                    "Prefer": "return=representation",
-                },
-                json={"item_id": item_id, "job_type": job_type, "status": "pending"},
-            )
-            response.raise_for_status()
-            return response.json()[0]["id"]
+        response = await self._client.post(
+            f"{self._base_url}/rest/v1/processing_jobs",
+            headers={"Content-Type": "application/json", "Prefer": "return=representation"},
+            json={"item_id": item_id, "job_type": job_type, "status": "pending"},
+        )
+        response.raise_for_status()
+        return response.json()[0]["id"]
 
     async def update_job(self, job_id: str, **fields: Any) -> None:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.patch(
-                f"{self._base_url}/rest/v1/processing_jobs",
-                params={"id": f"eq.{job_id}"},
-                headers={**self._headers, "Content-Type": "application/json"},
-                json=fields,
-            )
-            response.raise_for_status()
+        response = await self._client.patch(
+            f"{self._base_url}/rest/v1/processing_jobs",
+            params={"id": f"eq.{job_id}"},
+            headers={"Content-Type": "application/json"},
+            json=fields,
+        )
+        response.raise_for_status()
 
     async def mark_job_started(self, job_id: str) -> None:
         await self.update_job(job_id, status="processing", started_at=_now_iso())

@@ -776,6 +776,49 @@ elle doğrulandı (kırmızı çıkıyor).
 Backend: 86 test yeşil (değişmedi — yeni bir test eklenmedi, var olanı
 güçlendirdi). `ruff check` temiz.
 
+### Performans: items_repository.py artık tek bir HTTP client paylaşıyor ✅
+
+Bir kod incelemesi turunda bulundu. `SupabaseRestRepository`'nin her
+metodu kendi `httpx.AsyncClient(...)`'ını açıp kapatıyordu —
+`process_item()` tek bir item için (örn. bir görsel) `get_item`,
+`download_file`, `update_item_metadata`, `replace_item_content`,
+`replace_chunks` (2 çağrı), `attach_tags` (2-3 çağrı), `attach_entities`
+(2-3 çağrı), job/status güncellemeleri derken **15-20 ayrı TCP+TLS
+handshake** yapıyordu — hepsi aynı Supabase projesine, aynı istek
+sırasında.
+
+- `SupabaseRestRepository.__init__`'te artık tek bir `httpx.AsyncClient`
+  oluşturuluyor (`headers=self._headers` ile — apikey/Authorization artık
+  her çağrıda tekrar tekrar spread edilmiyor, httpx bunları client
+  seviyesindeki varsayılanlarla otomatik birleştiriyor). Her metot kendi
+  `async with httpx.AsyncClient(...)` bloğu yerine `self._client`'ı
+  kullanıyor; sadece farklı olan (Content-Type, Prefer, ya da
+  `download_file`/`replace_chunks`'ın 30s'lik timeout override'ı)
+  çağrı bazında geçiliyor.
+- Yeni `aclose()` — `process_item()`'ın `finally` bloğunda çağrılıyor
+  (hem başarılı hem başarısız yoldan sonra), çünkü `repo` bu background
+  task'ın tek tüketicisi ve ondan sonra hiçbir yerde tekrar kullanılmıyor.
+- **Kapsam bilinçli olarak dar tutuldu** (kural 4): `SearchRepository`/
+  `AccountRepository` aynı per-call-client desenini hâlâ kullanıyor — bu
+  ikisi tipik bir istekte sadece 1-2 çağrı yapıyor, kazanç
+  `SupabaseRestRepository`'ninki kadar büyük değil; ekstra lifecycle
+  karmaşıklığına değmiyor.
+- **Doğrulama notu**: `document_service.py`'nin (dolayısıyla
+  `processing_pipeline.py`'ın) bu makinede önceden belgelenmiş
+  pypdf→expat ortam sorunu yüzünden `test_processing_pipeline.py` yerelde
+  hâlâ hiç import edilemiyor (CI'ı etkilemiyor). Bunun yerine
+  `SupabaseRestRepository`'yi gerçek bir `httpx.MockTransport`'a karşı elle
+  çalıştırdım — 6 farklı metottan 9 gerçek HTTP çağrısı, tek bir paylaşılan
+  client üzerinden, doğru header/body/timeout'larla doğrulandı, `aclose()`
+  sonrası `client.is_closed == True`. `FakeRepo`'ya (test double) yeni bir
+  `aclose()` + onu doğrulayan 2 test eklendi.
+
+Backend: 118 test toplamda (+2: repo'nun kapatıldığını doğrulayan 2 yeni
+`test_processing_pipeline.py` testi) — bu makinede o dosya pypdf/expat
+importu yüzünden hâlâ hiç çalışmıyor, ama diğer 86'sı (değişmeyen sayı)
+yerelde yeşil; CI'da (ubuntu-latest, bu sorunu yaşamıyor) 118'i de
+çalışacak. `ruff check` temiz.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
 Doküman kapsamında bilinen bir boşluk kalmadı — geriye yalnızca iki

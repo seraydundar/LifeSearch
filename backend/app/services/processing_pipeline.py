@@ -200,6 +200,11 @@ async def process_item(
         )
         await repo.update_item_status(item_id, "failed")
         await repo.mark_job_failed(job_id, str(error))
+    finally:
+        # `repo` is constructed fresh per call (see api/ai/routes.py) and
+        # never reused afterward — this is the one place responsible for
+        # releasing its HTTP connection (see SupabaseRestRepository.aclose).
+        await repo.aclose()
 
 
 async def _check_for_duplicate(
