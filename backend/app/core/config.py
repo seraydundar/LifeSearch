@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     # CORS
     allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
 
+    # Per-user rate limits (requests/minute) on the endpoints that call an
+    # AI provider — each of those calls costs real money and, unlike a
+    # plain CRUD request, is slow enough that a client bug (a retry loop,
+    # a stuck background sync) or a leaked token could run up a real bill
+    # before anyone notices. See core/rate_limit.py.
+    rate_limit_ai_per_minute: int = Field(default=10)
+    rate_limit_search_per_minute: int = Field(default=30)
+
 
 @lru_cache
 def get_settings() -> Settings:

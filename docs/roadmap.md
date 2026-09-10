@@ -664,6 +664,45 @@ zamanlayıcısı `Timer.periodic` kullandığı için widget testlerinde
 `pumpAndSettle` yerine `pump(duration)` gerektirir, mevcut testler bunu
 tetiklemeyecek kısalıkta kaldığı için kırılmadı).
 
+### Backend rate limiting ✅
+
+Dokümanın kapsamı dışında ama gerçek bir üretim riski: `/ai/process-item`,
+`/ai/ask` ve `/search/` her çağrıda bir OpenAI isteği (embedding/vision/
+Whisper/chat) tetikliyor — düz bir CRUD çağrısının aksine bunun hem parası
+hem süresi var. Bir client bug'ı (sonsuz retry döngüsü), sızmış bir token
+veya "Ask AI"ya art arda basan biri bu backend üzerinden sınırsız bir
+OpenAI faturası açtırabilirdi.
+
+- **`core/rate_limit.py`** — `SlidingWindowLimiter`: kullanıcı başına,
+  gerçek bir trailing window (sabit bir dakika sınırında sıfırlanan bir
+  sayaç değil — aksi halde bir client sınırın iki katını, resetin hemen
+  öncesi/sonrasına denk getirerek geçebilirdi). Redis yok, tamamen
+  process-içi (kural 4, "gereksiz abstraction oluşturma") — bilinçli bir
+  sınır: backend birden fazla instance'a ölçeklenirse her biri kendi
+  penceresini ayrı ayrı uygular (`limit * instance_count` gibi bir etkiye
+  yol açar). Tek bir deployment için yeterli; yatay ölçeklenmeden önce
+  Redis-backed bir versiyona geçilmeli.
+- **`rate_limit_dependency(bucket, limiter)`**: `Depends(get_current_user)`
+  ile birebir yer değiştirebilen bir FastAPI dependency üretiyor — aynı
+  `get_current_user`'ı çağırdığı için FastAPI'nin istek-içi dependency
+  cache'i sayesinde auth doğrulaması hâlâ tek sefer çalışıyor, üstüne
+  limit aşılınca `Retry-After` header'ıyla 429 fırlatıyor.
+  `require_ai_rate_limit` (`/ai/process-item`, `/ai/ask`) ve
+  `require_search_rate_limit` (`/search/`) — `Settings.rate_limit_ai_per_minute`
+  (varsayılan 10) ve `rate_limit_search_per_minute` (varsayılan 30)'dan
+  besleniyor. `/search/related` ve `/collections/suggest` bilinçli olarak
+  dışarıda bırakıldı: ilki hiç provider çağırmıyor (zaten depolanmış bir
+  chunk embedding'ini karşılaştırma vektörü olarak kullanıyor), ikincisi
+  günlük kullanımda nadiren tetiklenen bir Library ekranı aksiyonu —
+  ikisi de bu limitin var olma sebebi olan maliyet riskini taşımıyor.
+- Testler `time.monotonic`'i inject edilebilir bir `now` parametresiyle
+  değiştirdiği için pencere sona erme senaryoları gerçek `sleep` olmadan
+  test ediliyor (fake repo/provider desenle aynı yaklaşım).
+
+Backend: 75 test yeşil (68 → 75, +7: limiter için 5 birim testi + gerçek
+bir FastAPI route üzerinden 200/429+Retry-After doğrulayan 2 test).
+`ruff check` temiz. Mobile değişmedi.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
 Doküman kapsamında bilinen bir boşluk kalmadı — geriye yalnızca iki

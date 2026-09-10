@@ -5,6 +5,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...core.config import get_settings
+from ...core.rate_limit import require_search_rate_limit
 from ...core.security import CurrentUser, get_current_user
 from ...repositories.search_repository import SearchRepository
 from ...schemas.search import (
@@ -47,7 +48,7 @@ def _to_result(match: dict) -> SearchResult:
 @router.post("/", response_model=SearchResponse)
 async def search_endpoint(
     body: SearchRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_search_rate_limit),
 ) -> SearchResponse:
     provider = _require_provider()
     repo = SearchRepository(user.access_token)
@@ -79,7 +80,11 @@ async def related_endpoint(
     user: CurrentUser = Depends(get_current_user),
 ) -> RelatedResponse:
     """Related items (requirements doc, section 47) — similarity against
-    the source item's own content, no query text involved.
+    the source item's own content, no query text involved. Not behind
+    `require_search_rate_limit`: unlike `/search/`, this never calls the
+    AI provider (it reuses an already-stored chunk embedding as the
+    comparison vector — see `find_related_items`), so it doesn't carry
+    the per-call cost the rate limit exists to bound.
     """
     repo = SearchRepository(user.access_token)
     matches = await find_related_items(body.item_id, repo, limit=body.limit)

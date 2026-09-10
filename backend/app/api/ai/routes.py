@@ -10,7 +10,8 @@ exactly as it would if the client made the request itself.
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from ...core.config import get_settings
-from ...core.security import CurrentUser, get_current_user
+from ...core.rate_limit import require_ai_rate_limit
+from ...core.security import CurrentUser
 from ...repositories.items_repository import SupabaseRestRepository
 from ...repositories.search_repository import SearchRepository
 from ...schemas.ai import AskRequest, AskResponse, ProcessItemRequest, ProcessItemResponse
@@ -26,7 +27,7 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 async def process_item_endpoint(
     body: ProcessItemRequest,
     background_tasks: BackgroundTasks,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_ai_rate_limit),
 ) -> ProcessItemResponse:
     repo = SupabaseRestRepository(user.access_token)
     # Returns immediately; the item's `processing_status` (and the
@@ -46,7 +47,7 @@ async def process_item_endpoint(
 @router.post("/ask", response_model=AskResponse)
 async def ask_endpoint(
     body: AskRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_ai_rate_limit),
 ) -> AskResponse:
     """RAG chat (requirements doc, section 23): answers only from the
     user's own archive, always with the sources it used.
