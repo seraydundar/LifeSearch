@@ -82,25 +82,40 @@ class SupabaseRestRepository:
         return response.content
 
     async def replace_chunks(self, item_id: str, chunks: list[dict[str, Any]]) -> None:
-        """Idempotent by design (requirements doc, rule 17): re-processing
-        an item deletes its old chunks first, so running the same job
-        twice never leaves duplicates behind.
-        """
-        delete_response = await self._client.delete(
-            f"{self._base_url}/rest/v1/chunks",
-            params={"item_id": f"eq.{item_id}"},
-        )
-        delete_response.raise_for_status()
+        """Idempotent by design (requirements doc, rule 17) — but not via
+        an independent DELETE followed by an independent INSERT anymore.
+        That used to be two separate HTTP requests, not one transaction:
+        two concurrent reprocessing runs for the same item (e.g. the user
+        hits "Tekrar Dene" while an earlier attempt is still in flight)
+        could each run their DELETE before either ran its INSERT, then
+        both INSERTs land — doubling every chunk.
 
-        if not chunks:
-            return
-        insert_response = await self._client.post(
+        `chunks_item_id_chunk_index_key` (see
+        infra/supabase/migrations/0013_chunks_unique.sql) makes an UPSERT
+        possible instead: two racing runs converge on "last writer per
+        chunk_index wins", never "both writers' rows exist at once". The
+        trailing DELETE only trims indices *past* the new chunk count —
+        safe to run any number of times, or concurrently with another
+        run's, since it only ever removes rows, never creates any.
+        """
+        if chunks:
+            upsert_response = await self._client.post(
+                f"{self._base_url}/rest/v1/chunks",
+                params={"on_conflict": "item_id,chunk_index"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates,return=minimal",
+                },
+                json=chunks,
+                timeout=30.0,  # a full item's worth of chunks in one request
+            )
+            upsert_response.raise_for_status()
+
+        trim_response = await self._client.delete(
             f"{self._base_url}/rest/v1/chunks",
-            headers={"Content-Type": "application/json", "Prefer": "return=minimal"},
-            json=chunks,
-            timeout=30.0,  # a full item's worth of chunks in one insert
+            params={"item_id": f"eq.{item_id}", "chunk_index": f"gte.{len(chunks)}"},
         )
-        insert_response.raise_for_status()
+        trim_response.raise_for_status()
 
     async def update_item_metadata(
         self,
@@ -147,20 +162,21 @@ class SupabaseRestRepository:
         ocr_text: str | None = None,
         ai_description: str | None = None,
     ) -> None:
-        """Same idempotent replace pattern as `replace_chunks` — re-running
-        the pipeline for an item (e.g. after a fix) shouldn't leave two
-        `item_contents` rows behind. Notes write their body once at
-        creation instead and never call this.
+        """Idempotent via a single atomic UPSERT on `item_id`, not the old
+        independent DELETE-then-INSERT pair — two concurrent reprocessing
+        runs for the same item used to be able to interleave those into
+        two live rows (or a moment with zero). `item_contents_item_id_key`
+        (see infra/supabase/migrations/0012_item_contents_unique.sql)
+        makes this one PostgREST request instead of two. Notes write
+        their body once at creation instead and never call this.
         """
-        delete_response = await self._client.delete(
+        response = await self._client.post(
             f"{self._base_url}/rest/v1/item_contents",
-            params={"item_id": f"eq.{item_id}"},
-        )
-        delete_response.raise_for_status()
-
-        insert_response = await self._client.post(
-            f"{self._base_url}/rest/v1/item_contents",
-            headers={"Content-Type": "application/json", "Prefer": "return=minimal"},
+            params={"on_conflict": "item_id"},
+            headers={
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=minimal",
+            },
             json={
                 "item_id": item_id,
                 "raw_text": raw_text,
@@ -168,7 +184,7 @@ class SupabaseRestRepository:
                 "ai_description": ai_description,
             },
         )
-        insert_response.raise_for_status()
+        response.raise_for_status()
 
     async def attach_tags(self, item_id: str, user_id: str, tag_names: list[str]) -> None:
         """Idempotent by design, same replace pattern as `replace_chunks` —

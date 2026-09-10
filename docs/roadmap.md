@@ -1196,6 +1196,56 @@ başlangıçtan itibaren her şey zaten bitmişken hiç poll etmiyor,
 duruyor — üçü de gerçek zamanlayıcıyı beklemek zorunda kalmamak için
 milisaniyelik bir `pollInterval` enjekte ediyor).
 
+#### Faz 10b, madde 3: chunk/content replace idempotency ✅
+
+`replace_chunks()`/`replace_item_content()` bağımsız bir DELETE'in
+ardından bağımsız bir INSERT çalıştırıyordu — iki ayrı HTTP isteği, bir
+transaction değil. Aynı item için eşzamanlı iki reprocessing çalışması
+(örn. kullanıcı "Tekrar Dene"ye basarken önceki deneme hâlâ sürüyor)
+birbirinin DELETE'inden sonra, hiçbiri INSERT'ini bitirmeden ikisi de
+INSERT edebiliyordu — her chunk'ı ikiye katlıyordu; hiçbir constraint
+bunu engellemiyordu.
+
+- **`infra/supabase/migrations/0013_chunks_unique.sql`** (yeni):
+  `chunks_item_id_chunk_index_key`, `(item_id, chunk_index)` üzerinde
+  unique constraint — `0012_item_contents_unique.sql` ile aynı desen
+  (önce dedup: her `(item_id, chunk_index)` çifti için en yeni
+  `created_at`'i tutup gerisini siliyor).
+- **`replace_chunks()`**: artık `on_conflict=item_id,chunk_index` +
+  `Prefer: resolution=merge-duplicates` ile tek bir UPSERT — iki
+  yarışan çalışma "her chunk_index için son yazan kazanır"a yakınsıyor,
+  "ikisinin de satırı aynı anda var olması" hiç mümkün değil. Ardından
+  gelen DELETE artık yalnızca **yeni chunk sayısının ötesindeki**
+  index'leri kırpıyor (`chunk_index >= len(chunks)`) — kaç kere veya
+  eşzamanlı çalışsa da güvenli, çünkü sadece satır siliyor, hiç
+  yaratmıyor.
+- **`replace_item_content()`**: `item_contents_item_id_key` (Faz 10a,
+  madde 2'de eklenmişti) zaten tam bu upsert'e izin veriyordu —
+  DELETE tamamen kaldırıldı, artık tek bir atomik PostgREST isteği.
+- **Doğrulama**: bu makinede `SUPABASE_SERVICE_ROLE_KEY`/DB şifresi
+  olmadığı için canlı projeye uygulanamadı (madde 2'deki gibi kullanıcı
+  tarafında bir adım). Bunun yerine, projenin kendi
+  `docker-compose.yml`'ının kullandığı `pgvector/pgvector:pg16`
+  imajıyla geçici bir container'da gerçek `chunks` şeklini kurup iki
+  satırlık bir "sahte duplicate" ekleyip migration'ı gerçekten
+  çalıştırdım: dedup (2 satır → 1) ve constraint ekleme doğru çalıştı;
+  ardından PostgREST'in üreteceği tam upsert+trim sorgu çiftini elle
+  çalıştırıp doğru son duruma (yeni içerik, kırpılmış eski index)
+  ulaştığını doğruladım.
+
+**Bilinçli sınır**: bu, aynı item için iki reprocessing çalışmasının
+"kim son söz sahibi olacak" yarışını çözmüyor (biri diğerinin trim'ini
+ezebilir) — o yarış bu kod değişikliğinden önce de vardı ve denetim
+raporunun bulduğu asıl kusur değildi. Çözülen, spesifik olarak
+"duplicate satır oluşması" — artık constraint bunu yapısal olarak
+imkansız kılıyor.
+
+Backend: `ruff check` temiz, testler 122 → **125** test (yeni
+`test_items_repository_idempotency.py` — pipeline seviyesindeki fake'ler
+bu HTTP-seviyesi kusuru göremeyeceği için `httpx.MockTransport` ile
+gerçek `SupabaseRestRepository`'nin attığı isteklerin DELETE+INSERT
+değil UPSERT+kırpma olduğunu doğruluyor).
+
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):
 
@@ -1214,9 +1264,9 @@ maddeler (öncelik sırasıyla, denetim raporundan):
 7. "Geçen ay" takvim ayı yerine "son 30 gün" olarak yorumlanıyor; "dün"
    bitiş sınırı yok, bugünü de kapsıyor
    ([query_parser.py](../backend/app/services/query_parser.py)).
-8. `replace_chunks`/`replace_item_content` bağımsız DELETE+INSERT —
-   aynı item için eşzamanlı iki job iki kez INSERT yapabilir (unique
-   constraint/job-lock yok).
+8. ~~`replace_chunks`/`replace_item_content` bağımsız DELETE+INSERT —
+   aynı item için eşzamanlı iki job iki kez INSERT yapabilir~~ ✅
+   düzeltildi — bkz. yukarıdaki alt bölüm.
 9. URL fetch'te SSRF koruması yok (private IP/localhost/redirect hedefi
    doğrulaması, boyut sınırı) — kaydedilen bir link doğrudan çekiliyor
    ([url_service.py](../backend/app/services/url_service.py)).
@@ -1235,9 +1285,9 @@ uyumlu hale getirildi):
    silme sırası, debug log seviyesi.
 2. **Faz 10b (P1 — güvenilirlik)**: ~~AI job retry + kullanıcıya "Tekrar
    Dene"~~ ✅, ~~realtime/polling ile otomatik mobil güncelleme~~ ✅,
-   ~~backend job restart-kurtarma~~ ✅, chunk/content replace idempotency
-   (hâlâ açık), URL fetch SSRF koruması (hâlâ açık), ~~Android INTERNET
-   izni~~ ✅ (madde 11'de).
+   ~~backend job restart-kurtarma~~ ✅, ~~chunk/content replace
+   idempotency~~ ✅, URL fetch SSRF koruması (hâlâ açık — Faz 10b'de
+   kalan tek madde), ~~Android INTERNET izni~~ ✅ (madde 11'de).
 3. **Faz 10c (içerik kapsamı)**: genel belge desteği, taranmış PDF için
    OCR fallback, doğal dil tarih filtrelerinin takvim aralığına
    düzeltilmesi.
