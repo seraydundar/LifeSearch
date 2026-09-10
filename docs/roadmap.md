@@ -819,6 +819,35 @@ importu yüzünden hâlâ hiç çalışmıyor, ama diğer 86'sı (değişmeyen s
 yerelde yeşil; CI'da (ubuntu-latest, bu sorunu yaşamıyor) 118'i de
 çalışacak. `ruff check` temiz.
 
+### Mobile bug fix: `/item/:id` deep link'te crash ediyordu ✅
+
+Bir kod incelemesi turunda bulundu. `app_router.dart`'ta `/item/:id` ve
+`/item/:id/note` rotaları `:id` path parametresini hiç okumuyor,
+tamamen `state.extra as Item`'a güveniyordu. `extra` yalnızca uygulama
+içi bir tıklamadan geliyor (bir önceki ekran zaten elindeki `Item`
+nesnesini geçiriyor); bir deep link, push notification, ya da Android/iOS
+process-death sonrası route restore'unda `extra` hiç yok — `null as Item`
+anında **crash** ediyordu. Bu aynı zamanda projenin kendi test edilebilirlik
+sınırıydı: entity extraction turunda item detail ekranına "gerçek bir
+tıklama/push gerektiriyor" diye not düşülmüştü — artık gerekmiyor.
+
+- **`ItemByIdLoader`** (`shared/widgets/`): `extra` yoksa, item'ı `:id`'den
+  `ItemRepository.findById()` (local Drift cache, zaten duplicate-banner
+  için vardı — yeni bir repository metodu gerekmedi) ile çözüyor; çözerken
+  bir spinner, bulunamazsa (henüz bu cihazla senkronize olmamışsa) çöküp
+  beyaz ekran yerine anlaşılır bir "İçerik bulunamadı" mesajı gösteriyor.
+- **Kapsam bilinçli dar tutuldu**: `ItemDetailScreen`/`NoteEditorScreen`'in
+  kendisi hiç değişmedi — `extra` varken (normal, uygulama içi navigasyon)
+  tamamen eskisi gibi, sıfır ekstra fetch. Fallback yolu sadece router
+  seviyesinde.
+- `itemByIdProvider`: `findById`'i saran ince bir `FutureProvider.family`.
+
+Mobile: `flutter analyze` temiz, 110 → 113 test (+3:
+`item_by_id_loader_test.dart` — spinner, bulunan item builder'a ulaşıyor
+mu, bulunamayan id crash yerine anlaşılır mesaj gösteriyor mu). Diğer
+110 test de değişmeden yeşil kaldı — `ItemDetailScreen`/`NoteEditorScreen`
+dokunulmadığı için mevcut widget testleri etkilenmedi.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
 Doküman kapsamında bilinen bir boşluk kalmadı — geriye yalnızca iki

@@ -13,6 +13,7 @@ import '../../features/item/presentation/screens/note_editor_screen.dart';
 import '../../features/library/presentation/screens/library_screen.dart';
 import '../../features/search/presentation/screens/search_hub_screen.dart';
 import '../../features/settings/presentation/screens/settings_screen.dart';
+import '../../shared/widgets/item_by_id_loader.dart';
 import 'scaffold_with_nav_bar.dart';
 
 abstract final class AppRoutes {
@@ -58,11 +59,31 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/item/:id/note',
-        builder: (context, state) => NoteEditorScreen(item: state.extra as Item),
+        // `extra` is the fast path (an in-app tap already has the `Item`
+        // in hand); a cold-started deep link/route restore never has one
+        // — `ItemByIdLoader` resolves it from `:id` instead of crashing
+        // on a `null` cast, see that widget's docstring.
+        builder: (context, state) {
+          final extra = state.extra as Item?;
+          return extra != null
+              ? NoteEditorScreen(item: extra)
+              : ItemByIdLoader(
+                  itemId: state.pathParameters['id']!,
+                  builder: (item) => NoteEditorScreen(item: item),
+                );
+        },
       ),
       GoRoute(
         path: '/item/:id',
-        builder: (context, state) => ItemDetailScreen(item: state.extra as Item),
+        builder: (context, state) {
+          final extra = state.extra as Item?;
+          return extra != null
+              ? ItemDetailScreen(item: extra)
+              : ItemByIdLoader(
+                  itemId: state.pathParameters['id']!,
+                  builder: (item) => ItemDetailScreen(item: item),
+                );
+        },
       ),
       GoRoute(
         path: AppRoutes.search,

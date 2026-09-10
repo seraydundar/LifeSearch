@@ -65,6 +65,14 @@ final itemEntitiesProvider =
   return ref.watch(itemRepositoryProvider).fetchEntities(itemId);
 });
 
+/// Single item by id, local-cache only — used by `ItemByIdLoader` when a
+/// route reaches `/item/:id` (or `/item/:id/note`) without the `Item`
+/// object it normally gets handed via `state.extra` (see that widget's
+/// docstring for when that happens).
+final itemByIdProvider = FutureProvider.autoDispose.family<Item?, String>((ref, itemId) {
+  return ref.watch(itemRepositoryProvider).findById(itemId);
+});
+
 final noteEditorControllerProvider =
     AsyncNotifierProvider<NoteEditorController, void>(NoteEditorController.new);
 
