@@ -1016,12 +1016,34 @@ davrandığı doğrulandı — bu spesifik senaryo (arama sonucundan dosya açma
 gerçek bir OpenAI key olmadığı için canlı uçtan uca denenemedi, widget
 testleriyle kapsandı.
 
+#### Faz 10a, madde 4: Hesap silme — dosyalar önce silinmesin ✅
+
+`delete_account()` `repo.delete_own_files()`'ı `repo.delete_auth_user()`'dan
+önce çağırıyordu; ikincisi `service_role` key yoksa
+`AccountDeletionUnavailable` fırlatıyordu ama bu kontrol yalnızca
+`delete_auth_user()`'ın içindeydi — yani dosyalar zaten silinmiş
+oluyordu, hesap silinemeden.
+
+- **`AccountRepository.ensure_deletion_available()`**: I/O yapmayan, salt
+  aynı config kontrolünü yapan yeni bir metot — `delete_account()`'ın en
+  başında, hiçbir yıkıcı adım başlamadan önce çağrılıyor.
+  `delete_auth_user()`'ın kendi içindeki kontrol de duruyor (savunma
+  derinliği), ama artık asıl koruma en baştaki bu çağrı.
+- Regresyon testi: `test_an_unavailable_backend_never_touches_files` —
+  key yokken hem `files_deleted_for` hem `auth_deleted_for`'ın boş
+  kaldığını doğruluyor. Var olan
+  `test_propagates_account_deletion_unavailable_without_pretending_to_succeed`
+  testi bu sırayı hiç kontrol etmiyordu (yalnızca exception'ın
+  yayıldığını doğruluyordu) — bug tam da bu boşluktan geçiyordu.
+
+Backend: 87 → **88** test (yerelde doğrulanan kapsamda). `ruff check`
+temiz.
+
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):
 
-4. Hesap silme: dosyalar `service_role` key kontrolünden **önce**
-   siliniyor — key yoksa hesap silinemeden dosyalar gidebilir
-   ([account_service.py:20](../backend/app/services/account_service.py)).
+4. ~~Hesap silme: dosyalar `service_role` key kontrolünden önce
+   siliniyordu~~ ✅ düzeltildi — bkz. aşağıdaki alt bölüm.
 5. `configure_logging(debug=True)` root logger'ı DEBUG'a çekiyor; kurulu
    OpenAI SDK'sı bu seviyede istek gövdesini (prompt/embedding girdisi)
    loglayabiliyor — "asla içerik loglama" kuralını uygulamanın kendi

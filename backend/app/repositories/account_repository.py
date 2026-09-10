@@ -16,7 +16,11 @@ Account"). Two steps, always in this order:
 
 No service_role key means no way to actually remove the auth user —
 callers should treat `AccountDeletionUnavailable` as "not configured
-yet", not a transient failure worth retrying.
+yet", not a transient failure worth retrying. `account_service.delete_account()`
+checks `ensure_deletion_available()` *before* step 1, precisely so that
+"not configured yet" is discovered before any file is actually deleted —
+otherwise a misconfigured backend would delete a user's files on every
+attempt and never be able to finish the job that was supposed to justify it.
 """
 
 from typing import Any
@@ -41,6 +45,16 @@ class AccountRepository:
             "apikey": settings.supabase_anon_key,
             "Authorization": f"Bearer {access_token}",
         }
+
+    def ensure_deletion_available(self) -> None:
+        """No I/O — just the same config check `delete_auth_user` makes,
+        surfaced separately so it can run *before* anything destructive
+        starts. Synchronous on purpose: nothing here needs an event loop
+        turn, and a plain function can't be mistaken for one more network
+        call in the sequence.
+        """
+        if not self._service_role_key:
+            raise AccountDeletionUnavailable("SUPABASE_SERVICE_ROLE_KEY is not configured.")
 
     async def delete_own_files(self, user_id: str) -> None:
         async with httpx.AsyncClient(timeout=15.0) as client:
