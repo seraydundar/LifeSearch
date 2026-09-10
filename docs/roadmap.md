@@ -1039,6 +1039,36 @@ oluyordu, hesap silinemeden.
 Backend: 87 → **88** test (yerelde doğrulanan kapsamda). `ruff check`
 temiz.
 
+#### Faz 10a, madde 11: Android `INTERNET` izni ✅
+
+Ana `AndroidManifest.xml`'de `CAMERA`/`RECORD_AUDIO`/`USE_BIOMETRIC`
+vardı ama `INTERNET` yalnızca Flutter'ın kendi debug/profile
+boilerplate'inde ("hot reload için gerekli" yorumuyla) duruyordu — bir
+**release APK'sı ağa hiç çıkamıyordu**, yani login/sync/search dahil
+uygulamanın tamamı sessizce çalışmazdı. Hiç release build alınmamıştı.
+
+- `<uses-permission android:name="android.permission.INTERNET"/>` ana
+  manifest'e taşındı — artık debug/profile/release'in hepsine miras
+  kalıyor (Android manifest merge kuralı: ana manifestteki bildirimler,
+  varyant-özel bir manifest açıkça kaldırmadığı sürece her varyanta
+  geçer).
+- **Doğrulama — gerçek bir release APK'sı derlendi**: `flutter build apk
+  --release`. İlk deneme bu düzeltmeyle ilgisiz bir Android SDK
+  sorunuyla (`flutter_secure_storage`'ın SDK 37 istemesi, `compileSdk`'nin
+  36 olması) 58s'de başarısız oldu; Flutter SDK Platform 37'yi otomatik
+  kurdu, ikinci deneme 117s'de başarıyla `app-release.apk` (64.4MB)
+  üretti. Sonucu varsaymak yerine `aapt dump permissions` ile gerçek
+  APK'nın manifest'ini okudum —
+  `uses-permission: name='android.permission.INTERNET'` orada, diğer
+  tüm izinlerin (CAMERA, RECORD_AUDIO, USE_BIOMETRIC, ...) yanında.
+- `android/.kotlin/` (bu build'in bıraktığı bir Gradle/Kotlin
+  incremental-compilation cache'i, Flutter'ın kendi `.gitignore`
+  şablonunda eksikti — yalnızca bu build'e özgü değil, herhangi bir
+  Android build'i bunu bırakırdı) `mobile/.gitignore`'a eklendi.
+
+Backend `ruff check`/testleri bu maddeden etkilenmedi (tamamen mobil,
+kod değişikliği yok — yalnızca manifest + gitignore).
+
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):
 
@@ -1066,8 +1096,8 @@ maddeler (öncelik sırasıyla, denetim raporundan):
 10. Genel belge (DOCX/TXT) desteği yok, `document` tipi backend
     `SUPPORTED_TYPES`'ta değil; taranmış (metin katmanı olmayan) PDF'te
     OCR fallback yok, `extract_pdf_text` metinsiz kalırsa hata veriyor.
-11. Android ana `AndroidManifest.xml`'de `INTERNET` izni yok — yalnızca
-    debug/profile manifestlerinde var; release build'de doğrulanmalı.
+11. ~~Android ana `AndroidManifest.xml`'de `INTERNET` izni yoktu~~ ✅
+    düzeltildi — bkz. aşağıdaki alt bölüm.
 
 **Önerilen sıra** (denetim raporundan, projenin kendi faz mantığıyla
 uyumlu hale getirildi):

@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Every Supabase/backend call the app makes needs this. It used to
+         only exist in the debug/profile manifests (Flutter's own
+         boilerplate there, added for the dev-tools connection, not the
+         app's own use of the network) — a release build had no network
+         permission at all and would have failed silently everywhere: no
+         login, no sync, no search. See docs/roadmap.md, Faz 10a. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>

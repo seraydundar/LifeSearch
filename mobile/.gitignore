@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Kotlin's incremental-compilation cache — left behind by any Android
+# build (not just release), missing from Flutter's own template.
+android/.kotlin/
+
 # Symbolication related
 app.*.symbols
 
