@@ -885,19 +885,8 @@ MVP'yi doğrudan etkileyen sorunlar buldu. Üçü — en ciddisi — doğruland�
   aşağıdaki alt bölüm.
 - **`item_contents.item_id` üzerinde UNIQUE yoktu ✅ (Faz 10a, migration
   yazıldı)** — bkz. aşağıdaki alt bölüm.
-- **Search/Ask AI/Related Items'tan açılan item'lar dosya
-  gösteremiyor**: bu üç ekran, `/item/:id`'ye gerçek `Item` yerine
-  `storagePath`/`sourceUrl` içermeyen budanmış bir nesne gönderiyor
-  ([search_tab.dart:112](../mobile/lib/features/search/presentation/screens/search_tab.dart),
-  [ai_chat_tab.dart:53](../mobile/lib/features/ai_chat/presentation/screens/ai_chat_tab.dart)).
-  `ItemDetailScreen._loadSignedUrl()` `storagePath` null ise sessizce
-  hiçbir şey yapmıyor — **"Faz 9 sonrası" turunda eklenen
-  `ItemByIdLoader` bunu çözmüyor**, çünkü o yalnızca `extra` *hiç
-  yokken* (gerçek deep link) devreye giriyor; burada `extra` dolu ama
-  eksik. Ayrı, tamamlayıcı bir düzeltme gerekiyor (muhtemel çözüm:
-  `ItemDetailScreen`/`NoteEditorScreen`'in `initState()`'ı, gelen
-  `item` ne olursa olsun `findById` ile her zaman tam kaydı çekip
-  üzerine yazsın — local Drift lookup olduğu için ucuz).
+- **Search/Ask AI/Related Items'tan açılan item'lar dosya gösteremiyordu
+  ✅ (Faz 10a, madde 3, düzeltildi)** — bkz. aşağıdaki alt bölüm.
 
 #### Faz 10a, madde 1: Sync queue hesap izolasyonu ✅
 
@@ -984,6 +973,48 @@ exclusion constraint matching" hatasıyla patlıyordu).
 
 **Kalan adım**: bu migration dosyasının canlı Supabase projesine
 uygulanması — kullanıcı tarafında.
+
+#### Faz 10a, madde 3: Search/Ask AI/Related Items'tan açılan item'lar ✅
+
+`ItemByIdLoader` (Faz 9 sonrası turu) bu sorunu çözmüyordu çünkü yalnızca
+`extra` *hiç yokken* (gerçek deep link) devreye giriyor — burada `extra`
+her zaman dolu, sadece eksik (search/RAG/related item'lar
+`storagePath`/`sourceUrl`/gerçek `favorite`/`createdAt` içermeyen budanmış
+bir `Item` inşa edip geçiriyor).
+
+- **`ItemDetailScreen._loadFullItem()`**: `initState()`'ta, alınan `item`
+  ne olursa olsun `findById(item.id)` ile local Drift'ten tam kaydı
+  çekip `_item`'ın üzerine yazıyor. Library'den tıklanan (zaten tam)
+  bir item için bu bir no-op'a yakın — `findById` ucuz bir local lookup,
+  iki durumu ayırt etmeye çalışmak (kural 4) gereksiz karmaşıklık
+  olurdu. Tam kayıt gelince `storagePath` yeni öğrenildiyse
+  `_loadSignedUrl()`'i, `duplicateOfItemId` yeni öğrenildiyse
+  `_loadDuplicateTarget()`'i tekrar tetikliyor — ilk çağrı zaten aynı
+  sonuca ulaştıysa (Library'den tıklanan normal durum) gereksiz bir
+  ekstra ağ isteği atmadan.
+- **Bilinçli sınır**: `findById` yalnızca local cache'i okuyor, ağa hiç
+  gitmiyor — bir item başka bir cihazda az önce oluşturulup bu cihaza
+  henüz senkronize olmadıysa (gerçek ama nadir bir durum), ekran "bulunamadı"
+  duvarına düşmek yerine sessizce elindeki budanmış `Item`'ı göstermeye
+  devam ediyor — kırık bir "Dosyayı Aç" düğmesi, "az önce arama
+  sonucunda gördüğün şey artık yok" demekten daha az şaşırtıcı.
+- **`NoteEditorScreen`'e dokunulmadı**: notlar için budanmış `Item`
+  zaten yalnızca `id`/`title` kullanıyor (ikisi de stand-in'de var —
+  bkz. `search_tab.dart`'ın `_openResult`'ı), `storagePath` gibi
+  görünür bir alan yok — bugün gözlemlenebilir bir hata olmadan
+  spekülatif "ileride lazım olur" kodu eklemek kural 4'e aykırı olurdu.
+
+Mobile: `flutter analyze` temiz, 124 → **127** test (+3, yeni
+`item_detail_screen_test.dart` — bu ekranın ilk kez kendi test dosyası:
+Library'den tıklanan tam item'ın değişmediğini, budanmış bir stand-in'in
+gerçek kayıtla değiştiğini — favori yıldızı ve "Dosyayı Aç" düğmesi dahil
+— ve senkronize olmamış bir id'nin çökmeden zarifçe eski haliyle kaldığını
+doğruluyor). Ayrıca canlı simülatörde uygulama gerçekten çalıştırılıp
+(gerçek bir Supabase hesabıyla, Home ekranı doğru veri gösterdi) backend'in
+de (`127.0.0.1:8000`) ayakta ve auth/health/docs uçlarının doğru
+davrandığı doğrulandı — bu spesifik senaryo (arama sonucundan dosya açma)
+gerçek bir OpenAI key olmadığı için canlı uçtan uca denenemedi, widget
+testleriyle kapsandı.
 
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):

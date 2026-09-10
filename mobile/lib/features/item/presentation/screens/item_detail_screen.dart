@@ -36,6 +36,35 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     super.initState();
     _loadSignedUrl();
     _loadDuplicateTarget();
+    _loadFullItem();
+  }
+
+  /// Search results, Ask AI sources and Related Items all push this route
+  /// with a *trimmed* stand-in `Item` — just enough to render a title/type
+  /// (see e.g. `search_tab.dart`'s `_openResult`) — because that's all
+  /// they themselves have; `storagePath`/`sourceUrl`/`favorite`/`createdAt`
+  /// are never set on it. Left uncorrected, that silently broke "Dosyayı
+  /// Aç"/the favorite star/the date for every item opened that way (an
+  /// item tapped from Library already carries the real thing, so this is
+  /// a no-op there — `findById` is a local Drift lookup either way, cheap
+  /// enough not to bother telling the two cases apart).
+  ///
+  /// Not synced to this device yet (a genuine possibility right after an
+  /// item was created on another device) is the one case this can't fix —
+  /// `findById` only ever reads the local cache, never the network — so it
+  /// silently keeps showing whatever we were already given rather than
+  /// replacing a real (if incomplete) item with a "not found" wall.
+  Future<void> _loadFullItem() async {
+    final full = await ref.read(itemRepositoryProvider).findById(widget.item.id);
+    if (!mounted || full == null) return;
+    final hadStoragePath = _item.storagePath;
+    setState(() => _item = full);
+    if (full.storagePath != null && full.storagePath != hadStoragePath) {
+      _loadSignedUrl(); // wasn't known yet when the first call ran
+    }
+    if (full.duplicateOfItemId != null && full.duplicateOfItemId != widget.item.duplicateOfItemId) {
+      _loadDuplicateTarget(); // ditto
+    }
   }
 
   Future<void> _loadDuplicateTarget() async {
