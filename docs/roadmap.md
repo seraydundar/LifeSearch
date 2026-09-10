@@ -1246,6 +1246,52 @@ bu HTTP-seviyesi kusuru göremeyeceği için `httpx.MockTransport` ile
 gerçek `SupabaseRestRepository`'nin attığı isteklerin DELETE+INSERT
 değil UPSERT+kırpma olduğunu doğruluyor).
 
+#### Faz 10b, madde 4: URL fetch'te SSRF koruması ✅
+
+`fetch_and_extract()` kaydedilen bir linki hiçbir doğrulama yapmadan
+doğrudan çekiyordu — backend'in kendi ağ erişimiyle kullanıcı tarafından
+verilen bir URL'e istek atmak, klasik SSRF kurulumu (bir link internal
+bir admin paneline, veritabanına, ya da çoğu cloud sağlayıcısında gerçek
+credential döndüren metadata endpoint'ine (`169.254.169.254`)
+işaret edebilir). Ayrıca `httpx`'in `follow_redirects=True`'sı hiçbir
+redirect hedefini kontrol etmiyordu, response boyutu sınırsızdı,
+content-type kontrolü yoktu.
+
+- **`_ensure_safe_to_fetch()`** (yeni): scheme `http`/`https` değilse
+  reddediyor; host'u çözüp (`_resolve_addresses`, DNS lookup'ı testlerin
+  gerçek ağa çıkmadan sahte sonuç verebilmesi için ayrı bir fonksiyona
+  çıkarıldı) her adresin `ipaddress.IPv*Address.is_global` olup
+  olmadığına bakıyor — bu tek kontrol private (RFC 1918), loopback,
+  link-local (metadata adresi dahil), multicast, reserved ve unspecified
+  aralıklarının hepsini aynı anda dışlıyor.
+- **Redirect'ler artık manuel takip ediliyor** (`follow_redirects=False`
+  + döngü, en fazla `_MAX_REDIRECTS=5` adım): her hop, istek gerçekten
+  atılmadan önce yukarıdaki kontrolden geçiyor — public görünen bir
+  URL'in 302 ile internal bir adrese yönlendirmesi de yakalanıyor.
+- **Boyut sınırı**: `_MAX_RESPONSE_BYTES` (5 MB) aşılırsa stream
+  kesiliyor — kötü niyetli/bozuk bir sunucunun sınırsız veri
+  akıtmasına karşı.
+- **Content-type kontrolü**: `text/html` içermeyen bir yanıt (örn. bir
+  PDF veya binary dosya) reddediliyor — zaten çıkarılacak bir şey yok,
+  metin gibi işlemeye çalışmak anlamsız/riskli.
+- **Bilinçli sınır**: bu, host'u bir kere çözüp sonra `httpx`'in
+  bağlanmak için tekrar (bağımsız) çözmesine güveniyor — bu iki lookup
+  arasında cevabı değiştiren bir DNS-rebinding saldırganı hâlâ
+  sızabilir. Bunu tam kapatmak, bu kontrolün zaten çözdüğü IP'ye
+  bağlanan (pinleyen) özel bir transport gerektirir — aşağıdaki
+  URL/redirect/boyut/content-type kontrollerinden daha büyük bir
+  değişiklik, burada yapılmadı, roadmap'te açık bir boşluk olarak not
+  edildi.
+
+Backend: `ruff check` temiz, testler 125 → **140** (yeni
+`test_url_service_ssrf.py`, 15 test — non-public adresler/scheme'ler
+reddediliyor, internal adrese giden bir redirect yakalanıyor, boyut
+sınırı ve content-type kontrolü çalışıyor, gerçek bir HTML yanıtı hâlâ
+doğru çıkarılıyor, redirect döngüsünde teslim oluyor — hepsi gerçek
+DNS/ağ erişimi olmadan: literal IP'ler zaten ağa çıkmadan çözülüyor,
+sembolik `public.example.com` host'u testlerde sahte bir sonuca
+bağlanıyor).
+
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):
 
@@ -1267,9 +1313,9 @@ maddeler (öncelik sırasıyla, denetim raporundan):
 8. ~~`replace_chunks`/`replace_item_content` bağımsız DELETE+INSERT —
    aynı item için eşzamanlı iki job iki kez INSERT yapabilir~~ ✅
    düzeltildi — bkz. yukarıdaki alt bölüm.
-9. URL fetch'te SSRF koruması yok (private IP/localhost/redirect hedefi
-   doğrulaması, boyut sınırı) — kaydedilen bir link doğrudan çekiliyor
-   ([url_service.py](../backend/app/services/url_service.py)).
+9. ~~URL fetch'te SSRF koruması yok (private IP/localhost/redirect
+   hedefi doğrulaması, boyut sınırı)~~ ✅ düzeltildi — bkz. yukarıdaki
+   alt bölüm.
 10. Genel belge (DOCX/TXT) desteği yok, `document` tipi backend
     `SUPPORTED_TYPES`'ta değil; taranmış (metin katmanı olmayan) PDF'te
     OCR fallback yok, `extract_pdf_text` metinsiz kalırsa hata veriyor.
@@ -1283,11 +1329,11 @@ uyumlu hale getirildi):
    logout'ta local DB temizliği + recent searches), `item_contents`
    UNIQUE migration'ı, search/RAG/related'tan tam item açma, hesap
    silme sırası, debug log seviyesi.
-2. **Faz 10b (P1 — güvenilirlik)**: ~~AI job retry + kullanıcıya "Tekrar
-   Dene"~~ ✅, ~~realtime/polling ile otomatik mobil güncelleme~~ ✅,
-   ~~backend job restart-kurtarma~~ ✅, ~~chunk/content replace
-   idempotency~~ ✅, URL fetch SSRF koruması (hâlâ açık — Faz 10b'de
-   kalan tek madde), ~~Android INTERNET izni~~ ✅ (madde 11'de).
+2. **Faz 10b (P1 — güvenilirlik)** — tamamlandı ✅: ~~AI job retry +
+   kullanıcıya "Tekrar Dene"~~, ~~realtime/polling ile otomatik mobil
+   güncelleme~~, ~~backend job restart-kurtarma~~, ~~chunk/content
+   replace idempotency~~, ~~URL fetch SSRF koruması~~, ~~Android
+   INTERNET izni~~ (madde 11'de).
 3. **Faz 10c (içerik kapsamı)**: genel belge desteği, taranmış PDF için
    OCR fallback, doğal dil tarih filtrelerinin takvim aralığına
    düzeltilmesi.
