@@ -46,9 +46,23 @@ final itemsProvider = StreamProvider<List<Item>>((ref) {
 });
 
 /// Number of local changes still waiting to reach the server — shown in
-/// Settings (requirements doc, section 49: "Sync").
+/// Settings (requirements doc, section 49: "Sync"). Scoped to the
+/// signed-in user (`SyncQueueEntries.userId`) — otherwise this would
+/// count every account's pending writes on a shared device, not just
+/// the one currently signed in.
 final pendingSyncCountProvider = StreamProvider<int>((ref) {
-  return ref.watch(syncQueueDataSourceProvider).watchPendingCount();
+  // Guarded the same way SyncService._currentUserIdOrNull() is: harmless
+  // in the real app (main() always initializes Supabase first), but a
+  // widget test that never touches Supabase shouldn't need to know this
+  // provider reads it.
+  String? userId;
+  try {
+    userId = ref.watch(supabaseClientProvider).auth.currentUser?.id;
+  } catch (_) {
+    userId = null;
+  }
+  if (userId == null) return Stream.value(0);
+  return ref.watch(syncQueueDataSourceProvider).watchPendingCount(userId);
 });
 
 /// AI-generated tags for an item (requirements doc, section 8-12) — item

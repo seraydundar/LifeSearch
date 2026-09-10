@@ -60,6 +60,7 @@ class OfflineCollectionRepository implements CollectionRepository {
       syncStatus: const Value('pending'),
     ));
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'create_collection',
       itemId: id,
       payload: {'name': name, 'isSmart': isSmart},
@@ -73,6 +74,7 @@ class OfflineCollectionRepository implements CollectionRepository {
   Future<void> renameCollection(String id, String name) async {
     await _local.updateName(id, name, syncStatus: 'pending');
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'rename_collection',
       itemId: id,
       payload: {'name': name},
@@ -83,7 +85,7 @@ class OfflineCollectionRepository implements CollectionRepository {
   @override
   Future<void> deleteCollection(String id) async {
     await _local.delete(id);
-    await _queue.enqueue(operationType: 'delete_collection', itemId: id, payload: const {});
+    await _queue.enqueue(userId: _userId, operationType: 'delete_collection', itemId: id, payload: const {});
     _syncService.syncSoon();
   }
 
@@ -96,6 +98,7 @@ class OfflineCollectionRepository implements CollectionRepository {
   Future<void> addItemToCollection({required String collectionId, required String itemId}) async {
     await _local.addItem(collectionId, itemId, syncStatus: 'pending');
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'add_to_collection',
       itemId: collectionId,
       payload: {'itemId': itemId},
@@ -110,6 +113,7 @@ class OfflineCollectionRepository implements CollectionRepository {
   }) async {
     await _local.removeItem(collectionId, itemId);
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'remove_from_collection',
       itemId: collectionId,
       payload: {'itemId': itemId},

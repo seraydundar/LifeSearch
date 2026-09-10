@@ -79,6 +79,7 @@ class OfflineItemRepository implements ItemRepository {
       syncStatus: const Value('pending'),
     ));
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'create_note',
       itemId: id,
       payload: {'title': title, 'content': content},
@@ -103,6 +104,7 @@ class OfflineItemRepository implements ItemRepository {
   }) async {
     await _local.setNoteContent(itemId, title, content, syncStatus: 'pending');
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'update_note',
       itemId: itemId,
       payload: {'title': title, 'content': content},
@@ -142,6 +144,7 @@ class OfflineItemRepository implements ItemRepository {
       syncStatus: const Value('pending'),
     ));
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'upload_file',
       itemId: id,
       payload: {
@@ -183,6 +186,7 @@ class OfflineItemRepository implements ItemRepository {
       syncStatus: const Value('pending'),
     ));
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'create_url',
       itemId: id,
       payload: {'url': url},
@@ -220,6 +224,7 @@ class OfflineItemRepository implements ItemRepository {
   Future<void> setFavorite(String itemId, bool favorite) async {
     await _local.setFavorite(itemId, favorite, syncStatus: 'pending');
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'set_favorite',
       itemId: itemId,
       payload: {'favorite': favorite},
@@ -230,7 +235,7 @@ class OfflineItemRepository implements ItemRepository {
   @override
   Future<void> dismissDuplicate(String itemId) async {
     await _local.setDuplicateDismissed(itemId, syncStatus: 'pending');
-    await _queue.enqueue(operationType: 'dismiss_duplicate', itemId: itemId, payload: const {});
+    await _queue.enqueue(userId: _userId, operationType: 'dismiss_duplicate', itemId: itemId, payload: const {});
     _syncService.syncSoon();
   }
 
@@ -238,6 +243,7 @@ class OfflineItemRepository implements ItemRepository {
   Future<void> deleteItem(Item item) async {
     await _local.delete(item.id);
     await _queue.enqueue(
+      userId: _userId,
       operationType: 'delete_item',
       itemId: item.id,
       payload: {'storagePath': item.storagePath},

@@ -881,16 +881,8 @@ satır satır karşılaştırdı ve daha önceki taramaların (bu dosyanın kend
 içindeki "Faz 9 sonrası" ve "kod incelemesi" turları dahil) kaçırdığı,
 MVP'yi doğrudan etkileyen sorunlar buldu. Üçü — en ciddisi — doğrulandı:
 
-- **Sync queue hesaba göre ayrılmıyor**: `SyncQueueEntries`'in `userId`
-  kolonu yok, `pendingEntries()` tüm satırları döndürüyor
-  ([sync_queue_entries.dart:7](../mobile/lib/core/database/tables/sync_queue_entries.dart)).
-  `LocalItems`'ın kendisi `userId`'ye göre doğru filtreleniyor
-  ([item_local_data_source.dart](../mobile/lib/features/item/data/local/item_local_data_source.dart)) —
-  ama A hesabıyla offline oluşturulan bir not henüz gönderilmeden B
-  hesabına geçilirse, `_flushQueue()` bu kaydı B'nin oturumuyla
-  gönderir. `signOut()` local DB'yi hiç temizlemiyor
-  ([auth_providers.dart:51](../mobile/lib/features/auth/presentation/providers/auth_providers.dart)).
-  Kişisel veri saklayan bir uygulama için en yüksek öncelik.
+- **Sync queue hesaba göre ayrılmıyor ✅ (Faz 10a, düzeltildi)** — bkz.
+  aşağıdaki alt bölüm.
 - **`item_contents.item_id` üzerinde UNIQUE yok, ama mobil kod
   `onConflict: 'item_id'` ile upsert yapıyor**
   ([remote_item_data_source.dart:104](../mobile/lib/features/item/data/remote/remote_item_data_source.dart),
@@ -913,6 +905,63 @@ MVP'yi doğrudan etkileyen sorunlar buldu. Üçü — en ciddisi — doğruland�
   `ItemDetailScreen`/`NoteEditorScreen`'in `initState()`'ı, gelen
   `item` ne olursa olsun `findById` ile her zaman tam kaydı çekip
   üzerine yazsın — local Drift lookup olduğu için ucuz).
+
+#### Faz 10a, madde 1: Sync queue hesap izolasyonu ✅
+
+`SyncQueueEntries` ve `RecentSearches`'e `userId` kolonu eklendi — artık
+`LocalItems`/`LocalCollections`'ın zaten yaptığı gibi, her okuma/yazma
+imzalı bir kullanıcıya bağlı.
+
+- **Şema**: `SyncQueueEntries.userId`/`RecentSearches.userId`
+  ([sync_queue_entries.dart](../mobile/lib/core/database/tables/sync_queue_entries.dart),
+  [recent_searches.dart](../mobile/lib/core/database/tables/recent_searches.dart)) —
+  yalnızca migration'ın `ALTER TABLE ADD COLUMN`'ının bir şeyi doldurabilmesi
+  için `withDefault('')`; her gerçek insert her zaman açıkça geçiyor.
+  Local şema v6→v7.
+- **Migration backfill**: yeni sütun `whoever's-signed-in-now` tahmini
+  yerine, her queue kaydının **hedeflediği item/collection'ın zaten doğru
+  olan `userId`'sinden** dolduruluyor (`AppDatabase.backfillSyncQueueOwnership()`)
+  — bir hesap değişimini atlatmış bir kayıt bu tahminle yanlış sahibe
+  atanırdı. Hedefi artık local'de bulunmayan bir kayıt kimseye
+  atfedilemez, silinir (yanlış hesap altında bir yazmayı riske atmaktansa).
+  `recent_searches`'in geri kazanılabilecek bir sahiplik izi yok, o yüzden
+  sadece temizleniyor. Backfill mantığı, `ALTER TABLE` adımından ayrı,
+  doğrudan test edilebilir bir metoda çıkarıldı (eski şemayı elle sqlite
+  DDL'iyle yeniden kurmak yerine, mevcut v7 şemasında `userId: ''`
+  satırlar oluşturup backfill'i çağırarak test edildi).
+- **`SyncQueueDataSource`/`RecentSearchesDataSource`**: `enqueue()`,
+  `pendingEntries()`, `watchPendingCount()`, `watchRecent()`, `record()`,
+  `clear()` artık hepsi `userId` alıyor/filtreliyor. `SyncService._flushQueue()`
+  artık yalnızca imzalı kullanıcının kendi kayıtlarını işliyor —
+  `syncNow()` zaten hesap değişiminde otomatik tetikleniyor
+  (`authStateChangesProvider`), yani B hesabı açılır açılmaz B'nin kendi
+  (boş) kuyruğu işlenir, A'nınki dokunulmadan kalır.
+  `OfflineItemRepository`/`OfflineCollectionRepository`'nin tüm
+  `enqueue()` çağrıları zaten sahip oldukları `_userId` getter'ını
+  geçiriyor.
+- **`pendingSyncCountProvider`/`recentSearchesProvider`**: imzalı
+  kullanıcı yoksa (ya da `Supabase.initialize()` hiç çalışmamışsa — bkz.
+  `search_providers.dart`'taki `_currentUserIdOrNull()`, bunun neden
+  gerçek uygulamada asla olmayan ama bir widget testinde olabilecek bir
+  durum olduğu açıklaması) `0`/boş listeye düşüyor, çökmüyor.
+
+**Regresyon testleri**: `sync_service_test.dart`'a A'nın offline notunun
+B'nin oturumu açıkken **asla** gönderilmediğini, kuyrukta beklemeye devam
+ettiğini ve A geri giriş yaptığında normal şekilde gönderildiğini
+doğrulayan bir test eklendi. Yeni `app_database_migration_test.dart`
+(4 test) backfill'in item-scoped/collection-scoped/atfedilemeyen
+girdileri doğru işlediğini doğruluyor. Yeni
+`recent_searches_data_source_test.dart` (4 test) hesap izolasyonunu
+doğruluyor — bu turda ayrıca `watchRecent()`'in sıralamasında gerçek bir
+küçük hata bulundu (`searchedAt`'in `currentDateAndTime` varsayılanı
+saniye hassasiyetinde; aynı saniyede art arda iki arama "en yeni önce"
+sırasını bozabiliyordu) ve `id DESC` ikincil sıralamasıyla düzeltildi.
+
+Mobile: `flutter analyze` temiz, 115 → **124** test (+9: 4 migration
+backfill + 4 recent-searches izolasyonu + 1 cross-account sync).
+`ItemDetailScreen`/`NoteEditorScreen`'e hiç dokunulmadı — bu commit'in
+kapsamı sadece kuyruk/arama geçmişi izolasyonu, madde 3 (kısmi Item)
+hâlâ ayrı bir düzeltme bekliyor.
 
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):

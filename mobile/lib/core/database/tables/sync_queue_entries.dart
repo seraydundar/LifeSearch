@@ -7,6 +7,16 @@ import 'package:drift/drift.dart';
 class SyncQueueEntries extends Table {
   IntColumn get id => integer().autoIncrement()();
 
+  /// Whose operation this is. Without this, `pendingEntries()` couldn't
+  /// tell one account's queued writes apart from another's on a shared
+  /// device — a still-queued item from a previous session could get
+  /// pushed to Supabase under whichever account happens to be signed in
+  /// when the queue next flushes (requirements doc, rule 14: "Kullanıcının
+  /// verilerini başka kullanıcıların sorgularında kullanma"). Defaults to
+  /// `''` only so the v6->v7 migration's `ALTER TABLE ADD COLUMN` has
+  /// something to backfill from — every real insert always supplies it.
+  TextColumn get userId => text().withDefault(const Constant(''))();
+
   /// 'create_note' | 'update_note' | 'set_favorite' | 'delete_item' | 'upload_file'
   TextColumn get operationType => text()();
 

@@ -17,7 +17,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.connection);
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -57,8 +57,68 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(localCollections);
             await m.createTable(localCollectionItems);
           }
+          // v7 (Faz 10a — hesap izolasyonu): SyncQueueEntries/RecentSearches
+          // never carried a userId, so `pendingEntries()`/recent-search
+          // queries read every account's rows on a shared device — a
+          // still-queued item from a previous session could get pushed
+          // under whichever account is signed in when the queue next
+          // flushes. Backfilled from the item/collection each queue entry
+          // actually targets (LocalItems/LocalCollections were already
+          // correctly scoped) rather than guessing "whoever's signed in
+          // now" — a queue entry outliving an account switch would get
+          // the wrong owner under that guess. Anything whose target no
+          // longer exists locally can't be safely attributed to anyone —
+          // dropped rather than risking a write under the wrong account.
+          // recent_searches has no such ownership trail to recover from,
+          // so it's just cleared.
+          if (from < 7) {
+            await m.addColumn(syncQueueEntries, syncQueueEntries.userId);
+            await m.addColumn(recentSearches, recentSearches.userId);
+            await backfillSyncQueueOwnership();
+            await delete(recentSearches).go();
+          }
         },
       );
+
+  /// The v6->v7 backfill's actual logic, pulled out of the migration
+  /// closure so it can be exercised directly in a test against a plain
+  /// `forTesting` database (already on the current schema, with rows
+  /// inserted at their post-`addColumn` default of `userId: ''`) instead
+  /// of having to fabricate an actual old-schema sqlite file by hand.
+  ///
+  /// Recovers each queue entry's true owner from the item/collection it
+  /// targets (`LocalItems`/`LocalCollections` were already correctly
+  /// scoped — only the queue itself was missing this) rather than
+  /// guessing "whoever's signed in now", which would mis-attribute any
+  /// entry that outlived an account switch. An entry whose target no
+  /// longer exists locally can't be safely attributed to anyone — it's
+  /// dropped rather than risking a write under the wrong account.
+  Future<void> backfillSyncQueueOwnership() async {
+    final itemOwners = {
+      for (final row in await select(localItems).get()) row.id: row.userId,
+    };
+    final collectionOwners = {
+      for (final row in await select(localCollections).get()) row.id: row.userId,
+    };
+    const collectionOps = {
+      'create_collection',
+      'rename_collection',
+      'delete_collection',
+      'add_to_collection',
+      'remove_from_collection',
+    };
+
+    for (final entry in await select(syncQueueEntries).get()) {
+      final owners = collectionOps.contains(entry.operationType) ? collectionOwners : itemOwners;
+      final owner = owners[entry.itemId];
+      if (owner == null) {
+        await (delete(syncQueueEntries)..where((t) => t.id.equals(entry.id))).go();
+      } else {
+        await (update(syncQueueEntries)..where((t) => t.id.equals(entry.id)))
+            .write(SyncQueueEntriesCompanion(userId: Value(owner)));
+      }
+    }
+  }
 
   static QueryExecutor _openConnection() {
     // Picks the right native backend per platform and stores the file in

@@ -59,6 +59,64 @@ void main() {
     verifyNever(() => remoteCollections.fetchAllRows());
   });
 
+  test(
+      "a still-queued entry from a previous account is never flushed under "
+      'a newly signed-in one, on the same device', () async {
+    // user-1 creates a note offline...
+    await local.upsert(LocalItemsCompanion.insert(
+      id: 'note-1',
+      userId: 'user-1',
+      type: ItemType.note.dbValue,
+      title: const Value('user-1\'s private note'),
+      processingStatus: const Value('pending'),
+      createdAt: DateTime(2026, 1, 1),
+      noteContent: const Value('body'),
+      syncStatus: const Value('pending'),
+    ));
+    await queue.enqueue(
+      userId: 'user-1',
+      operationType: 'create_note',
+      itemId: 'note-1',
+      payload: {'title': "user-1's private note", 'content': 'body'},
+    );
+
+    // ...then, before it ever syncs, a *different* account signs in on the
+    // same device (the actual bug: SyncQueueEntries had no userId at all,
+    // so this second sync pass would have pushed user-1's note under
+    // user-2's session — see requirements doc, rule 14).
+    when(() => remote.userId).thenReturn('user-2');
+
+    await sync.syncNow();
+
+    verifyNever(() => remote.createNote(
+          id: any(named: 'id'),
+          title: any(named: 'title'),
+          content: any(named: 'content'),
+        ));
+    // Still sitting in the queue, untouched, waiting for user-1 to sign
+    // back in — not silently dropped, and not pushed under user-2.
+    expect(await queue.pendingEntries('user-1'), hasLength(1));
+    expect(await queue.pendingEntries('user-2'), isEmpty);
+
+    // When user-1 signs back in, their own pending note *does* flush
+    // normally — this isn't a permanently stuck entry.
+    when(() => remote.userId).thenReturn('user-1');
+    when(() => remote.createNote(
+          id: 'note-1',
+          title: "user-1's private note",
+          content: 'body',
+        )).thenAnswer((_) async {});
+
+    await sync.syncNow();
+
+    verify(() => remote.createNote(
+          id: 'note-1',
+          title: "user-1's private note",
+          content: 'body',
+        )).called(1);
+    expect(await queue.pendingEntries('user-1'), isEmpty);
+  });
+
   test('pushes a queued create_note and marks it synced', () async {
     await local.upsert(LocalItemsCompanion.insert(
       id: 'note-1',
@@ -71,6 +129,7 @@ void main() {
       syncStatus: const Value('pending'),
     ));
     await queue.enqueue(
+      userId: 'user-1',
       operationType: 'create_note',
       itemId: 'note-1',
       payload: {'title': 'Docker Notes', 'content': 'body'},
@@ -85,7 +144,7 @@ void main() {
 
     verify(() => remote.createNote(id: 'note-1', title: 'Docker Notes', content: 'body'))
         .called(1);
-    expect(await queue.pendingEntries(), isEmpty);
+    expect(await queue.pendingEntries('user-1'), isEmpty);
     final row = await local.findById('note-1');
     expect(row!.syncStatus, 'synced');
   });
@@ -100,6 +159,7 @@ void main() {
       syncStatus: const Value('pending'),
     ));
     await queue.enqueue(
+      userId: 'user-1',
       operationType: 'create_note',
       itemId: 'note-1',
       payload: {'title': 'x', 'content': 'y'},
@@ -112,7 +172,7 @@ void main() {
 
     await sync.syncNow();
 
-    final pending = await queue.pendingEntries();
+    final pending = await queue.pendingEntries('user-1');
     expect(pending, hasLength(1));
     expect(pending.single.retryCount, 1);
     final row = await local.findById('note-1');
@@ -131,6 +191,7 @@ void main() {
       syncStatus: const Value('pending'),
     ));
     await queue.enqueue(
+      userId: 'user-1',
       operationType: 'create_url',
       itemId: 'link-1',
       payload: {'url': 'https://example.com/docker-guide'},
@@ -144,7 +205,7 @@ void main() {
 
     verify(() => remote.createUrlItem(id: 'link-1', url: 'https://example.com/docker-guide'))
         .called(1);
-    expect(await queue.pendingEntries(), isEmpty);
+    expect(await queue.pendingEntries('user-1'), isEmpty);
     final row = await local.findById('link-1');
     expect(row!.syncStatus, 'synced');
   });
@@ -161,6 +222,7 @@ void main() {
       syncStatus: const Value('pending'),
     ));
     await queue.enqueue(
+      userId: 'user-1',
       operationType: 'dismiss_duplicate',
       itemId: 'item-1',
       payload: const {},
@@ -170,7 +232,7 @@ void main() {
     await sync.syncNow();
 
     verify(() => remote.dismissDuplicate('item-1')).called(1);
-    expect(await queue.pendingEntries(), isEmpty);
+    expect(await queue.pendingEntries('user-1'), isEmpty);
     final row = await local.findById('item-1');
     expect(row!.syncStatus, 'synced');
   });
@@ -187,6 +249,7 @@ void main() {
       syncStatus: const Value('pending'),
     ));
     await queue.enqueue(
+      userId: 'user-1',
       operationType: 'update_note',
       itemId: 'note-1',
       payload: {'title': 'Local edit', 'content': 'unsynced body'},
@@ -275,6 +338,7 @@ void main() {
         syncStatus: const Value('pending'),
       ));
       await queue.enqueue(
+        userId: 'user-1',
         operationType: 'create_collection',
         itemId: 'coll-1',
         payload: {'name': 'Docker stuff', 'isSmart': false},
@@ -292,7 +356,7 @@ void main() {
             name: 'Docker stuff',
             isSmart: false,
           )).called(1);
-      expect(await queue.pendingEntries(), isEmpty);
+      expect(await queue.pendingEntries('user-1'), isEmpty);
       final ids = await localCollections.allIds('user-1');
       expect(ids, contains('coll-1'));
     });
@@ -306,6 +370,7 @@ void main() {
         syncStatus: const Value('pending'),
       ));
       await queue.enqueue(
+        userId: 'user-1',
         operationType: 'create_collection',
         itemId: 'coll-1',
         payload: {'name': 'Docker stuff', 'isSmart': false},
@@ -318,13 +383,14 @@ void main() {
 
       await sync.syncNow();
 
-      final pending = await queue.pendingEntries();
+      final pending = await queue.pendingEntries('user-1');
       expect(pending, hasLength(1));
     });
 
     test('pushes a queued add_to_collection', () async {
       await localCollections.addItem('coll-1', 'item-1', syncStatus: 'pending');
       await queue.enqueue(
+        userId: 'user-1',
         operationType: 'add_to_collection',
         itemId: 'coll-1',
         payload: {'itemId': 'item-1'},
@@ -336,11 +402,12 @@ void main() {
 
       verify(() => remoteCollections.addItemToCollection(collectionId: 'coll-1', itemId: 'item-1'))
           .called(1);
-      expect(await queue.pendingEntries(), isEmpty);
+      expect(await queue.pendingEntries('user-1'), isEmpty);
     });
 
     test('pushes a queued remove_from_collection', () async {
       await queue.enqueue(
+        userId: 'user-1',
         operationType: 'remove_from_collection',
         itemId: 'coll-1',
         payload: {'itemId': 'item-1'},
@@ -356,17 +423,17 @@ void main() {
             collectionId: 'coll-1',
             itemId: 'item-1',
           )).called(1);
-      expect(await queue.pendingEntries(), isEmpty);
+      expect(await queue.pendingEntries('user-1'), isEmpty);
     });
 
     test('pushes a queued delete_collection', () async {
-      await queue.enqueue(operationType: 'delete_collection', itemId: 'coll-1', payload: const {});
+      await queue.enqueue(userId: 'user-1', operationType: 'delete_collection', itemId: 'coll-1', payload: const {});
       when(() => remoteCollections.deleteCollection('coll-1')).thenAnswer((_) async {});
 
       await sync.syncNow();
 
       verify(() => remoteCollections.deleteCollection('coll-1')).called(1);
-      expect(await queue.pendingEntries(), isEmpty);
+      expect(await queue.pendingEntries('user-1'), isEmpty);
     });
 
     test('pulling remote collections does not clobber a not-yet-synced rename', () async {
@@ -378,6 +445,7 @@ void main() {
         syncStatus: const Value('pending'),
       ));
       await queue.enqueue(
+        userId: 'user-1',
         operationType: 'rename_collection',
         itemId: 'coll-1',
         payload: {'name': 'Renamed locally'},

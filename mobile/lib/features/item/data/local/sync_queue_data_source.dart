@@ -10,12 +10,14 @@ class SyncQueueDataSource {
   final AppDatabase _db;
 
   Future<void> enqueue({
+    required String userId,
     required String operationType,
     required String itemId,
     required Map<String, dynamic> payload,
   }) {
     return _db.into(_db.syncQueueEntries).insert(
           SyncQueueEntriesCompanion.insert(
+            userId: Value(userId),
             operationType: operationType,
             itemId: itemId,
             payload: jsonEncode(payload),
@@ -23,14 +25,19 @@ class SyncQueueDataSource {
         );
   }
 
-  Future<List<SyncQueueEntry>> pendingEntries() {
-    return (_db.select(_db.syncQueueEntries)..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+  /// Only `userId`'s own queued writes — see `SyncQueueEntries.userId`'s
+  /// docstring for why this matters on a shared device.
+  Future<List<SyncQueueEntry>> pendingEntries(String userId) {
+    return (_db.select(_db.syncQueueEntries)
+          ..where((t) => t.userId.equals(userId))
+          ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
         .get();
   }
 
-  Stream<int> watchPendingCount() {
+  Stream<int> watchPendingCount(String userId) {
     final query = _db.selectOnly(_db.syncQueueEntries)
-      ..addColumns([_db.syncQueueEntries.id.count()]);
+      ..addColumns([_db.syncQueueEntries.id.count()])
+      ..where(_db.syncQueueEntries.userId.equals(userId));
     return query.map((row) => row.read(_db.syncQueueEntries.id.count()) ?? 0).watchSingle();
   }
 

@@ -93,7 +93,7 @@ class SyncService {
 
       await _pullRemote(userId);
       await _pullRemoteCollections(userId);
-      await _flushQueue();
+      await _flushQueue(userId);
     } catch (_) {
       // Best-effort: a network blip here shouldn't crash the app. The next
       // connectivity change or mutation calls syncSoon() again.
@@ -116,7 +116,7 @@ class SyncService {
 
   Future<void> _pullRemote(String userId) async {
     final rows = await _remote.fetchAllRows();
-    final pendingIds = (await _queue.pendingEntries()).map((e) => e.itemId).toSet();
+    final pendingIds = (await _queue.pendingEntries(userId)).map((e) => e.itemId).toSet();
 
     final remoteIds = <String>{for (final row in rows) row['id'] as String};
     // A local edit is still queued for these — don't overwrite them.
@@ -172,7 +172,7 @@ class SyncService {
   }
 
   Future<void> _pullRemoteCollections(String userId) async {
-    final pending = await _queue.pendingEntries();
+    final pending = await _queue.pendingEntries(userId);
     final pendingCollectionIds =
         pending.where((e) => _collectionOps.contains(e.operationType)).map((e) => e.itemId).toSet();
     final pendingMemberships = pending
@@ -226,8 +226,8 @@ class SyncService {
     }
   }
 
-  Future<void> _flushQueue() async {
-    for (final entry in await _queue.pendingEntries()) {
+  Future<void> _flushQueue(String userId) async {
+    for (final entry in await _queue.pendingEntries(userId)) {
       try {
         final payload = jsonDecode(entry.payload) as Map<String, dynamic>;
         switch (entry.operationType) {

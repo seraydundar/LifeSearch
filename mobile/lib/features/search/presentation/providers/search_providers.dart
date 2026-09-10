@@ -11,6 +11,21 @@ import '../../domain/entities/search_filters.dart';
 import '../../domain/entities/search_result.dart';
 import '../../domain/repositories/search_repository.dart';
 
+/// `Supabase.instance` asserts if `Supabase.initialize()` never ran —
+/// harmless in the real app (`main()` always initializes it first, see
+/// `supabaseClientProvider`'s docstring) but a widget test that overrides
+/// `searchRepositoryProvider` (bypassing the network entirely, same as
+/// `SyncService._currentUserIdOrNull()`'s reasoning for `AuthFailure`)
+/// would otherwise hit this by way of `SearchController`'s recent-search
+/// bookkeeping, which has nothing to do with what that test is checking.
+String? _currentUserIdOrNull(Ref ref) {
+  try {
+    return ref.read(supabaseClientProvider).auth.currentUser?.id;
+  } catch (_) {
+    return null;
+  }
+}
+
 final localSearchDataSourceProvider = Provider<LocalSearchDataSource>((ref) {
   return LocalSearchDataSource(ref.watch(appDatabaseProvider));
 });
@@ -28,7 +43,9 @@ final recentSearchesDataSourceProvider = Provider<RecentSearchesDataSource>((ref
 });
 
 final recentSearchesProvider = StreamProvider<List<String>>((ref) {
-  return ref.watch(recentSearchesDataSourceProvider).watchRecent();
+  final userId = _currentUserIdOrNull(ref);
+  if (userId == null) return Stream.value(const []);
+  return ref.watch(recentSearchesDataSourceProvider).watchRecent(userId);
 });
 
 /// Active type/date filters (requirements doc, section 21) — a plain
@@ -59,8 +76,9 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
       () => ref.read(searchRepositoryProvider).search(trimmed, filters: filters),
     );
 
-    if (!state.hasError) {
-      await ref.read(recentSearchesDataSourceProvider).record(trimmed);
+    final userId = _currentUserIdOrNull(ref);
+    if (!state.hasError && userId != null) {
+      await ref.read(recentSearchesDataSourceProvider).record(userId, trimmed);
     }
   }
 
