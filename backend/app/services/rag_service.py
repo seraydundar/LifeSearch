@@ -5,9 +5,11 @@
 
 Reuses Phase 5's `semantic_search` for the retrieval half — RAG is
 "search, then hand the results to an LLM," not a separate lookup path.
-The system prompt is deliberately strict about not answering from outside
-the given sources, so the assistant doesn't fabricate facts that aren't
-in the user's own archive.
+That also means it gets reranking (section 65) for free: the sources an
+answer is grounded in are exactly what `/search/` would have shown, in
+the same LLM-reordered relevance order. The system prompt is deliberately
+strict about not answering from outside the given sources, so the
+assistant doesn't fabricate facts that aren't in the user's own archive.
 """
 
 from typing import Any

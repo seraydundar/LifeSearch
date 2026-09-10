@@ -1,7 +1,6 @@
 """Semantic + hybrid search over items/chunks via pgvector (requirements
-doc, sections 19-21) and related-items lookup (section 47). Reranking
-(section 20) stays out of scope — noted as "ileri aşama" in the doc
-itself. Natural-language filter extraction (section 22) happens one
+doc, sections 19-21), reranking (section 65) and related-items lookup
+(section 47). Natural-language filter extraction (section 22) happens one
 layer up, in `query_parser.py` — this module only ever sees the already
 resolved `item_types`/`date_after`/`date_before`.
 """
@@ -11,6 +10,7 @@ from typing import Any
 
 from ..repositories.search_repository import SearchRepository
 from .ai_provider import AIProvider
+from .reranking_service import rerank_matches
 
 
 def _dedupe_best_per_item(matches: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
@@ -36,6 +36,7 @@ async def semantic_search(
     item_types: list[str] | None = None,
     date_after: datetime | None = None,
     date_before: datetime | None = None,
+    rerank: bool = True,
 ) -> list[dict[str, Any]]:
     query_embedding = await provider.generate_embedding(query)
 
@@ -49,7 +50,15 @@ async def semantic_search(
         date_after=date_after,
         date_before=date_before,
     )
-    return _dedupe_best_per_item(matches, limit=limit)
+    # Dedupe to a *shortlist* wider than the final `limit`, not straight
+    # down to it — reranking a list already cut to size by RRF alone
+    # would have nothing left to do but reorder it. `rerank_matches`
+    # narrows this back down to `limit`.
+    shortlist = _dedupe_best_per_item(matches, limit=min(len(matches), limit * 2))
+
+    if not rerank:
+        return shortlist[:limit]
+    return await rerank_matches(query, shortlist, provider, limit=limit)
 
 
 async def find_related_items(

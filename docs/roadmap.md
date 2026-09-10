@@ -703,6 +703,54 @@ Backend: 75 test yeşil (68 → 75, +7: limiter için 5 birim testi + gerçek
 bir FastAPI route üzerinden 200/429+Retry-After doğrulayan 2 test).
 `ruff check` temiz. Mobile değişmedi.
 
+### Reranking ✅
+
+Bölüm 65'in listesindeki, `search_service.py`'nin kendi modül docstring'inde
+"ileri aşama" diyerek kapsam dışı bıraktığı madde. RRF (hybrid search RPC'si
++ `_dedupe_best_per_item`) hızlı ve ucuz ama bir chunk'ı sorguyla neden
+eşleştiğini hiç "anlamıyor" — sorgunun kelimelerini tesadüfen tekrar eden
+kısa bir pasaj, gerçekte daha alakalı ama o kelimeleri birebir tekrarlamayan
+uzun bir pasajı salt ts_rank/embedding-mesafesi üzerinden geçebilir.
+
+- **`reranking_service.rerank_matches()`**: LLM'in adayları gerçekten
+  okuyup sorguyla en alakalıdan en az alakalıya sıralamasını istiyor —
+  ayrı bir cross-encoder modeli eklemek yerine (kural 4, "gereksiz
+  abstraction oluşturma") zaten var olan `generate_text`'i yeniden
+  kullanıyor. Prompt'a en fazla 30 aday (`_MAX_CANDIDATES`) veriliyor,
+  her biri 300 karaktere kırpılıyor — büyük bir `limit` isteyen bir
+  client'ın prompt boyutunu/maliyetini patlatmaması için.
+- **Parse formatı**: `tagging_service`/`entity_extraction_service`'le aynı
+  gerekçeyle JSON değil, virgülle ayrılmış 1-tabanlı numara listesi
+  ("3,1,4,2") — modelin yanıtındaki tek bir bozuk karakter tüm sıralamayı
+  çöpe atmasın diye. Adayların yarısından azını anan bir yanıt (muhtemelen
+  düzyazıya kaçmış bir "yanlış ateşleme") kullanılamaz sayılıp orijinal
+  RRF sırasına düşülüyor; kısmi ama kullanılabilir bir sıralamada modelin
+  hiç anmadığı adaylar kendi aralarındaki orijinal sırayla sona ekleniyor.
+- **Best-effort sözleşmesi**: provider hatası veya parse edilemeyen bir
+  yanıt — ikisi de arama sonucunu asla boşaltmıyor, `search_service`'in
+  zaten bulduğu sırayla dönüyor.
+- **`search_service.semantic_search()`**: dedupe artık doğrudan `limit`'e
+  değil, `min(len(matches), limit*2)`'lik daha geniş bir shortlist'e
+  düşüyor — reranker'a yeniden sıralamaktan başka bir şey yapamayacağı,
+  zaten `limit`'e kırpılmış bir liste vermemek için (aksi halde reranking
+  hiçbir zaman RRF'nin dışarıda bıraktığı bir item'ı öne çıkaramazdı; bir
+  testte tam olarak bunu doğruluyor). Yeni bir `rerank: bool = True`
+  parametresi var — `/ai/ask` (RAG'ın kaynak seçimi) da `semantic_search`'ü
+  hiç değişmeden aynı şekilde çağırdığı için reranking'i otomatik olarak
+  bedava alıyor.
+- **Maliyet/gecikme notu**: bu, her `/search/` ve `/ai/ask` çağrısına bir
+  embedding'in üstüne bir `generate_text` çağrısı daha ekliyor — RRF'ye
+  kıyasla daha yavaş ve daha pahalı. Bir önceki turda eklenen rate
+  limiting (`require_search_rate_limit`, `require_ai_rate_limit`) bu
+  maliyeti zaten sınırlıyor; ayrı bir yapılandırma anahtarı eklenmedi
+  (kural 4) — devre dışı bırakmak gerekirse `rerank=False` kod
+  seviyesinde her zaman mevcut.
+
+Backend: 86 test yeşil (75 → 86, +11: reranking_service için 9 birim
+testi + search_service'e reranking'in shortlist'i genişlettiğini ve
+`rerank=False`'ın LLM'i hiç çağırmadığını doğrulayan 2 entegrasyon
+testi). `ruff check` temiz. Mobile değişmedi.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
 Doküman kapsamında bilinen bir boşluk kalmadı — geriye yalnızca iki
