@@ -136,6 +136,22 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     }
   }
 
+  /// Backend pipeline errored (bad API key, corrupt PDF, ...) or the
+  /// initial trigger never reached the backend at all — either way
+  /// `processingStatus` stayed something other than 'completed' with
+  /// nothing automatically re-attempting it. This is the user's way to
+  /// ask for another try.
+  Future<void> _retryProcessing() async {
+    setState(() => _item = _item.copyWith(processingStatus: 'pending')); // optimistic
+    try {
+      await ref.read(itemRepositoryProvider).retryProcessing(_item.id);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _item = _item.copyWith(processingStatus: 'failed')); // revert
+      context.showErrorSnackBar('Tekrar denenemedi.');
+    }
+  }
+
   Future<void> _openFile() async {
     if (_signedUrl == null) return;
     await launchUrl(Uri.parse(_signedUrl!), mode: LaunchMode.externalApplication);
@@ -226,7 +242,19 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
           ],
           const SizedBox(height: 16),
           if (_item.processingStatus != 'completed')
-            Chip(label: Text(_processingLabel(_item.processingStatus))),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              children: [
+                Chip(label: Text(_processingLabel(_item.processingStatus))),
+                if (_item.processingStatus == 'failed')
+                  TextButton.icon(
+                    onPressed: _retryProcessing,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Tekrar Dene'),
+                  ),
+              ],
+            ),
           const SizedBox(height: 16),
           if (_item.type == ItemType.url)
             _MetaRow(label: 'Link', value: _item.sourceUrl ?? '—')

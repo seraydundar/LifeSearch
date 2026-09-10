@@ -21,6 +21,21 @@ class ItemLocalDataSource {
     return (_db.select(_db.localItems)..where((t) => t.id.equals(itemId))).getSingleOrNull();
   }
 
+  /// Whether `userId` has any item still waiting on the AI pipeline —
+  /// `SyncService` polls (see `_scheduleNextPollIfNeeded`) for exactly as
+  /// long as this is true, so `processing`/`completed`/`failed` shows up
+  /// without the user having to background/reopen the app or make an
+  /// edit to trigger another sync.
+  Future<bool> hasUnfinishedProcessing(String userId) async {
+    final row = await (_db.selectOnly(_db.localItems)
+          ..addColumns([_db.localItems.id])
+          ..where(_db.localItems.userId.equals(userId) &
+              _db.localItems.processingStatus.isIn(const ['pending', 'processing']))
+          ..limit(1))
+        .getSingleOrNull();
+    return row != null;
+  }
+
   Future<List<String>> allIds(String userId) async {
     final rows = await (_db.selectOnly(_db.localItems)
           ..addColumns([_db.localItems.id])
@@ -55,6 +70,15 @@ class ItemLocalDataSource {
         processingStatus: const Value('pending'),
       ),
     );
+  }
+
+  /// Optimistic local-only update for `ItemRepository.retryProcessing()` —
+  /// `processingStatus` itself is otherwise set exclusively by the backend
+  /// pipeline (via a `_pullRemote()` sync), so this is deliberately
+  /// overwritten on the next pull once the real status comes back.
+  Future<void> setProcessingStatus(String itemId, String status) {
+    return (_db.update(_db.localItems)..where((t) => t.id.equals(itemId)))
+        .write(LocalItemsCompanion(processingStatus: Value(status)));
   }
 
   Future<void> setDuplicateDismissed(String itemId, {required String syncStatus}) {

@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -48,7 +49,13 @@ void main() {
     );
   });
 
-  tearDown(() => db.close());
+  tearDown(() {
+    // Cancels any poll Timer syncNow() may have scheduled before the
+    // 5-second default interval ever gets a chance to fire in the
+    // background, past this test's own lifetime.
+    sync.dispose();
+    return db.close();
+  });
 
   test('does nothing when nobody is signed in', () async {
     when(() => remote.userId).thenThrow(const AuthFailure('no session'));
@@ -326,6 +333,209 @@ void main() {
     await sync.syncNow();
 
     expect(maxActive, greaterThanOrEqualTo(2));
+  });
+
+  group('trigger_ai', () {
+    test(
+        "a create_url push whose AI trigger can't reach the backend queues a "
+        'trigger_ai retry instead of losing the attempt', () async {
+      // A real Dio configured with a bad/unreachable base URL — unlike the
+      // suite's default `AiProcessingTrigger(null)`, this represents an
+      // actual "backend is down right now" failure, not "AI isn't
+      // configured at all".
+      final failingDio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:1'));
+      sync = SyncService(
+        local: local,
+        remote: remote,
+        localCollections: localCollections,
+        remoteCollections: remoteCollections,
+        queue: queue,
+        aiTrigger: AiProcessingTrigger(failingDio),
+      );
+      await local.upsert(LocalItemsCompanion.insert(
+        id: 'link-1',
+        userId: 'user-1',
+        type: ItemType.url.dbValue,
+        sourceUrl: const Value('https://example.com'),
+        processingStatus: const Value('pending'),
+        createdAt: DateTime(2026, 1, 1),
+        syncStatus: const Value('pending'),
+      ));
+      await queue.enqueue(
+        userId: 'user-1',
+        operationType: 'create_url',
+        itemId: 'link-1',
+        payload: {'url': 'https://example.com'},
+      );
+      when(() => remote.createUrlItem(id: 'link-1', url: 'https://example.com'))
+          .thenAnswer((_) async {});
+
+      await sync.syncNow();
+
+      // The create_url itself succeeded — it's gone, and the item shows
+      // synced — only the AI kickoff is what's still pending.
+      final row = await local.findById('link-1');
+      expect(row!.syncStatus, 'synced');
+      final pending = await queue.pendingEntries('user-1');
+      expect(pending, hasLength(1));
+      expect(pending.single.operationType, 'trigger_ai');
+      expect(pending.single.itemId, 'link-1');
+    });
+
+    test('a trigger_ai retry that still fails stays queued with a bumped retry count',
+        () async {
+      final failingDio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:1'));
+      sync = SyncService(
+        local: local,
+        remote: remote,
+        localCollections: localCollections,
+        remoteCollections: remoteCollections,
+        queue: queue,
+        aiTrigger: AiProcessingTrigger(failingDio),
+      );
+      await queue.enqueue(
+        userId: 'user-1',
+        operationType: 'trigger_ai',
+        itemId: 'link-1',
+        payload: const {},
+      );
+
+      await sync.syncNow();
+
+      final pending = await queue.pendingEntries('user-1');
+      expect(pending, hasLength(1));
+      expect(pending.single.retryCount, 1);
+      // Nothing local to have flagged failed — trigger_ai has no item/
+      // collection row of its own to touch.
+      expect(await local.findById('link-1'), null);
+    });
+
+    test('a trigger_ai retry that succeeds is removed from the queue', () async {
+      await queue.enqueue(
+        userId: 'user-1',
+        operationType: 'trigger_ai',
+        itemId: 'link-1',
+        payload: const {},
+      );
+      // Default setup's aiTrigger is AiProcessingTrigger(null) -> always
+      // reports success without making a real request.
+
+      await sync.syncNow();
+
+      expect(await queue.pendingEntries('user-1'), isEmpty);
+    });
+  });
+
+  group('AI status polling', () {
+    // No Supabase Realtime channel exists for `processing_status` yet —
+    // this is the only thing that makes `completed`/`failed` show up
+    // without the user backgrounding the app, editing something, or the
+    // network bouncing. Each test builds its own SyncService with a tiny
+    // pollInterval so it doesn't have to wait on the real 5s default.
+    Map<String, dynamic> pendingRow(String status) => {
+          'id': 'item-1',
+          'type': 'note',
+          'title': 'x',
+          'description': null,
+          'original_filename': null,
+          'mime_type': null,
+          'storage_path': null,
+          'processing_status': status,
+          'favorite': false,
+          'created_at': DateTime(2026, 1, 1).toIso8601String(),
+        };
+
+    test('keeps re-syncing while an item is still pending, and stops once it '
+        'turns up completed', () async {
+      var status = 'pending';
+      var fetchCount = 0;
+      when(() => remote.fetchAllRows()).thenAnswer((_) async {
+        fetchCount++;
+        return [pendingRow(status)];
+      });
+      when(() => remote.fetchNoteContent(any())).thenAnswer((_) async => 'body');
+      final pollingSync = SyncService(
+        local: local,
+        remote: remote,
+        localCollections: localCollections,
+        remoteCollections: remoteCollections,
+        queue: queue,
+        aiTrigger: AiProcessingTrigger(null),
+        pollInterval: const Duration(milliseconds: 10),
+        maxPollAttempts: 50, // comfortably more than this test needs
+      );
+
+      await pollingSync.syncNow();
+      expect(fetchCount, 1);
+
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(fetchCount, greaterThan(1)); // polled while still pending
+
+      status = 'completed'; // ...the backend finished processing it
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      final countOnceCompleted = fetchCount;
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      // No growth after that — completed is terminal, nothing left to poll for.
+      expect(fetchCount, countOnceCompleted);
+
+      pollingSync.dispose();
+    });
+
+    test('never polls at all when nothing is pending to begin with', () async {
+      var fetchCount = 0;
+      when(() => remote.fetchAllRows()).thenAnswer((_) async {
+        fetchCount++;
+        return [pendingRow('completed')];
+      });
+      when(() => remote.fetchNoteContent(any())).thenAnswer((_) async => 'body');
+      final pollingSync = SyncService(
+        local: local,
+        remote: remote,
+        localCollections: localCollections,
+        remoteCollections: remoteCollections,
+        queue: queue,
+        aiTrigger: AiProcessingTrigger(null),
+        pollInterval: const Duration(milliseconds: 10),
+      );
+
+      await pollingSync.syncNow();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(fetchCount, 1); // the one call syncNow() itself made — no more
+
+      pollingSync.dispose();
+    });
+
+    test('gives up after maxPollAttempts rather than polling a hung job forever',
+        () async {
+      var fetchCount = 0;
+      when(() => remote.fetchAllRows()).thenAnswer((_) async {
+        fetchCount++;
+        return [pendingRow('pending')]; // never resolves
+      });
+      when(() => remote.fetchNoteContent(any())).thenAnswer((_) async => 'body');
+      final pollingSync = SyncService(
+        local: local,
+        remote: remote,
+        localCollections: localCollections,
+        remoteCollections: remoteCollections,
+        queue: queue,
+        aiTrigger: AiProcessingTrigger(null),
+        pollInterval: const Duration(milliseconds: 10),
+        maxPollAttempts: 3,
+      );
+
+      await pollingSync.syncNow();
+      // Initial call + at most 3 retries, with generous margin for the
+      // real Timers involved — then it must plateau.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final total = fetchCount;
+      expect(total, lessThanOrEqualTo(4)); // 1 initial + 3 polls, never more
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(fetchCount, total); // no further growth once attempts run out
+
+      pollingSync.dispose();
+    });
   });
 
   group('collections', () {

@@ -57,4 +57,14 @@ abstract interface class ItemRepository {
   Future<void> dismissDuplicate(String itemId);
 
   Future<void> deleteItem(Item item);
+
+  /// User-initiated re-run of the AI pipeline for an item stuck in
+  /// `processingStatus == 'failed'` (the backend pipeline itself errored —
+  /// e.g. a missing API key, a corrupt PDF) or one whose initial trigger
+  /// never reached the backend at all. Fire-and-forget from the caller's
+  /// perspective: this returns once the retry is queued locally, not once
+  /// processing actually finishes — same contract as every other write
+  /// here (requirements doc, section 38: the UI never blocks on the
+  /// network).
+  Future<void> retryProcessing(String itemId);
 }

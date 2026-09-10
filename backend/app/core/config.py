@@ -25,9 +25,11 @@ class Settings(BaseSettings):
     # access token via GET /auth/v1/user (see core/security.py). Safe to
     # share; it's the same key the Flutter app ships with.
     supabase_anon_key: str = Field(default="")
-    # Only needed for admin-level operations that must bypass RLS — none
-    # of the Phase 4 pipeline does; every request is scoped by the calling
-    # user's own JWT instead. Keep unset until something actually needs it.
+    # Only needed for admin-level operations that must bypass RLS: account
+    # deletion (account_repository.py) and the startup sweep that recovers
+    # AI jobs orphaned by a crash/restart (job_recovery.py) — everything
+    # else is scoped by the calling user's own JWT instead. Keep unset
+    # until something actually needs it.
     supabase_service_role_key: str = Field(default="")
     database_url: str = Field(default="")
 

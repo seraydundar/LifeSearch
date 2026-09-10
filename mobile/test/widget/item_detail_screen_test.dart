@@ -88,6 +88,52 @@ void main() {
     expect(find.byIcon(Icons.star), findsOneWidget); // favorited, not star_border
   });
 
+  testWidgets('a failed item shows a Tekrar Dene button that re-triggers processing',
+      (tester) async {
+    final failed = Item(
+      id: 'item-1',
+      type: ItemType.pdf,
+      title: 'Corrupt scan',
+      originalFilename: 'scan.pdf',
+      processingStatus: 'failed',
+      favorite: false,
+      createdAt: DateTime(2026, 1, 1),
+    );
+    final repo = FakeItemRepository(initialItems: [failed]);
+
+    await tester.pumpWidget(wrap(failed, repo: repo));
+    await tester.pumpAndSettle();
+
+    expect(find.text('İşlenemedi'), findsOneWidget);
+    expect(find.text('Tekrar Dene'), findsOneWidget);
+
+    await tester.tap(find.text('Tekrar Dene'));
+    await tester.pumpAndSettle();
+
+    expect(repo.retryProcessingCallCount, 1);
+    // Optimistically reflects the fresh attempt — the 'failed' chip is
+    // gone, no more retry button to tap twice.
+    expect(find.text('İşlenemedi'), findsNothing);
+    expect(find.text('Tekrar Dene'), findsNothing);
+    expect(find.text('İşlenmeyi bekliyor'), findsOneWidget);
+  });
+
+  testWidgets('a pending or completed item never shows a Tekrar Dene button', (tester) async {
+    final pending = Item(
+      id: 'item-1',
+      type: ItemType.pdf,
+      title: 'Still processing',
+      processingStatus: 'pending',
+      favorite: false,
+      createdAt: DateTime(2026, 1, 1),
+    );
+
+    await tester.pumpWidget(wrap(pending, repo: FakeItemRepository(initialItems: [pending])));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tekrar Dene'), findsNothing);
+  });
+
   testWidgets('a stand-in for an item not yet synced to this device degrades gracefully, no crash',
       (tester) async {
     // Nothing in the local cache for this id — e.g. an item search just

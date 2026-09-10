@@ -130,4 +130,15 @@ class FakeItemRepository implements ItemRepository {
     _items.removeWhere((i) => i.id == item.id);
     _notify();
   }
+
+  int retryProcessingCallCount = 0;
+
+  @override
+  Future<void> retryProcessing(String itemId) async {
+    retryProcessingCallCount++;
+    final index = _items.indexWhere((i) => i.id == itemId);
+    if (index == -1) return;
+    _items[index] = _items[index].copyWith(processingStatus: 'pending');
+    _notify();
+  }
 }

@@ -1069,21 +1069,148 @@ uygulamanın tamamı sessizce çalışmazdı. Hiç release build alınmamıştı
 Backend `ruff check`/testleri bu maddeden etkilenmedi (tamamen mobil,
 kod değişikliği yok — yalnızca manifest + gitignore).
 
+#### Faz 10b, madde 1: AI tetikleme hatası — kalıcı retry + "Tekrar Dene" ✅
+
+`AiProcessingTrigger.triggerProcessing()` `/ai/process-item` isteği
+başarısız olduğunda (backend kapalı, ağ yok, 5xx) hatayı yutuyordu —
+item sonsuza kadar `pending`'de kalıyordu, hiçbir kayıt/retry/kullanıcı
+bildirimi yoktu. Backend'in kendi pipeline hatası (kötü API key, bozuk
+PDF) zaten `processing_status`'u `failed`'e çekiyordu, ama o durumda da
+mobilde yeniden deneme yolu yoktu.
+
+- **`AiProcessingTrigger.triggerProcessing()`**: artık `Future<bool>`
+  döndürüyor — istek backend'e ulaştıysa `true`, ulaşamadıysa `false`.
+  `BACKEND_URL` hiç ayarlanmamışsa (AI özelliği o kurulumda zaten yok)
+  `true` sayılıyor — bu bir hata değil, denenecek bir şey yok.
+- **`SyncService._triggerAi()`**: tetikleme başarısız olursa, mevcut
+  `sync_queue` altyapısını yeniden kullanan bir `trigger_ai` girdisi
+  kuyruğa ekliyor — bu girdi diğer her queue kaydı gibi kalıcı (uygulama
+  yeniden başlasa da kaybolmuyor) ve her `syncNow()` çağrısında normal
+  `retryCount`/`lastError` muhasebesiyle yeniden deneniyor.
+  `_markSynced`/`_markFailed` bu op için no-op — ne bir item'ın ne bir
+  koleksiyonun local satırı bu op'a ait, o yüzden syncStatus'a
+  dokunmuyor (asıl item verisi zaten senkronize olmuştu, sadece AI
+  tetiklemesi başarısızdı).
+- **`ItemRepository.retryProcessing()`** (yeni): item detayında
+  kullanıcının kendi isteğiyle tetiklediği yeniden deneme. Local
+  `processingStatus`'u optimistik olarak `pending`'e çekiyor, aynı
+  `trigger_ai` kuyruk girdisini ekliyor ve `syncSoon()` çağırıyor —
+  backend pipeline'ın kendisinin başarısız olduğu (`failed`) durumla
+  tetiklemenin backend'e hiç ulaşmadığı durumu aynı yolla ele alıyor.
+- **`ItemDetailScreen`**: işleme durumu `completed` değilken gösterilen
+  chip'in yanında, durum `failed` ise bir "Tekrar Dene" düğmesi
+  beliriyor (`_toggleFavorite`/`_dismissDuplicate` ile aynı optimistik
+  güncelle/geri al deseni).
+
+**Bilinçli sınır**: bu, madde 6'nın üç parçasından yalnızca birini
+kapatıyor — "tetikleme hatası sessizce kayboluyor" artık doğru değil,
+ama backend'in kendi `BackgroundTasks` restart sonrası job kurtarmaması
+ve mobilde AI sonucu için Realtime/polling'in hâlâ olmaması (bir
+sonraki başarılı `syncNow()`'a kadar `completed`/`failed` durumu
+otomatik yansımıyor) ayrı, çözülmemiş kalıyor — bkz. aşağıdaki
+"Önerilen sıra".
+
+Mobile: `flutter analyze` temiz, 127 → **132** test (+3
+`sync_service_test.dart` — tetikleme başarısız olduğunda `trigger_ai`
+kuyruğa ekleniyor, kuyruktaki bir `trigger_ai` tekrar başarısız olursa
+`retryCount` artıyor, başarılı olursa kuyruktan siliniyor; +2
+`item_detail_screen_test.dart` — `failed` bir item'da "Tekrar Dene"
+görünüyor ve tıklanınca `retryProcessing()`'i çağırıp durumu
+optimistik günceller, `pending`/`completed` bir item'da düğme hiç
+görünmüyor).
+
+#### Faz 10b, madde 2: job restart-kurtarma + mobil polling ✅
+
+Madde 6'nın kalan iki parçası: backend `BackgroundTasks` bir job'ı
+restart/crash'te kaybediyordu (bir sonraki hiçbir şey onu tamamlamıyordu
+— item sonsuza kadar `İşleniyor...` gösteriyordu, `failed` olmadığı için
+madde 1'in "Tekrar Dene" düğmesi de hiç çıkmıyordu) ve mobilde
+`completed`/`failed` durumu ancak bir sonraki connectivity/auth/yerel-
+yazma tetiklemeli senkronizasyona kadar görünmüyordu.
+
+**Backend — `app/services/job_recovery.py` (yeni)**: `process_item()`
+bir job'ın `status`'unu ve item'ın `processing_status`'unu her zaman
+birlikte `processing`'e çekip kendi `try`/`except`'i içinde birlikte
+`completed`/`failed`'e döndürüyor — bir job'ın `processing`'de asılı
+kalmasının tek yolu, çalıştığı process'in bitmeden ölmesi (deploy
+restart, OOM, crash). Bu yüzden **taze bir process'in başlangıcında**
+`processing_jobs`'ta `status = 'processing'` bulunan her satır, kanıtlanmış
+şekilde önceki bir çökmeden kalmıştır — bu process henüz hiçbir job
+başlatmamıştır.
+
+- `recover_orphaned_jobs(repo)`: bulduğu her asılı job'ı `failed`'e
+  çekiyor, ilgili item'ı da `failed`'e çekiyor — madde 1'de eklenen
+  "Tekrar Dene" düğmesi artık bu item'larda da çıkıyor.
+- `SupabaseRestRepository.find_jobs_by_status()` (yeni): bu sweep tek
+  çağıran, keyfi kullanıcıların job'larına bakması gerektiği için
+  `service_role` key'i `access_token` olarak geçiyor (RLS'i bypass
+  ediyor) — normal bir kullanıcı token'ıyla bu mümkün değil.
+  `app/core/config.py`'daki `supabase_service_role_key` yorumu bunu
+  yansıtacak şekilde güncellendi.
+- `main.py`: FastAPI'nin deprecated `@app.on_event("startup")`'ı yerine
+  `lifespan` context manager'ı kullanıldı — sweep bir istek işlenmeden
+  önce çalışıyor, `SUPABASE_SERVICE_ROLE_KEY` yoksa (veya Supabase o an
+  erişilemezse) sessizce atlanıyor, uygulamanın başlamasını hiç
+  engellemiyor.
+- **Bilinçli sınır**: "kendi başlangıcımda `processing` = orphaned"
+  mantığı yalnızca **tek instance**'lı bir dağıtımda geçerli — birden
+  fazla replika varsa biri restart olurken diğeri gerçekten hâlâ o job'ı
+  işliyor olabilir. Bu proje şu an `docker-compose.yml` ile tek instance
+  çalıştığı için kapsam dışı bırakıldı; çok-instance'lı bir dağıtım
+  bunun yerine bir lease/lock mekanizması gerektirir.
+
+**Mobile — `SyncService` polling**: `_scheduleNextPollIfNeeded()`, her
+`syncNow()` sonunda imzalı kullanıcının `pending`/`processing` durumunda
+hâlâ bir item'ı olup olmadığına bakıyor (`ItemLocalDataSource.
+hasUnfinishedProcessing()`, yeni); varsa `pollInterval` sonra (varsayılan
+5 saniye) `syncSoon()`'u tetikleyen bir `Timer` kuruyor, yoksa hiçbir şey
+yapmıyor — sessiz bir kütüphane asla poll etmiyor. `maxPollAttempts`
+(varsayılan 12, yani ~1 dakika) aşıldığında durup bekliyor; bu süre
+notlar/URL'ler için saniyeler, PDF/görsel/ses için onlarca saniye süren
+gerçek AI işleme sürelerinin fazlasıyla üstünde — o zamana kadar bitmemiş
+bir job zaten backend restart'ında yukarıdaki sweep'in ele alacağı
+"orphaned" bir job'dır, sonsuza kadar poll etmek pil tüketmekten başka
+işe yaramaz. `SyncService.dispose()` (yeni) `syncServiceProvider`'ın
+`ref.onDispose`'una bağlandı, kalan bir `Timer`'ı hiç yaşatmıyor.
+
+**Bilinçli sınır**: bu gerçek bir Supabase Realtime kanalı değil, item
+detayı açık olmasa (Home/Library'de) da çalışan bir polling — ama yine
+de bir polling: madde 6'nın "Realtime/polling yok" boşluğunu dolduruyor,
+ancak arka planda uygulama tamamen kapalıyken (process askıya alınmışken)
+çalışmıyor — bir sonraki açılış zaten normal `syncSoon()` akışıyla
+güncel durumu çekiyor.
+
+Backend: `ruff check` temiz, testler 119 (bir önceki turdaki çalıştırma;
+bu makinede macOS'un sistem Python'ıyla gelen `pyexpat` uyumsuzluğu
+yüzünden `DYLD_LIBRARY_PATH=<homebrew expat>/lib` gerekiyor, aksi halde
+`pypdf` import'unda collection hatası veriyor) → **122** test (+`test_job_recovery.py`,
+2 test: hiçbir job asılı değilken no-op, birden fazla asılı job'ın
+hepsinin doğru sırayla `failed`'e çekildiği). `main.py`'daki `lifespan`
+geçişi hiçbir deprecation warning'i bırakmadı.
+
+Mobile: `flutter analyze` temiz, 132 → **137** test (+3
+`sync_service_test.dart`'ın yeni "AI status polling" grubu — hâlâ
+`pending` iken tekrar tekrar sync ediyor ve `completed` olunca duruyor,
+başlangıçtan itibaren her şey zaten bitmişken hiç poll etmiyor,
+`maxPollAttempts`'ı aşınca asılı bir job'ı sonsuza kadar poll etmeyip
+duruyor — üçü de gerçek zamanlayıcıyı beklemek zorunda kalmamak için
+milisaniyelik bir `pollInterval` enjekte ediyor).
+
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):
 
 4. ~~Hesap silme: dosyalar `service_role` key kontrolünden önce
-   siliniyordu~~ ✅ düzeltildi — bkz. aşağıdaki alt bölüm.
+   siliniyordu~~ ✅ düzeltildi — bkz. yukarıdaki alt bölüm.
 5. `configure_logging(debug=True)` root logger'ı DEBUG'a çekiyor; kurulu
    OpenAI SDK'sı bu seviyede istek gövdesini (prompt/embedding girdisi)
    loglayabiliyor — "asla içerik loglama" kuralını uygulamanın kendi
    `logger` çağrıları değil, üçüncü parti SDK'nın log seviyesi de
    belirliyor ([logging.py:72](../backend/app/core/logging.py)).
-6. AI job tetikleme hatası tamamen yutuluyor, kalıcı retry/kullanıcıya
+6. ~~AI job tetikleme hatası tamamen yutuluyor, kalıcı retry/kullanıcıya
    "Tekrar Dene" yok; backend `BackgroundTasks` restart sonrası job
-   kurtarmıyor; mobilde işleme sonucu için Realtime/polling yok —
-   sync yalnızca connectivity/auth/yerel yazma tetikliyor
-   ([ai_processing_trigger.dart:13](../mobile/lib/features/item/data/remote/ai_processing_trigger.dart)).
+   kurtarmıyor; mobilde işleme sonucu için Realtime/polling yok~~ ✅
+   üçü de düzeltildi — bkz. yukarıdaki iki alt bölüm (Faz 10b, madde 1 ve
+   madde 2).
 7. "Geçen ay" takvim ayı yerine "son 30 gün" olarak yorumlanıyor; "dün"
    bitiş sınırı yok, bugünü de kapsıyor
    ([query_parser.py](../backend/app/services/query_parser.py)).
@@ -1106,9 +1233,11 @@ uyumlu hale getirildi):
    logout'ta local DB temizliği + recent searches), `item_contents`
    UNIQUE migration'ı, search/RAG/related'tan tam item açma, hesap
    silme sırası, debug log seviyesi.
-2. **Faz 10b (P1 — güvenilirlik)**: AI job retry + kullanıcıya "Tekrar
-   Dene" + realtime/polling ile otomatik mobil güncelleme, chunk/content
-   replace idempotency, URL fetch SSRF koruması, Android INTERNET izni.
+2. **Faz 10b (P1 — güvenilirlik)**: ~~AI job retry + kullanıcıya "Tekrar
+   Dene"~~ ✅, ~~realtime/polling ile otomatik mobil güncelleme~~ ✅,
+   ~~backend job restart-kurtarma~~ ✅, chunk/content replace idempotency
+   (hâlâ açık), URL fetch SSRF koruması (hâlâ açık), ~~Android INTERNET
+   izni~~ ✅ (madde 11'de).
 3. **Faz 10c (içerik kapsamı)**: genel belge desteği, taranmış PDF için
    OCR fallback, doğal dil tarih filtrelerinin takvim aralığına
    düzeltilmesi.

@@ -11,6 +11,10 @@ items and search routers are still scaffolding — they land in later
 phases (see docs/requirements.md).
 """
 
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,14 +24,41 @@ from app.api.collections.routes import router as collections_router
 from app.api.search.routes import router as search_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, request_logging_middleware
+from app.repositories.items_repository import SupabaseRestRepository
+from app.services.job_recovery import recover_orphaned_jobs
 
 settings = get_settings()
 configure_logging(debug=settings.debug)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Startup: Faz 10b, madde 2 (see docs/roadmap.md and
+    app/services/job_recovery.py) — anything still 'processing' the
+    moment this fresh process starts up was orphaned by an earlier
+    crash/restart, not started by this process. No-ops without
+    `SUPABASE_SERVICE_ROLE_KEY` configured — same "best-effort if
+    configured" contract as account deletion (see account_service.py) —
+    and never blocks the app from starting even if Supabase itself is
+    unreachable right now; the next restart tries again.
+    """
+    if settings.supabase_service_role_key:
+        repo = SupabaseRestRepository(settings.supabase_service_role_key)
+        try:
+            await recover_orphaned_jobs(repo)
+        except Exception:
+            logger.exception("orphaned AI job recovery failed at startup")
+        finally:
+            await repo.aclose()
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="Multimodal AI processing service for LifeSearch.",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(

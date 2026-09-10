@@ -36,6 +36,7 @@ final syncServiceProvider = Provider<SyncService>((ref) {
   ref.onDispose(() {
     onlineSub.close();
     authSub.close();
+    service.dispose();
   });
 
   service.syncSoon();

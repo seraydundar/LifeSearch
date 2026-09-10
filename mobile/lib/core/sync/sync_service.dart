@@ -53,12 +53,17 @@ class SyncService {
     required RemoteCollectionDataSource remoteCollections,
     required SyncQueueDataSource queue,
     required AiProcessingTrigger aiTrigger,
+    Duration pollInterval = const Duration(seconds: 5),
+    int maxPollAttempts = 12,
   })  : _local = local,
         _remote = remote,
         _localCollections = localCollections,
         _remoteCollections = remoteCollections,
         _queue = queue,
-        _aiTrigger = aiTrigger;
+        _aiTrigger = aiTrigger,
+        _pollInterval = pollInterval,
+        _maxPollAttempts = maxPollAttempts,
+        _pollAttemptsLeft = maxPollAttempts;
 
   final ItemLocalDataSource _local;
   final RemoteItemDataSource _remote;
@@ -66,9 +71,13 @@ class SyncService {
   final RemoteCollectionDataSource _remoteCollections;
   final SyncQueueDataSource _queue;
   final AiProcessingTrigger _aiTrigger;
+  final Duration _pollInterval;
+  final int _maxPollAttempts;
 
   bool _isSyncing = false;
   bool _syncAgain = false;
+  Timer? _pollTimer;
+  int _pollAttemptsLeft;
 
   /// Fire-and-forget: call after any local mutation or connectivity/auth
   /// change. Coalesces overlapping calls into a single extra run instead of
@@ -94,6 +103,7 @@ class SyncService {
       await _pullRemote(userId);
       await _pullRemoteCollections(userId);
       await _flushQueue(userId);
+      await _scheduleNextPollIfNeeded(userId);
     } catch (_) {
       // Best-effort: a network blip here shouldn't crash the app. The next
       // connectivity change or mutation calls syncSoon() again.
@@ -104,6 +114,43 @@ class SyncService {
         unawaited(syncNow());
       }
     }
+  }
+
+  /// The only way `processing`/`completed`/`failed` reaches this device
+  /// today — there's no Supabase Realtime channel for it. Rather than
+  /// leaving an item's status stale until the user backgrounds the app,
+  /// edits something, or the network bounces (whichever of `syncSoon()`'s
+  /// other callers happens to fire next), this keeps re-pulling every
+  /// `_pollInterval` for as long as *this account* has something still
+  /// `pending`/`processing` — and stops the moment it doesn't, so a quiet
+  /// library never polls.
+  ///
+  /// Capped at `_maxPollAttempts` (default 12, i.e. ~1 minute at the
+  /// default interval): plenty for how long AI processing actually takes
+  /// in practice (seconds for a note/URL, tens of seconds for a PDF/image/
+  /// audio file). A job that's still not done after that either finishes
+  /// quietly and shows up next time something else triggers a sync, or is
+  /// one `syncNow()` will never resolve on its own anyway (an orphaned job
+  /// from a backend restart — see `job_recovery.py` on the backend side) —
+  /// polling it forever wouldn't help either case, only drain battery.
+  Future<void> _scheduleNextPollIfNeeded(String userId) async {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (_pollAttemptsLeft <= 0) return;
+    if (!await _local.hasUnfinishedProcessing(userId)) {
+      _pollAttemptsLeft = _maxPollAttempts; // idle again — reset for next time
+      return;
+    }
+    _pollAttemptsLeft--;
+    _pollTimer = Timer(_pollInterval, syncSoon);
+  }
+
+  /// Cancels any pending poll — call when whatever owns this
+  /// `SyncService` is itself being torn down (see `syncServiceProvider`),
+  /// so a stray `Timer` never outlives it.
+  void dispose() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
   }
 
   String? _currentUserIdOrNull() {
@@ -286,6 +333,16 @@ class SyncService {
               collectionId: entry.itemId,
               itemId: payload['itemId'] as String,
             );
+          case 'trigger_ai':
+            // Queued by `_triggerAi()` below (or `ItemRepository.retryProcessing()`)
+            // when an earlier attempt couldn't reach the backend. Throwing
+            // on failure — rather than swallowing again — lets this fall
+            // into the same catch block as every other op, so it's kept
+            // queued and retried with the usual `retryCount`/`lastError`
+            // bookkeeping instead of silently disappearing a second time.
+            if (!await _aiTrigger.triggerProcessing(entry.itemId)) {
+              throw Exception('AI trigger did not reach the backend');
+            }
           default:
             // Unknown op from a future app version — drop it rather than
             // retry forever.
@@ -294,7 +351,7 @@ class SyncService {
         await _queue.remove(entry.id);
         await _markSynced(entry.operationType, entry.itemId, payload);
         if (_shouldTriggerAi(entry.operationType, payload)) {
-          unawaited(_aiTrigger.triggerProcessing(entry.itemId));
+          await _triggerAi(userId, entry.itemId);
         }
       } catch (e) {
         await _queue.recordFailure(entry.id, e.toString());
@@ -310,6 +367,7 @@ class SyncService {
     String queuedId,
     Map<String, dynamic> payload,
   ) async {
+    if (operationType == 'trigger_ai') return; // no local row to touch — see _triggerAi()
     if (_membershipOps.contains(operationType)) {
       if (operationType == 'add_to_collection') {
         await _localCollections.markMembershipSynced(queuedId, payload['itemId'] as String);
@@ -330,12 +388,34 @@ class SyncService {
   }
 
   Future<void> _markFailed(String operationType, String queuedId) async {
+    // Neither case has a local item/collection row to flag: `trigger_ai`
+    // retries a side-effect on an item that already synced fine — marking
+    // *it* as sync-failed would be wrong (its own data reached the server;
+    // only the AI kickoff didn't).
+    if (operationType == 'trigger_ai') return;
     if (_membershipOps.contains(operationType)) return; // nothing local to flag as failed
     if (_collectionOps.contains(operationType)) {
       await _localCollections.markFailed(queuedId);
       return;
     }
     await _local.markFailed(queuedId);
+  }
+
+  /// Best-effort but not silent: if the backend can't be reached right now,
+  /// queues a `trigger_ai` retry — persisted in `sync_queue` (survives an
+  /// app restart) and drained by every future `_flushQueue()` call, unlike
+  /// the old fire-and-forget version, which just lost the attempt and left
+  /// the item stuck in `pending` with no record anything had gone wrong.
+  Future<void> _triggerAi(String userId, String itemId) async {
+    final triggered = await _aiTrigger.triggerProcessing(itemId);
+    if (!triggered) {
+      await _queue.enqueue(
+        userId: userId,
+        operationType: 'trigger_ai',
+        itemId: itemId,
+        payload: const {},
+      );
+    }
   }
 
   bool _shouldTriggerAi(String operationType, Map<String, dynamic> payload) {

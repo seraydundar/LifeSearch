@@ -313,3 +313,17 @@ class SupabaseRestRepository:
 
     async def mark_job_failed(self, job_id: str, error: str) -> None:
         await self.update_job(job_id, status="failed", error_message=error, completed_at=_now_iso())
+
+    async def find_jobs_by_status(self, status: str) -> list[dict[str, Any]]:
+        """Used by `job_recovery.py`'s startup sweep — that's the one
+        caller with a legitimate reason to look across every user's jobs
+        at once, so it constructs this repository with the service_role
+        key as its `access_token` (bypasses RLS) rather than a normal
+        user's.
+        """
+        response = await self._client.get(
+            f"{self._base_url}/rest/v1/processing_jobs",
+            params={"status": f"eq.{status}", "select": "id,item_id"},
+        )
+        response.raise_for_status()
+        return response.json()

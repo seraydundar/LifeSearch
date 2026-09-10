@@ -250,4 +250,21 @@ class OfflineItemRepository implements ItemRepository {
     );
     _syncService.syncSoon();
   }
+
+  @override
+  Future<void> retryProcessing(String itemId) async {
+    // Optimistic — the item detail screen reflects a fresh attempt right
+    // away instead of sitting on a stale 'failed' chip. `_pullRemote()`
+    // skips this item while the queue entry below is still pending (see
+    // its `pendingIds` check), so this doesn't get clobbered by a pull
+    // that hasn't seen the retry succeed yet.
+    await _local.setProcessingStatus(itemId, 'pending');
+    await _queue.enqueue(
+      userId: _userId,
+      operationType: 'trigger_ai',
+      itemId: itemId,
+      payload: const {},
+    );
+    _syncService.syncSoon();
+  }
 }
