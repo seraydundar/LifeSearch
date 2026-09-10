@@ -751,6 +751,31 @@ testi + search_service'e reranking'in shortlist'i genişlettiğini ve
 `rerank=False`'ın LLM'i hiç çağırmadığını doğrulayan 2 entegrasyon
 testi). `ruff check` temiz. Mobile değişmedi.
 
+### Bug fix: chunk overlap hiç çalışmıyordu ✅
+
+Bir kod incelemesi turunda bulundu — doküman kapsamının dışında ama gerçek
+bir veri kalitesi hatası. `chunking_service.chunk_text()`'in paragraf-
+taşması dalında, `overlap = buffer[-overlap_chars:]` satırı `flush()`
+çağrısından *sonra* çalışıyordu — ama `flush()` zaten `buffer`'ı `""`'e
+sıfırlıyor, yani `overlap` her zaman boş string'ti. Sonuç: "chunk sınırını
+aşan bir kavram her iki chunk'ta da görünsün" diye tasarlanan overlap,
+paragraf paketleme yolunda (`_slice_long_paragraph`'ın kendi overlap'i
+etkilenmemişti, sadece bu dal) hiç gerçekleşmiyordu — chunk sınırındaki
+bağlam sessizce kayboluyor, bu da tam o sınıra denk gelen sorgularda
+arama/RAG kalitesini görünmez şekilde düşürüyordu.
+
+Bunu yakalaması gereken test (`test_consecutive_chunks_share_a_small_overlap`)
+yanlışlıkla yeşildi: test verisi aynı birkaç kelimeyi ("Sentence", "about",
+"topic") her paragrafta tekrarladığı için, "kuyruktaki herhangi bir kelime
+bir sonraki chunk'ın *herhangi bir yerinde*" şeklindeki gevşek assertion,
+gerçek bir suffix-overlap olmasa da geçiyordu. Fix: overlap'i `flush()`'tan
+*önce* hesaplamak (tek satır); test de gevşek "herhangi bir kelime" yerine
+`chunks[1].startswith(tail_of_first)` ile sıkılaştırıldı — eski koda karşı
+elle doğrulandı (kırmızı çıkıyor).
+
+Backend: 86 test yeşil (değişmedi — yeni bir test eklenmedi, var olanı
+güçlendirdi). `ruff check` temiz.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
 Doküman kapsamında bilinen bir boşluk kalmadı — geriye yalnızca iki

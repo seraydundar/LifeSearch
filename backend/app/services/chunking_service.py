@@ -42,11 +42,13 @@ def chunk_text(
             buffer = candidate
             continue
 
-        # Adding this paragraph would overflow — close the current chunk,
-        # then start the next one with a small overlap from its tail so a
-        # concept spanning the boundary still appears in both chunks.
-        flush()
+        # Adding this paragraph would overflow — grab a small overlap from
+        # the current buffer's tail *before* closing it out (flush() resets
+        # buffer to "", so computing this after flush() would always yield
+        # an empty overlap — that was the bug here), so a concept spanning
+        # the boundary still appears in both chunks.
         overlap = buffer[-overlap_chars:] if overlap_chars else ""
+        flush()
         buffer = f"{overlap}\n\n{paragraph}".strip() if overlap else paragraph
 
     flush()

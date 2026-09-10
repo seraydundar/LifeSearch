@@ -44,7 +44,12 @@ def test_consecutive_chunks_share_a_small_overlap():
     chunks = chunk_text(text, target_chars=250, overlap_chars=40)
 
     assert len(chunks) > 1
+    # Regression guard: this used to pass even with zero real overlap,
+    # because every paragraph here reuses the same handful of words
+    # ("Sentence", "about", "topic") — checking that *some* word from the
+    # tail shows up *anywhere* in the next chunk passed trivially whether
+    # or not an actual suffix carried over. Asserting the exact tail is a
+    # literal prefix of the next chunk is what the docstring's "starts the
+    # next one with a small overlap from its tail" actually promises.
     tail_of_first = chunks[0][-40:].strip()
-    # At least part of the previous chunk's tail should reappear at the
-    # start of the next one.
-    assert any(word in chunks[1] for word in tail_of_first.split() if len(word) > 3)
+    assert chunks[1].startswith(tail_of_first)
