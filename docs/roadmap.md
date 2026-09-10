@@ -883,15 +883,8 @@ MVP'yi doğrudan etkileyen sorunlar buldu. Üçü — en ciddisi — doğruland�
 
 - **Sync queue hesaba göre ayrılmıyor ✅ (Faz 10a, düzeltildi)** — bkz.
   aşağıdaki alt bölüm.
-- **`item_contents.item_id` üzerinde UNIQUE yok, ama mobil kod
-  `onConflict: 'item_id'` ile upsert yapıyor**
-  ([remote_item_data_source.dart:104](../mobile/lib/features/item/data/remote/remote_item_data_source.dart),
-  şema: [0001_init.sql:65](../infra/supabase/migrations/0001_init.sql) —
-  yalnızca düz bir index var). Bu repository'deki migration'lardan
-  kurulan temiz bir Postgres'te not oluşturma **Postgres hatasıyla
-  başarısız olur**; catch bloğu telafi amaçlı `items` satırını da siler.
-  Canlı projede elle eklenmiş bir constraint bu asimetriyi gizliyor
-  olabilir — migration'ın kendisi eksik.
+- **`item_contents.item_id` üzerinde UNIQUE yoktu ✅ (Faz 10a, migration
+  yazıldı)** — bkz. aşağıdaki alt bölüm.
 - **Search/Ask AI/Related Items'tan açılan item'lar dosya
   gösteremiyor**: bu üç ekran, `/item/:id`'ye gerçek `Item` yerine
   `storagePath`/`sourceUrl` içermeyen budanmış bir nesne gönderiyor
@@ -962,6 +955,35 @@ backfill + 4 recent-searches izolasyonu + 1 cross-account sync).
 `ItemDetailScreen`/`NoteEditorScreen`'e hiç dokunulmadı — bu commit'in
 kapsamı sadece kuyruk/arama geçmişi izolasyonu, madde 3 (kısmi Item)
 hâlâ ayrı bir düzeltme bekliyor.
+
+#### Faz 10a, madde 2: `item_contents` UNIQUE constraint ✅
+
+`infra/supabase/migrations/0012_item_contents_unique.sql` eklendi —
+`item_id` üzerinde `item_contents_item_id_key` unique constraint'i,
+mobil `createNote()`'un `onConflict: 'item_id'` ile beklediği tam şey.
+0001_init.sql'deki düz (unique olmayan) index kaldırıldı; constraint
+kendi index'ini zaten oluşturduğu için ikisini birden tutmak gereksiz
+yer kaplardı. Constraint eklenmeden önce bir dedup adımı var
+(`item_id` başına en yeni `created_at`'i tutup gerisini siliyor) —
+canlı bir tabloda zaten var olabilecek bir şeye karşı sigorta, bu bug'ın
+kendisi hiç başarılı bir insert üretmediği için (Postgres constraint
+olmadan `ON CONFLICT` isteğini komple reddediyordu) aslında hiç
+tetiklenmemiş olması bekleniyor.
+
+**Doğrulama**: bu makinede `SUPABASE_SERVICE_ROLE_KEY`/DB şifresi
+olmadığı için canlı projeye uygulanamadı (bu, kullanıcının kendisinin
+yapması gereken bir adım — Supabase Dashboard'un SQL editörü veya
+`supabase db push`). Bunun yerine, geçici bir `postgres:16` Docker
+container'ında `item_contents`'in gerçek şeklini kurup iki satırlık bir
+"sahte duplicate" ekleyip migration'ı gerçekten çalıştırdım: dedup
+(2 satır → 1), index değişimi ve constraint ekleme hepsi doğru çalıştı;
+ardından PostgREST'in `.upsert(onConflict: 'item_id')`'inin ürettiği
+tam `INSERT ... ON CONFLICT (item_id) DO UPDATE ...` sorgusunu elle
+çalıştırdım — artık hatasız çalışıyor (constraint'ten önce "no unique or
+exclusion constraint matching" hatasıyla patlıyordu).
+
+**Kalan adım**: bu migration dosyasının canlı Supabase projesine
+uygulanması — kullanıcı tarafında.
 
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):
