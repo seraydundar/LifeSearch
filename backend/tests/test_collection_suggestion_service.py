@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app.services.ai_provider import AIProvider
@@ -129,3 +131,41 @@ async def test_passes_the_similarity_threshold_through_to_the_repo():
     await suggest_collections(repo, provider=None, similarity_threshold=0.8)
 
     assert repo.last_call["similarity_threshold"] == 0.8
+
+
+class _ConcurrencyTrackingProvider(AIProvider):
+    """Records how many `generate_text` calls were in flight at once —
+    regression guard for `suggest_collections` naming clusters
+    concurrently rather than one at a time.
+    """
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+
+    async def generate_text(self, prompt, *, system=None):
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0)  # yield so overlapping calls actually interleave
+        self.active -= 1
+        return "Name"
+
+    async def generate_embedding(self, text):
+        return [0.1, 0.2, 0.3]
+
+    async def generate_embeddings(self, texts):
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+
+@pytest.mark.asyncio
+async def test_naming_calls_for_separate_clusters_run_concurrently():
+    repo = FakeSearchRepo(pairs=[
+        _pair("a", "b"), _pair("b", "c"),  # cluster 1
+        _pair("x", "y"), _pair("y", "z"),  # cluster 2
+    ])
+    provider = _ConcurrencyTrackingProvider()
+
+    suggestions = await suggest_collections(repo, provider, min_group_size=3)
+
+    assert len(suggestions) == 2
+    assert provider.max_active >= 2

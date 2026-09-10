@@ -11,6 +11,7 @@ failing when no key is configured (same "AI is optional, not required"
 pattern as duplicate detection).
 """
 
+import asyncio
 from typing import Any
 
 from ..repositories.search_repository import SearchRepository
@@ -112,16 +113,23 @@ async def suggest_collections(
     pairs = await repo.item_similarity_pairs(similarity_threshold=similarity_threshold)
     clusters = [c for c in _cluster(pairs) if len(c) >= min_group_size]
 
-    suggestions: list[dict[str, Any]] = []
-    for cluster in clusters:
-        name = await _named_via_ai(cluster, provider) if provider is not None else None
-        suggestions.append(
-            {
-                "suggested_name": name or _fallback_name(cluster),
-                "items": [
-                    {"item_id": item_id, "title": meta["title"], "item_type": meta["type"]}
-                    for item_id, meta in cluster.items()
-                ],
-            }
-        )
-    return suggestions
+    # Each cluster's naming call is independent of every other's — run them
+    # concurrently instead of one-at-a-time, so a user with several
+    # suggestions waits for the slowest single completion call, not their
+    # sum. gather() preserves input order in its result regardless of which
+    # call actually finishes first, so this still lines up with `clusters`.
+    if provider is not None:
+        names = await asyncio.gather(*(_named_via_ai(c, provider) for c in clusters))
+    else:
+        names = [None] * len(clusters)
+
+    return [
+        {
+            "suggested_name": name or _fallback_name(cluster),
+            "items": [
+                {"item_id": item_id, "title": meta["title"], "item_type": meta["type"]}
+                for item_id, meta in cluster.items()
+            ],
+        }
+        for cluster, name in zip(clusters, names, strict=True)
+    ]

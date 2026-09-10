@@ -848,6 +848,31 @@ mu, bulunamayan id crash yerine anlaşılır mesaj gösteriyor mu). Diğer
 110 test de değişmeden yeşil kaldı — `ItemDetailScreen`/`NoteEditorScreen`
 dokunulmadığı için mevcut widget testleri etkilenmedi.
 
+### Küçük performans notları: sıralı çağrılar paralelleştirildi ✅
+
+Bir kod incelemesi turunun kalan iki (düşük riskli) bulgusu.
+
+- **`collection_suggestion_service.suggest_collections()`**: küme
+  isimlendirme LLM çağrıları `for` içinde sıralıydı — N kümesi olan bir
+  kullanıcı N ayrı `generate_text` round trip'i bekliyordu. Artık
+  `asyncio.gather` ile birlikte çalışıyor; `gather()` sonucu girdiyle
+  aynı sırada döndürdüğü için `clusters`/`names` eşlemesi bozulmuyor.
+  Regresyon testi: sahte bir provider'ın aynı anda kaç çağrının "uçuşta"
+  olduğunu sayması (`max_active`) — sıralı koda geri dönülürse test
+  kırmızı çıkar. Backend: 87 → **88** test (yerelde doğrulanan kapsamda).
+- **`sync_service._pullRemote()`**: her not için `fetchNoteContent`
+  round trip'i `for` döngüsü içinde sıralıydı (proje zaten bunu "demo
+  ölçeğinde sorun değil" diye not etmişti — join'siz tam çözüm hâlâ
+  gelecekteki bir adım). `Future.wait` ile tüm notların içeriği tek bir
+  eşzamanlı grupta çekiliyor, sonra upsert'ler eskisi gibi sırayla
+  yazılıyor. `remoteIds`/stale-id hesaplaması ve pending-satır atlama
+  mantığı birebir korundu. Bu yolun daha önce **hiç** birim testi yoktu —
+  hem temel doğruluk (`fetchNoteContent` çağrılıp doğru satıra yazılıyor
+  mu) hem eşzamanlılık (`max_active >= 2`) için iki yeni test eklendi.
+  Mobile: 113 → **115** test.
+
+Backend `ruff check` temiz, mobile `flutter analyze` temiz.
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
 Doküman kapsamında bilinen bir boşluk kalmadı — geriye yalnızca iki

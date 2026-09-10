@@ -118,19 +118,25 @@ class SyncService {
     final rows = await _remote.fetchAllRows();
     final pendingIds = (await _queue.pendingEntries()).map((e) => e.itemId).toSet();
 
-    final remoteIds = <String>{};
-    for (final row in rows) {
+    final remoteIds = <String>{for (final row in rows) row['id'] as String};
+    // A local edit is still queued for these — don't overwrite them.
+    final rowsToUpsert = rows.where((row) => !pendingIds.contains(row['id'] as String)).toList();
+
+    // Every note's content fetched as one concurrent batch instead of one
+    // round trip at a time inside the loop below — a library with many
+    // notes used to pull them in strictly sequentially. Still one extra
+    // request per note (no backend join yet — fine at demo scale, worth
+    // revisiting if libraries grow large), just no longer paid for one
+    // after another.
+    final noteContents = await Future.wait(rowsToUpsert.map((row) {
+      return row['type'] == 'note'
+          ? _remote.fetchNoteContent(row['id'] as String)
+          : Future<String?>.value();
+    }));
+
+    for (var i = 0; i < rowsToUpsert.length; i++) {
+      final row = rowsToUpsert[i];
       final id = row['id'] as String;
-      remoteIds.add(id);
-      if (pendingIds.contains(id)) continue; // a local edit is still queued — don't overwrite it
-
-      String? noteContent;
-      if (row['type'] == 'note') {
-        // One extra round-trip per note. Fine at demo scale; worth folding
-        // into fetchAllRows() with a join if libraries grow large.
-        noteContent = await _remote.fetchNoteContent(id);
-      }
-
       await _local.upsert(LocalItemsCompanion.insert(
         id: id,
         userId: userId,
@@ -144,7 +150,7 @@ class SyncService {
         processingStatus: Value(row['processing_status'] as String? ?? 'pending'),
         favorite: Value(row['favorite'] as bool? ?? false),
         createdAt: DateTime.parse(row['created_at'] as String),
-        noteContent: Value(noteContent),
+        noteContent: Value(noteContents[i]),
         duplicateOfItemId: Value(row['duplicate_of_item_id'] as String?),
         duplicateSimilarity: Value((row['duplicate_similarity'] as num?)?.toDouble()),
         duplicateDismissed: Value(row['duplicate_dismissed'] as bool? ?? false),

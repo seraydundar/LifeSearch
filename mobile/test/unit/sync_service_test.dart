@@ -217,6 +217,54 @@ void main() {
     expect(row!.title, 'Local edit'); // not overwritten by the stale pull
   });
 
+  Map<String, dynamic> noteRow(String id, {String title = 'Untitled'}) => {
+        'id': id,
+        'type': 'note',
+        'title': title,
+        'description': null,
+        'original_filename': null,
+        'mime_type': null,
+        'storage_path': null,
+        'processing_status': 'completed',
+        'favorite': false,
+        'created_at': DateTime(2026, 1, 1).toIso8601String(),
+      };
+
+  test('pulling remote notes fetches and stores each one\'s content', () async {
+    when(() => remote.fetchAllRows()).thenAnswer(
+      (_) async => [noteRow('note-1', title: 'First'), noteRow('note-2', title: 'Second')],
+    );
+    when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'body one');
+    when(() => remote.fetchNoteContent('note-2')).thenAnswer((_) async => 'body two');
+
+    await sync.syncNow();
+
+    expect((await local.findById('note-1'))!.noteContent, 'body one');
+    expect((await local.findById('note-2'))!.noteContent, 'body two');
+  });
+
+  test('pulling remote notes fetches their content concurrently, not one at a time', () async {
+    // Regression guard: this used to await fetchNoteContent() inside the
+    // per-row loop, so a library with N notes paid for N round trips in
+    // series. If that ever comes back, active never exceeds 1 here.
+    var active = 0;
+    var maxActive = 0;
+    when(() => remote.fetchNoteContent(any())).thenAnswer((invocation) async {
+      active++;
+      maxActive = active > maxActive ? active : maxActive;
+      await Future<void>.delayed(Duration.zero); // yield so calls actually overlap
+      active--;
+      return 'content for ${invocation.positionalArguments[0]}';
+    });
+    when(() => remote.fetchAllRows()).thenAnswer(
+      (_) async => [noteRow('note-1'), noteRow('note-2'), noteRow('note-3')],
+    );
+
+    await sync.syncNow();
+
+    expect(maxActive, greaterThanOrEqualTo(2));
+  });
+
   group('collections', () {
     test('pushes a queued create_collection and marks it synced', () async {
       await localCollections.upsert(LocalCollectionsCompanion.insert(
