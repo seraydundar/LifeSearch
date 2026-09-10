@@ -873,14 +873,96 @@ Bir kod incelemesi turunun kalan iki (düşük riskli) bulgusu.
 
 Backend `ruff check` temiz, mobile `flutter analyze` temiz.
 
-### Henüz yapılmayan (öncelik sırasıyla)
+### Faz 10 — Sağlamlaştırma: bağımsız bir denetimde bulunan gerçek boşluklar
 
-Doküman kapsamında bilinen bir boşluk kalmadı — geriye yalnızca iki
-bekleyen secret var:
+Aşağıdaki "sadece iki key eksik" satırı yanlış çıktı. Codex tabanlı
+bağımsız bir denetim (10 Eylül 2026, HEAD `c6fac19`) 71 bölümü kodla
+satır satır karşılaştırdı ve daha önceki taramaların (bu dosyanın kendi
+içindeki "Faz 9 sonrası" ve "kod incelemesi" turları dahil) kaçırdığı,
+MVP'yi doğrudan etkileyen sorunlar buldu. Üçü — en ciddisi — doğrulandı:
 
-- **OpenAI key**: embedding/vision/Whisper/RAG/tags/**entities**/Smart
-  Collections'ın gerçek kalitesini görmek için.
-- **Supabase `service_role` key**: Delete Account'un canlı silme
-  yolunu uçtan uca doğrulamak için.
+- **Sync queue hesaba göre ayrılmıyor**: `SyncQueueEntries`'in `userId`
+  kolonu yok, `pendingEntries()` tüm satırları döndürüyor
+  ([sync_queue_entries.dart:7](../mobile/lib/core/database/tables/sync_queue_entries.dart)).
+  `LocalItems`'ın kendisi `userId`'ye göre doğru filtreleniyor
+  ([item_local_data_source.dart](../mobile/lib/features/item/data/local/item_local_data_source.dart)) —
+  ama A hesabıyla offline oluşturulan bir not henüz gönderilmeden B
+  hesabına geçilirse, `_flushQueue()` bu kaydı B'nin oturumuyla
+  gönderir. `signOut()` local DB'yi hiç temizlemiyor
+  ([auth_providers.dart:51](../mobile/lib/features/auth/presentation/providers/auth_providers.dart)).
+  Kişisel veri saklayan bir uygulama için en yüksek öncelik.
+- **`item_contents.item_id` üzerinde UNIQUE yok, ama mobil kod
+  `onConflict: 'item_id'` ile upsert yapıyor**
+  ([remote_item_data_source.dart:104](../mobile/lib/features/item/data/remote/remote_item_data_source.dart),
+  şema: [0001_init.sql:65](../infra/supabase/migrations/0001_init.sql) —
+  yalnızca düz bir index var). Bu repository'deki migration'lardan
+  kurulan temiz bir Postgres'te not oluşturma **Postgres hatasıyla
+  başarısız olur**; catch bloğu telafi amaçlı `items` satırını da siler.
+  Canlı projede elle eklenmiş bir constraint bu asimetriyi gizliyor
+  olabilir — migration'ın kendisi eksik.
+- **Search/Ask AI/Related Items'tan açılan item'lar dosya
+  gösteremiyor**: bu üç ekran, `/item/:id`'ye gerçek `Item` yerine
+  `storagePath`/`sourceUrl` içermeyen budanmış bir nesne gönderiyor
+  ([search_tab.dart:112](../mobile/lib/features/search/presentation/screens/search_tab.dart),
+  [ai_chat_tab.dart:53](../mobile/lib/features/ai_chat/presentation/screens/ai_chat_tab.dart)).
+  `ItemDetailScreen._loadSignedUrl()` `storagePath` null ise sessizce
+  hiçbir şey yapmıyor — **"Faz 9 sonrası" turunda eklenen
+  `ItemByIdLoader` bunu çözmüyor**, çünkü o yalnızca `extra` *hiç
+  yokken* (gerçek deep link) devreye giriyor; burada `extra` dolu ama
+  eksik. Ayrı, tamamlayıcı bir düzeltme gerekiyor (muhtemel çözüm:
+  `ItemDetailScreen`/`NoteEditorScreen`'in `initState()`'ı, gelen
+  `item` ne olursa olsun `findById` ile her zaman tam kaydı çekip
+  üzerine yazsın — local Drift lookup olduğu için ucuz).
 
-Sıradaki adım: bu iki key'den birini eklemek.
+Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
+maddeler (öncelik sırasıyla, denetim raporundan):
+
+4. Hesap silme: dosyalar `service_role` key kontrolünden **önce**
+   siliniyor — key yoksa hesap silinemeden dosyalar gidebilir
+   ([account_service.py:20](../backend/app/services/account_service.py)).
+5. `configure_logging(debug=True)` root logger'ı DEBUG'a çekiyor; kurulu
+   OpenAI SDK'sı bu seviyede istek gövdesini (prompt/embedding girdisi)
+   loglayabiliyor — "asla içerik loglama" kuralını uygulamanın kendi
+   `logger` çağrıları değil, üçüncü parti SDK'nın log seviyesi de
+   belirliyor ([logging.py:72](../backend/app/core/logging.py)).
+6. AI job tetikleme hatası tamamen yutuluyor, kalıcı retry/kullanıcıya
+   "Tekrar Dene" yok; backend `BackgroundTasks` restart sonrası job
+   kurtarmıyor; mobilde işleme sonucu için Realtime/polling yok —
+   sync yalnızca connectivity/auth/yerel yazma tetikliyor
+   ([ai_processing_trigger.dart:13](../mobile/lib/features/item/data/remote/ai_processing_trigger.dart)).
+7. "Geçen ay" takvim ayı yerine "son 30 gün" olarak yorumlanıyor; "dün"
+   bitiş sınırı yok, bugünü de kapsıyor
+   ([query_parser.py](../backend/app/services/query_parser.py)).
+8. `replace_chunks`/`replace_item_content` bağımsız DELETE+INSERT —
+   aynı item için eşzamanlı iki job iki kez INSERT yapabilir (unique
+   constraint/job-lock yok).
+9. URL fetch'te SSRF koruması yok (private IP/localhost/redirect hedefi
+   doğrulaması, boyut sınırı) — kaydedilen bir link doğrudan çekiliyor
+   ([url_service.py](../backend/app/services/url_service.py)).
+10. Genel belge (DOCX/TXT) desteği yok, `document` tipi backend
+    `SUPPORTED_TYPES`'ta değil; taranmış (metin katmanı olmayan) PDF'te
+    OCR fallback yok, `extract_pdf_text` metinsiz kalırsa hata veriyor.
+11. Android ana `AndroidManifest.xml`'de `INTERNET` izni yok — yalnızca
+    debug/profile manifestlerinde var; release build'de doğrulanmalı.
+
+**Önerilen sıra** (denetim raporundan, projenin kendi faz mantığıyla
+uyumlu hale getirildi):
+
+1. **Faz 10a (P0 — MVP'yi bloke eden)**: hesap izolasyonu (sync queue +
+   logout'ta local DB temizliği + recent searches), `item_contents`
+   UNIQUE migration'ı, search/RAG/related'tan tam item açma, hesap
+   silme sırası, debug log seviyesi.
+2. **Faz 10b (P1 — güvenilirlik)**: AI job retry + kullanıcıya "Tekrar
+   Dene" + realtime/polling ile otomatik mobil güncelleme, chunk/content
+   replace idempotency, URL fetch SSRF koruması, Android INTERNET izni.
+3. **Faz 10c (içerik kapsamı)**: genel belge desteği, taranmış PDF için
+   OCR fallback, doğal dil tarih filtrelerinin takvim aralığına
+   düzeltilmesi.
+4. **Doğrulama**: gerçek OpenAI + `service_role` key'leriyle, iki ayrı
+   hesabı da içeren izole bir ortamda dokümanın 66. bölümündeki MVP
+   senaryosunu uçtan uca çalıştırmak — yalnızca o zaman "MVP tamamlandı"
+   denebilir.
+
+Google/Apple login, Gemini/local provider, masaüstü/web, tam offline
+semantic search, analytics ekranı, item-bazlı Privacy Mode — doküman
+zaten bunları "ileri aşama" sayıyor; Faz 10'un kapsamı dışında.

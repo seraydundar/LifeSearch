@@ -7,15 +7,21 @@ notes, voice memos and links from daily life, then find them again with
 natural-language, semantic search — *"Google Search, but for your personal
 digital life."*
 
-> Status: all 9 planned phases done, plus two passes beyond the
-> requirements doc's own scope — first closing 4 gaps found by
-> re-reading it (tags, offline keyword search, structured logging, EXIF
-> location), then a productization pass (CI/CD, a complete Settings
-> screen including Delete Account and biometric/PIN app-lock, a
-> grid/sort Library view, and `integration_test` coverage running the
-> real app end-to-end on a simulator). 195 tests green across
-> backend + mobile. See [`docs/roadmap.md`](docs/roadmap.md) for the
-> phase-by-phase detail. Full requirements:
+> Status: all 9 planned phases have code, plus several passes beyond the
+> requirements doc's own scope (tags, offline keyword search, structured
+> logging, EXIF location, CI/CD, a full Settings screen, rate limiting,
+> reranking, ...). An independent audit on 2026-09-10 found real gaps
+> that "phases done" glossed over — the sharpest being that the local
+> sync queue isn't scoped per account (a second account signing in on
+> the same device can push a still-queued item under the wrong user),
+> a missing DB constraint that makes note creation fail on a clean
+> install, and search/RAG results opening a trimmed stand-in `Item`
+> that can't show its own file. See
+> [`docs/roadmap.md`](docs/roadmap.md)'s "Faz 10" for the full list and
+> fix order — **the requirements doc's section 66 MVP scenario should
+> not be considered done until that phase closes.** 234 tests green
+> across backend + mobile (passing tests, not a correctness guarantee —
+> see roadmap). Full requirements:
 > [`docs/requirements.md`](docs/requirements.md).
 
 ## Screenshots
