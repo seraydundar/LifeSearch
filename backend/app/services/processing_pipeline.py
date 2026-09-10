@@ -18,7 +18,12 @@ from ..repositories.items_repository import SupabaseRestRepository
 from ..repositories.search_repository import SearchRepository
 from .ai_provider import AIProvider
 from .chunking_service import chunk_text
-from .document_service import extract_document_text, extract_pdf_text, normalize_text
+from .document_service import (
+    extract_document_text,
+    extract_pdf_text,
+    normalize_text,
+    render_pdf_pages_to_images,
+)
 from .embedding_service import embed_chunks, format_embedding_literal
 from .entity_extraction_service import extract_entities
 from .exif_service import extract_exif_metadata
@@ -30,6 +35,13 @@ from .vision_service import analyze_image
 logger = logging.getLogger(__name__)
 
 SUPPORTED_TYPES = {"note", "pdf", "image", "screenshot", "audio", "url", "document"}
+
+# Bounds the number of (paid) vision calls one scanned PDF's OCR fallback
+# can trigger — see _ocr_scanned_pdf(). Well past what a "PDF" normally
+# means in this app (a document, not a scanned book); a huge scan is
+# better served by whatever text its first pages have than by an
+# unbounded per-page API bill.
+_MAX_OCR_PDF_PAGES = 30
 
 
 class UnsupportedItemType(Exception):
@@ -82,6 +94,13 @@ async def process_item(
                 raise ValueError("PDF item has no storage_path.")
             pdf_bytes = await repo.download_file(storage_path)
             raw_text = extract_pdf_text(pdf_bytes)
+            if not raw_text.strip():
+                # No text layer at all — a scanned/image-only PDF
+                # (requirements doc, section 15; see docs/roadmap.md,
+                # Faz 10c). Rather than failing the item outright, OCR
+                # each page through the same vision call a photo
+                # already gets.
+                raw_text = await _ocr_scanned_pdf(pdf_bytes, provider)
         elif item_type == "document":
             # "Upload Document" (requirements doc, section 13), broadened
             # past PDF-only in Faz 10c (see docs/roadmap.md) — .docx/.txt
@@ -216,6 +235,26 @@ async def process_item(
         # never reused afterward — this is the one place responsible for
         # releasing its HTTP connection (see SupabaseRestRepository.aclose).
         await repo.aclose()
+
+
+async def _ocr_scanned_pdf(pdf_bytes: bytes, provider: AIProvider) -> str:
+    """OCR fallback for a PDF with no text layer (see the PDF branch
+    above) — rasterizes each page and runs it through the same vision
+    call a photo already gets (`vision_service.analyze_image`), keeping
+    only its `ocr_text`. A scanned page isn't a photo, so its `title`/
+    `description`/`tags` are simply discarded here rather than reused
+    for anything — this is one vision call per page either way, and
+    splitting OCR into its own cheaper provider call is a bigger change
+    than reusing what already exists.
+    """
+    page_images = render_pdf_pages_to_images(pdf_bytes, max_pages=_MAX_OCR_PDF_PAGES)
+    page_texts: list[str] = []
+    for page_bytes in page_images:
+        analysis = await analyze_image(page_bytes, "image/png", provider)
+        page_text = extract_ocr_text(analysis)
+        if page_text.strip():
+            page_texts.append(page_text)
+    return "\n\n".join(page_texts)
 
 
 async def _check_for_duplicate(

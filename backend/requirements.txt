@@ -17,3 +17,7 @@ openai==1.59.6
 pypdf==5.1.0
 beautifulsoup4==4.12.3
 pillow==11.1.0
+# Renders a scanned PDF's pages to images for the OCR fallback (Faz 10c,
+# madde 3 — see docs/roadmap.md); ships its own MuPDF, no system package
+# (poppler, etc.) needed.
+pymupdf==1.28.2

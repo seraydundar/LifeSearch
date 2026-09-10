@@ -9,17 +9,41 @@ import re
 import zipfile
 from xml.etree import ElementTree
 
+import pymupdf
 from pypdf import PdfReader
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     """Best-effort text layer extraction. A scanned/image-only PDF yields
-    little or nothing here — OCR fallback (requirements doc, section 15)
-    lands alongside OCR itself in Phase 6, sharing `ocr_service.py`.
+    little or nothing here — `render_pdf_pages_to_images()` below is the
+    OCR fallback for exactly that case (requirements doc, section 15;
+    see processing_pipeline.py's PDF branch, which calls it only once
+    this comes back empty).
     """
     reader = PdfReader(io.BytesIO(pdf_bytes))
     pages = [page.extract_text() or "" for page in reader.pages]
     return "\n\n".join(page.strip() for page in pages if page.strip())
+
+
+def render_pdf_pages_to_images(pdf_bytes: bytes, *, max_pages: int) -> list[bytes]:
+    """Rasterizes each page of a PDF to a PNG — what a scanned/image-only
+    PDF (no text layer for `extract_pdf_text()` to find) needs before it
+    can go through the same vision-model OCR call a photo already gets
+    (`vision_service.analyze_image`'s `ocr_text`, see
+    processing_pipeline.py). `max_pages` bounds the number of (paid)
+    vision calls a single huge scanned PDF can trigger — the caller
+    decides the actual limit (see processing_pipeline._MAX_OCR_PDF_PAGES).
+    """
+    document = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        images: list[bytes] = []
+        for index, page in enumerate(document):
+            if index >= max_pages:
+                break
+            images.append(page.get_pixmap().tobytes("png"))
+        return images
+    finally:
+        document.close()
 
 
 _DOCX_MIME_TYPES = {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}

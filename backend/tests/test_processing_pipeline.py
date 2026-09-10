@@ -2,11 +2,31 @@ import logging
 from datetime import datetime
 from io import BytesIO
 
+import pymupdf
 import pytest
 from PIL import ExifTags, Image
 
 from app.services.ai_provider import AIProvider
 from app.services.processing_pipeline import process_item
+
+
+def _blank_pdf(num_pages: int = 1) -> bytes:
+    """No text layer at all — the OCR-fallback case (a scanned/
+    image-only PDF)."""
+    document = pymupdf.open()
+    for _ in range(num_pages):
+        document.new_page()
+    return document.tobytes()
+
+
+def _text_pdf(text: str) -> bytes:
+    """Has a real text layer — `extract_pdf_text()` should find it, so
+    OCR must never be triggered for this one.
+    """
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_text((72, 72), text)
+    return document.tobytes()
 
 
 def _jpeg_with_exif(*, lat: float, lon: float, when: str) -> bytes:
@@ -192,6 +212,47 @@ async def test_empty_note_content_is_reported_as_a_failure():
 
     assert repo.status_history[-1] == "failed"
     assert "no extractable text" in repo.job_updates[-1]["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_with_a_real_text_layer_never_triggers_ocr():
+    repo = FakeRepo(
+        item={
+            "id": "item-pdf-1",
+            "type": "pdf",
+            "storage_path": "u1/item-pdf-1/doc.pdf",
+        },
+        image_bytes=_text_pdf("Docker Compose notlarım burada."),
+    )
+
+    await process_item("item-pdf-1", repo, lambda: FakeProvider())
+
+    assert repo.status_history == ["processing", "completed"]
+    combined = repo.inserted_chunks[0]["content"]
+    assert "Docker Compose" in combined
+    # FakeProvider.analyze_image()'s fixed OCR text never shows up —
+    # indirect proof that OCR fallback was never triggered.
+    assert "Dell G2724D" not in combined
+
+
+@pytest.mark.asyncio
+async def test_a_scanned_pdf_with_no_text_layer_falls_back_to_ocr():
+    repo = FakeRepo(
+        item={
+            "id": "item-pdf-2",
+            "type": "pdf",
+            "storage_path": "u1/item-pdf-2/scan.pdf",
+        },
+        image_bytes=_blank_pdf(num_pages=2),
+    )
+
+    await process_item("item-pdf-2", repo, lambda: FakeProvider())
+
+    assert repo.status_history == ["processing", "completed"]
+    combined = repo.inserted_chunks[0]["content"]
+    # Both pages OCR'd (FakeProvider returns the same fixed ocr_text per
+    # call) — two page's worth of it ends up in what gets embedded.
+    assert combined.count("Dell G2724D 27 inch 165Hz") == 2
 
 
 @pytest.mark.asyncio

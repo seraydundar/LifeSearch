@@ -1396,6 +1396,63 @@ kullanıcının kendi başlangıç/bitiş tarihini seçmesi ayrı, planlanmamı�
 bir özellik) — denetim raporunun bu maddesi özellikle NLP parser'ın
 takvim matematiğiydi, mobil UI değil.
 
+#### Faz 10c, madde 3: taranmış PDF için OCR fallback ✅
+
+`extract_pdf_text()` yalnızca PDF'in gerçek metin katmanını okuyordu
+(`pypdf`); taranmış/görüntü tabanlı bir PDF'te (fotoğraflanmış sayfalar,
+eski bir tarayıcı çıktısı) bu katman yok ya da boş — pipeline
+`normalize_text(raw_text)` boş çıkınca "No extractable text found"
+diyerek item'ı doğrudan `failed`'e çekiyordu. Görsellerin zaten aldığı
+OCR (vision modelinin `ocr_text` çıktısı) hiç devreye girmiyordu.
+
+- **`document_service.render_pdf_pages_to_images()`** (yeni):
+  `pymupdf` (yeni bağımlılık — kendi MuPDF'ini içinde taşıyor, poppler
+  gibi bir sistem paketi gerektirmiyor) ile her sayfayı bir PNG'ye
+  rasterize ediyor. `max_pages` parametresiyle sınırlanıyor.
+- **`processing_pipeline.py`**: PDF dalı, `extract_pdf_text()` boş
+  dönerse (`raw_text.strip()` boşsa) artık `_ocr_scanned_pdf()`'i
+  çağırıyor — her sayfayı yukarıdaki fonksiyonla görsele çevirip,
+  görsellerin zaten aldığı `vision_service.analyze_image()` çağrısına
+  veriyor, yalnızca `ocr_text`'i tutuyor (`title`/`description`/`tags`
+  bir taranmış sayfa için anlamsız, atılıyor). En fazla
+  `_MAX_OCR_PDF_PAGES = 30` sayfa OCR ediliyor — sınırsız sayfalı bir
+  taramanın sınırsız (ücretli) vision çağrısı tetiklemesine karşı.
+- Metin katmanı **olan** bir PDF için bu dal hiç çalışmıyor — OCR
+  yalnızca gerçekten boş çıktığında tetikleniyor, her PDF için ekstra
+  bir vision çağrısı yapılmıyor.
+
+**Bilinçli sınırlar**:
+- Sayfa başına bir vision çağrısı — görsellerin aldığı aynı çağrı
+  yeniden kullanıldığı için `title`/`description`/`tags` de üretiliyor
+  ama kullanılmıyor; OCR'a özel, daha ucuz bir provider çağrısı ayrı
+  bir `AIProvider` arayüz değişikliği gerektirirdi, burada yapılmadı.
+- 30 sayfa sınırı: daha büyük bir taramanın yalnızca ilk 30 sayfası
+  OCR ediliyor, geri kalanı sessizce atlanıyor (ne bir uyarı ne bir
+  kesme mesajı) — denetim raporu "OCR fallback yok" diyordu, "her
+  büyüklükte tarama için sınırsız OCR" istenmedi.
+
+**Doğrulama ortamı notu**: bu makinenin lokal Python kurulumunda
+(`platform.mac_ver()`'ın macOS 26.2'de boş döndüğü bir pip/Python
+uyumsuzluğu — Faz 10c madde 1'deki `python-docx` kurulum denemesiyle
+aynı kök sorun) `pip install pymupdf` normal şekilde çalışmadı; asıl
+doğrulama projenin kendi `Dockerfile`'ının temel imajıyla
+(`python:3.12-slim`) geçici bir container'da yapıldı — gerçek pip
+kurulumu, gerçek `ruff check`, gerçek `pytest`, hiçbiri workaround
+gerektirmeden. Bu, gerçek dağıtım ortamını (Docker) zaten kullandığı
+için lokal makine kusurundan tamamen bağımsız bir doğrulama. Ayrıca bu
+makinenin `.venv`'ine de (pip'in kendisini değil, indirilen wheel'i
+doğrudan `site-packages`'a açarak) pymupdf kuruldu — bundan sonraki
+lokal `pytest` çalıştırmaları da bu değişikliği kapsıyor.
+
+Backend: `ruff check` temiz (Docker'da ve lokalde), testler 157 →
+**162** (Docker'da ve lokalde iki ortamda da doğrulandı — yeni
+`test_document_service.py` testleri: `render_pdf_pages_to_images()`
+sayfa sayısı kadar PNG döndürüyor, `max_pages`'e uyuyor; yeni
+`test_processing_pipeline.py` testleri: gerçek metin katmanı olan bir
+PDF OCR'ı hiç tetiklemiyor — sabit OCR metni sonuçta hiç görünmüyor —,
+metin katmanı olmayan 2 sayfalık bir PDF'in iki sayfası da OCR
+ediliyor).
+
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):
 
@@ -1421,9 +1478,10 @@ maddeler (öncelik sırasıyla, denetim raporundan):
    hedefi doğrulaması, boyut sınırı)~~ ✅ düzeltildi — bkz. yukarıdaki
    alt bölüm.
 10. ~~Genel belge (DOCX/TXT) desteği yok, `document` tipi backend
-    `SUPPORTED_TYPES`'ta değil~~ ✅ düzeltildi — bkz. aşağıdaki alt
-    bölüm. **Hâlâ açık**: taranmış (metin katmanı olmayan) PDF'te OCR
-    fallback yok, `extract_pdf_text` metinsiz kalırsa hata veriyor.
+    `SUPPORTED_TYPES`'ta değil; taranmış (metin katmanı olmayan) PDF'te
+    OCR fallback yok, `extract_pdf_text` metinsiz kalırsa hata
+    veriyor~~ ✅ ikisi de düzeltildi — bkz. yukarıdaki iki alt bölüm
+    (Faz 10c, madde 1 ve madde 3).
 11. ~~Android ana `AndroidManifest.xml`'de `INTERNET` izni yoktu~~ ✅
     düzeltildi — bkz. aşağıdaki alt bölüm.
 
@@ -1439,9 +1497,9 @@ uyumlu hale getirildi):
    güncelleme~~, ~~backend job restart-kurtarma~~, ~~chunk/content
    replace idempotency~~, ~~URL fetch SSRF koruması~~, ~~Android
    INTERNET izni~~ (madde 11'de).
-3. **Faz 10c (içerik kapsamı)**: ~~genel belge desteği~~ ✅, ~~doğal dil
-   tarih filtrelerinin takvim aralığına düzeltilmesi~~ ✅, taranmış PDF
-   için OCR fallback (Faz 10c'de kalan tek madde).
+3. **Faz 10c (içerik kapsamı)** — tamamlandı ✅: ~~genel belge
+   desteği~~, ~~doğal dil tarih filtrelerinin takvim aralığına
+   düzeltilmesi~~, ~~taranmış PDF için OCR fallback~~.
 4. **Doğrulama**: gerçek OpenAI + `service_role` key'leriyle, iki ayrı
    hesabı da içeren izole bir ortamda dokümanın 66. bölümündeki MVP
    senaryosunu uçtan uca çalıştırmak — yalnızca o zaman "MVP tamamlandı"

@@ -1,9 +1,25 @@
 import io
 import zipfile
 
+import pymupdf
 import pytest
 
-from app.services.document_service import extract_document_text, normalize_text
+from app.services.document_service import (
+    extract_document_text,
+    normalize_text,
+    render_pdf_pages_to_images,
+)
+
+
+def _blank_pdf(num_pages: int) -> bytes:
+    """A scanned/image-only PDF has no text layer at all — a PDF with
+    blank pages is the simplest stand-in for that, without needing a
+    real scanned file as a fixture.
+    """
+    document = pymupdf.open()
+    for _ in range(num_pages):
+        document.new_page()
+    return document.tobytes()
 
 _WORDPROCESSING_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
@@ -97,3 +113,22 @@ def test_extract_document_text_rejects_an_unsupported_type():
 def test_extract_document_text_rejects_when_neither_mime_type_nor_extension_help():
     with pytest.raises(ValueError, match="Unsupported document type"):
         extract_document_text(b"...", None, None)
+
+
+def test_render_pdf_pages_to_images_returns_one_png_per_page():
+    images = render_pdf_pages_to_images(_blank_pdf(3), max_pages=10)
+
+    assert len(images) == 3
+    assert all(image.startswith(b"\x89PNG\r\n\x1a\n") for image in images)
+
+
+def test_render_pdf_pages_to_images_respects_max_pages():
+    images = render_pdf_pages_to_images(_blank_pdf(5), max_pages=2)
+
+    assert len(images) == 2
+
+
+def test_render_pdf_pages_to_images_on_a_single_page_pdf():
+    images = render_pdf_pages_to_images(_blank_pdf(1), max_pages=30)
+
+    assert len(images) == 1
