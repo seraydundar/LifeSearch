@@ -55,6 +55,7 @@ dependencies:
   record: ^6.2.1
   share_plus: ^13.3.0
   local_auth: ^3.0.2
+  google_fonts: ^8.2.1
 
 dev_dependencies:
   flutter_test:

@@ -618,6 +618,52 @@ olarak tam bir `Item` nesnesi bekliyor, gerçek bir tıklama/push
 gerektiriyor). Sorgu şekli, production'da zaten kanıtlanmış
 `fetchTags`'le birebir aynı olduğu için düşük risk.
 
+### UI cilası — ortak arama kutusu, tip renkleri, Inter fontu ✅
+
+Doküman kapsamında bir boşluk değil (kod tarafında bir önceki oturumdan
+yarım kalmış, commit edilmemiş bir değişiklik seti) — bitirilip
+doğrulandı ve buraya not düşülüyor.
+
+- **`LifeSearchBar`** (`shared/widgets/`): Home'daki (readOnly teaser) ve
+  Search sekmesindeki (canlı alan) arama kutuları artık tek bileşen —
+  ikisi de görsel olarak birebir aynı, yalnızca davranışta ayrışıyor.
+  Requirements dokümanının 67. bölümündeki "Google Search, but for your
+  personal digital life" hissini vermek için düz bir `TextField`'dan
+  biraz daha fazla ağırlık taşıyor: yumuşak bir gölge, ve boşken (ve
+  focus'ta değilken) dokümanın 1. bölümündeki örnek sorgular arasında
+  ~3 saniyede bir dönen bir hint metni. Search sekmesi kendi `suffixIcon`
+  (temizle butonu) davranışını üzerine geçiriyor.
+- **`itemTypeColor()`** (`item_type_icon.dart`): her içerik tipine sabit
+  bir renk — Library grid/list, Home "Recently Added", search sonuçları,
+  item detail ve Ask AI'nin kaynak chip'leri artık aynı tipi her yerde
+  aynı renkte gösteriyor. Bilinçli olarak markanın indigo'su değil,
+  yumuşak/orta tonlu ayrı bir palet (bölüm 67'nin "AI-glow değil, minimal"
+  ilkesiyle tutarlı — tam bir renk-kodlama sistemi değil, sadece göz
+  ucuyla ayırt etmeyi kolaylaştıran bir ipucu).
+- **Home'un "Recently Added" şeridi**: kendi `_RecentCard` widget'ını
+  atıp Library'nin `ItemGridTile`'ını yeniden kullanıyor — artık
+  image/screenshot'lar için gerçek thumbnail gösteriyor, önceden sadece
+  tip ikonu + başlık gösteriyordu. Home'daki teaser artık kullanıcının
+  içeri girince gerçekte göreceğiyle eşleşiyor.
+- **Inter fontu** (`google_fonts` paketi, `app_theme.dart`): Material 3
+  varsayılan temasının üzerine `GoogleFonts.interTextTheme()` ile
+  bindiriliyor — colorScheme'den türeyen metin renkleri dahil her
+  boyut/ağırlık rolü korunuyor, yalnızca font ailesi değişiyor.
+  **Bilinçli bir sınır**: font dosyaları asset olarak bundle edilmedi,
+  `google_fonts` ilk açılışta interneti varsa Inter'i indirip
+  cihazda cache'liyor; internet yoksa (offline-first bir uygulama için
+  gerçek bir senaryo) sessizce sistem fontuna düşüyor — çökmüyor, sadece
+  o oturumda Inter görünmüyor. Tam offline garanti isteniyorsa bir
+  sonraki adım fontu asset olarak gömüp
+  `GoogleFonts.config.allowRuntimeFetching = false` yapmak.
+
+Backend değişmedi (tamamen mobil). Mobile: `flutter analyze` temiz,
+mevcut 110 test hâlâ yeşil (bu tur için yeni bir test eklenmedi —
+görsel bir cila, davranış değişmedi; `LifeSearchBar`'ın rotasyon
+zamanlayıcısı `Timer.periodic` kullandığı için widget testlerinde
+`pumpAndSettle` yerine `pump(duration)` gerektirir, mevcut testler bunu
+tetiklemeyecek kısalıkta kaldığı için kırılmadı).
+
 ### Henüz yapılmayan (öncelik sırasıyla)
 
 Doküman kapsamında bilinen bir boşluk kalmadı — geriye yalnızca iki

@@ -112,11 +112,11 @@ class _FallbackIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final color = itemTypeColor(item.type);
     return ColoredBox(
-      color: colorScheme.surfaceContainerHighest,
+      color: color.withValues(alpha: 0.12),
       child: Center(
-        child: Icon(itemTypeIcon(item.type), size: 32, color: colorScheme.onSurfaceVariant),
+        child: Icon(itemTypeIcon(item.type), size: 32, color: color),
       ),
     );
   }

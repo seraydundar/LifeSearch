@@ -183,7 +183,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(32),
-                child: Icon(itemTypeIcon(_item.type), size: 48),
+                child: Icon(itemTypeIcon(_item.type), size: 48, color: itemTypeColor(_item.type)),
               ),
             ),
           const SizedBox(height: 20),
@@ -357,7 +357,7 @@ class _RelatedCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(itemTypeIcon(result.itemType), size: 20),
+                Icon(itemTypeIcon(result.itemType), size: 20, color: itemTypeColor(result.itemType)),
                 const SizedBox(height: 8),
                 Text(
                   result.itemTitle ?? 'Untitled',

@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../shared/widgets/life_search_bar.dart';
 import '../../../capture/presentation/widgets/capture_sheet.dart';
 import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
-import '../../../item/presentation/widgets/item_type_icon.dart';
+import '../../../library/presentation/widgets/item_grid_tile.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -22,19 +23,9 @@ class HomeScreen extends ConsumerWidget {
           children: [
             Text('Good morning 👋', style: theme.textTheme.headlineSmall),
             const SizedBox(height: 20),
-            TextField(
+            LifeSearchBar(
               readOnly: true, // typing happens on the dedicated Search screen
               onTap: () => context.push('/search'),
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search),
-                hintText: 'Search your life...',
-                filled: true,
-                fillColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none,
-                ),
-              ),
             ),
             const SizedBox(height: 32),
             Text('Recently Added', style: theme.textTheme.titleMedium),
@@ -48,12 +39,20 @@ class HomeScreen extends ConsumerWidget {
                       message: 'Henüz içerik eklemedin.\n+ ile ilk içeriğini ekle.',
                     )
                   : SizedBox(
-                      height: 96,
+                      height: 120,
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
                         itemCount: items.length > 10 ? 10 : items.length,
                         separatorBuilder: (context, index) => const SizedBox(width: 12),
-                        itemBuilder: (context, index) => _RecentCard(item: items[index]),
+                        // Same tile Library's grid uses (requirements doc,
+                        // section 25) — real thumbnail for images/
+                        // screenshots, type icon + title fallback for
+                        // everything else, so Home's teaser matches what
+                        // the user actually sees once they tap in.
+                        itemBuilder: (context, index) => SizedBox(
+                          width: 120,
+                          child: ItemGridTile(item: items[index]),
+                        ),
                       ),
                     ),
             ),
@@ -97,44 +96,6 @@ class HomeScreen extends ConsumerWidget {
       floatingActionButton: FloatingActionButton(
         onPressed: () => showCaptureSheet(context),
         child: const Icon(Icons.add),
-      ),
-    );
-  }
-}
-
-class _RecentCard extends StatelessWidget {
-  const _RecentCard({required this.item});
-
-  final Item item;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: () {
-        final route = item.type == ItemType.note ? '/item/${item.id}/note' : '/item/${item.id}';
-        context.push(route, extra: item);
-      },
-      child: Container(
-        width: 120,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(itemTypeIcon(item.type), size: 20),
-            const Spacer(),
-            Text(
-              item.title ?? item.originalFilename ?? 'Untitled',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
       ),
     );
   }

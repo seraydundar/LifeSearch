@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 /// LifeSearch's visual identity: minimal, premium, fast — closer to
 /// Notion/Linear/Arc than a typical "AI app" full of gradients and glow
@@ -15,7 +16,7 @@ abstract final class AppTheme {
       brightness: brightness,
     );
 
-    return ThemeData(
+    final base = ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: colorScheme,
@@ -44,7 +45,7 @@ abstract final class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600),
+          textStyle: GoogleFonts.inter(fontWeight: FontWeight.w600),
         ),
       ),
       cardTheme: CardThemeData(
@@ -65,6 +66,15 @@ abstract final class AppTheme {
           borderRadius: BorderRadius.circular(12),
         ),
       ),
+    );
+
+    // Inter — the "minimal SaaS" typeface (Notion/Linear-adjacent), swapped
+    // in on top of Material 3's default text theme so every size/weight/
+    // color role defined above (and colorScheme-derived text colors)
+    // carries over unchanged; only the font family itself changes.
+    return base.copyWith(
+      textTheme: GoogleFonts.interTextTheme(base.textTheme),
+      primaryTextTheme: GoogleFonts.interTextTheme(base.primaryTextTheme),
     );
   }
 }

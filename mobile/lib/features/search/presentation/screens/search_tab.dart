@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/error/failure.dart';
+import '../../../../shared/widgets/life_search_bar.dart';
 import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/widgets/item_type_icon.dart';
 import '../../domain/entities/search_result.dart';
@@ -134,7 +135,6 @@ class _SearchTabState extends ConsumerState<SearchTab>
     final recent = ref.watch(recentSearchesProvider).valueOrNull ?? [];
     final filters = ref.watch(searchFiltersProvider);
     final hasQuery = _controller.text.trim().isNotEmpty;
-    final theme = Theme.of(context);
     final selectedBucket = _typeFilterBuckets.entries
         .firstWhere((e) => e.value.difference(filters.types).isEmpty && filters.types.isNotEmpty,
             orElse: () => const MapEntry('', {}))
@@ -144,29 +144,18 @@ class _SearchTabState extends ConsumerState<SearchTab>
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: TextField(
+          child: LifeSearchBar(
             controller: _controller,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: 'Search your life...',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: hasQuery
-                  ? IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _controller.clear();
-                        setState(() {});
-                        ref.read(searchControllerProvider.notifier).clear();
-                      },
-                    )
-                  : null,
-              filled: true,
-              fillColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
-              ),
-            ),
+            suffixIcon: hasQuery
+                ? IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      _controller.clear();
+                      setState(() {});
+                      ref.read(searchControllerProvider.notifier).clear();
+                    },
+                  )
+                : null,
             onChanged: (value) {
               setState(() {}); // toggles between recent-searches and results view
               _onChanged(value);
@@ -239,7 +228,11 @@ class _SearchTabState extends ConsumerState<SearchTab>
                       itemBuilder: (context, index) {
                         final result = results[index];
                         return ListTile(
-                          leading: CircleAvatar(child: Icon(itemTypeIcon(result.itemType))),
+                          leading: CircleAvatar(
+                            backgroundColor: itemTypeColor(result.itemType).withValues(alpha: 0.15),
+                            foregroundColor: itemTypeColor(result.itemType),
+                            child: Icon(itemTypeIcon(result.itemType)),
+                          ),
                           title: Text(result.itemTitle ?? 'Untitled', maxLines: 1),
                           subtitle:
                               Text(result.snippet, maxLines: 2, overflow: TextOverflow.ellipsis),

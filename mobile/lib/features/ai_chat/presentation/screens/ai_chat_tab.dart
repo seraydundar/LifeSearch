@@ -221,7 +221,11 @@ class _MessageBubble extends StatelessWidget {
                 (source) => Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: ActionChip(
-                    avatar: Icon(itemTypeIcon(source.itemType), size: 16),
+                    avatar: Icon(
+                      itemTypeIcon(source.itemType),
+                      size: 16,
+                      color: itemTypeColor(source.itemType),
+                    ),
                     label: Text(
                       source.itemTitle ?? 'Untitled',
                       overflow: TextOverflow.ellipsis,

@@ -19,7 +19,11 @@ class ItemListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: CircleAvatar(child: Icon(itemTypeIcon(item.type))),
+      leading: CircleAvatar(
+        backgroundColor: itemTypeColor(item.type).withValues(alpha: 0.15),
+        foregroundColor: itemTypeColor(item.type),
+        child: Icon(itemTypeIcon(item.type)),
+      ),
       title: Text(item.displayTitle, maxLines: 1),
       subtitle: Text(
         '${itemTypeLabel(item.type)} · ${DateFormat('d MMM').format(item.createdAt)}',

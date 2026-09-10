@@ -74,7 +74,11 @@ class _SuggestionCard extends ConsumerWidget {
               runSpacing: 4,
               children: suggestion.items
                   .map((item) => Chip(
-                        avatar: Icon(itemTypeIcon(item.itemType), size: 14),
+                        avatar: Icon(
+                          itemTypeIcon(item.itemType),
+                          size: 14,
+                          color: itemTypeColor(item.itemType),
+                        ),
                         label: Text(item.title ?? 'Untitled'),
                         visualDensity: VisualDensity.compact,
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
