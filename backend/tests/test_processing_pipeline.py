@@ -241,6 +241,54 @@ async def test_image_without_a_storage_path_fails_clearly():
 
 
 @pytest.mark.asyncio
+async def test_processes_a_text_document_end_to_end():
+    repo = FakeRepo(
+        item={
+            "id": "item-doc-1",
+            "type": "document",
+            "storage_path": "u1/item-doc-1/notes.txt",
+            "mime_type": "text/plain",
+            "original_filename": "notes.txt",
+        },
+        image_bytes="Docker Compose ile birden fazla container'ı tanımlarsın.".encode(),
+    )
+
+    await process_item("item-doc-1", repo, lambda: FakeProvider())
+
+    assert repo.status_history == ["processing", "completed"]
+    assert repo.inserted_chunks is not None
+    assert "Docker Compose" in repo.inserted_chunks[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_document_without_a_storage_path_fails_clearly():
+    repo = FakeRepo(item={"id": "item-doc-2", "type": "document"})  # no storage_path
+
+    await process_item("item-doc-2", repo, lambda: FakeProvider())
+
+    assert repo.status_history[-1] == "failed"
+    assert "no storage_path" in repo.job_updates[-1]["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_an_unrecognized_document_type_fails_clearly():
+    repo = FakeRepo(
+        item={
+            "id": "item-doc-3",
+            "type": "document",
+            "storage_path": "u1/item-doc-3/report.xlsx",
+            "mime_type": "application/vnd.ms-excel",
+            "original_filename": "report.xlsx",
+        },
+    )
+
+    await process_item("item-doc-3", repo, lambda: FakeProvider())
+
+    assert repo.status_history[-1] == "failed"
+    assert "unsupported document type" in repo.job_updates[-1]["error"].lower()
+
+
+@pytest.mark.asyncio
 async def test_processes_an_audio_note_end_to_end():
     repo = FakeRepo(
         item={

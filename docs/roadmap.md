@@ -1292,6 +1292,68 @@ DNS/ağ erişimi olmadan: literal IP'ler zaten ağa çıkmadan çözülüyor,
 sembolik `public.example.com` host'u testlerde sahte bir sonuca
 bağlanıyor).
 
+### Faz 10c — İçerik kapsamı
+
+#### Faz 10c, madde 1: Genel belge desteği (DOCX/TXT) ✅
+
+`ItemType.document` mobil tarafta (renk/ikon/etiket — "Belge",
+`Icons.description_outlined`) ve `items` tablosunun `type` check
+constraint'inde zaten vardı, ama hiçbir yerden ona ulaşılamıyordu:
+"Upload Document" yalnızca `.pdf` seçtiriyordu ve seçileni her zaman
+`ItemType.pdf` olarak yüklüyordu; backend'in `SUPPORTED_TYPES`'ında
+`document` yoktu, yani biri elle `type: "document"` bir item
+oluştursa bile pipeline onu `UnsupportedItemType` ile `failed`'e
+çekerdi.
+
+- **`document_service.extract_document_text()`** (yeni): `mime_type`'a
+  (yoksa dosya adının uzantısına — bir picker tanımadığı bir uzantı
+  için `application/octet-stream` döndürebiliyor) göre `.txt`'yi
+  doğrudan decode ediyor, `.docx`'i **`python-docx`/`lxml` bağımlılığı
+  eklemeden**, salt standart kütüphaneyle (`zipfile` + `ElementTree`)
+  ayrıştırıyor — bir `.docx` zaten bir zip arşivi, gövdesi
+  `word/document.xml`'de WordprocessingML; ihtiyaç olan tek şey
+  paragrafları gezip her birinin metin run'larını birleştirmek.
+  Tanınmayan bir tür (örn. `.xlsx`) veya bozuk bir `.docx` açık bir
+  `ValueError` ile reddediliyor — pipeline'ın var olan genel
+  `except Exception`'ı bunu diğer her tür-doğrulama hatası gibi
+  `failed`'e çeviriyor.
+- **`processing_pipeline.py`**: `SUPPORTED_TYPES`'a `"document"`
+  eklendi; yeni bir `elif item_type == "document"` dalı dosyayı indirip
+  yukarıdaki fonksiyona veriyor — PDF/görsel/ses dallarıyla aynı
+  "storage_path yoksa açık hata" deseninde.
+- **Mobile — `capture_sheet.dart`**: "Upload Document" artık
+  `pdf`/`docx`/`txt` seçtiriyor; seçilen dosyanın türü artık picker
+  çağrılmadan önce sabitlenmiş bir `ItemType` değil, seçilen dosyanın
+  uzantısından (`_documentItemTypeFor`) sonradan belirleniyor — `.pdf`
+  hâlâ `ItemType.pdf` (var olan detay ekranı/ikon davranışını
+  koruyor), diğerleri `ItemType.document`. `_guessMimeType`'a
+  `docx`/`txt` eklendi; ikon artık genel `Icons.description_outlined`
+  (yalnız PDF değil, genel bir belge).
+- **Mobile — `SyncService._aiSupportedUploadTypes`**: `'document'`
+  eklendi — yoksa bir belge yüklendikten sonra AI pipeline hiç
+  tetiklenmezdi (upload'un kendisi başarılı olur, ama işleme hiç
+  başlamazdı).
+
+**Bilinçli sınır**: yalnızca `.pdf`/`.docx`/`.txt` — DOC (eski
+binary Word formatı), ODT, RTF gibi diğer ofis formatları kapsam
+dışı; denetim raporu özellikle "DOCX/TXT" diyordu, daha fazlası
+istenmedi.
+
+Backend: `ruff check` temiz, testler 140 → **151** (yeni
+`test_document_service.py` testleri — `.txt`'yi mime_type'a/uzantıya
+göre okuyor, gerçek bir sahte `.docx` zip'ini ayrıştırıp paragrafları
+birleştiriyor, boş paragrafları atlıyor, bozuk bir `.docx`'i ve
+tanınmayan bir türü reddediyor; yeni `test_processing_pipeline.py`
+testleri — bir `.txt` item'ı uçtan uca işliyor, storage_path'siz ve
+tanınmayan document type'lı item'lar açıkça `failed` oluyor). Mobile:
+`flutter analyze` temiz, 135 test hâlâ geçiyor (bu değişiklik yeni bir
+mobil test eklemedi — `FilePicker`'ın kendisi bir platform kanalı
+olduğu için, kod tabanının başka hiçbir capture akışının da yapmadığı
+gibi, bunu mock'lamak için yeni bir test altyapısı kurmak bu
+düzeltmenin kapsamının dışında tutuldu; `flutter analyze`'ın
+`_documentItemTypeFor`/`_guessMimeType` üzerindeki tip kontrolü ve
+mevcut 135 testin hâlâ geçmesi tek doğrulama).
+
 Doğrulanmayan ama dosya/satır referanslı, inandırıcı bulunan diğer
 maddeler (öncelik sırasıyla, denetim raporundan):
 
@@ -1316,9 +1378,10 @@ maddeler (öncelik sırasıyla, denetim raporundan):
 9. ~~URL fetch'te SSRF koruması yok (private IP/localhost/redirect
    hedefi doğrulaması, boyut sınırı)~~ ✅ düzeltildi — bkz. yukarıdaki
    alt bölüm.
-10. Genel belge (DOCX/TXT) desteği yok, `document` tipi backend
-    `SUPPORTED_TYPES`'ta değil; taranmış (metin katmanı olmayan) PDF'te
-    OCR fallback yok, `extract_pdf_text` metinsiz kalırsa hata veriyor.
+10. ~~Genel belge (DOCX/TXT) desteği yok, `document` tipi backend
+    `SUPPORTED_TYPES`'ta değil~~ ✅ düzeltildi — bkz. aşağıdaki alt
+    bölüm. **Hâlâ açık**: taranmış (metin katmanı olmayan) PDF'te OCR
+    fallback yok, `extract_pdf_text` metinsiz kalırsa hata veriyor.
 11. ~~Android ana `AndroidManifest.xml`'de `INTERNET` izni yoktu~~ ✅
     düzeltildi — bkz. aşağıdaki alt bölüm.
 
@@ -1334,9 +1397,9 @@ uyumlu hale getirildi):
    güncelleme~~, ~~backend job restart-kurtarma~~, ~~chunk/content
    replace idempotency~~, ~~URL fetch SSRF koruması~~, ~~Android
    INTERNET izni~~ (madde 11'de).
-3. **Faz 10c (içerik kapsamı)**: genel belge desteği, taranmış PDF için
-   OCR fallback, doğal dil tarih filtrelerinin takvim aralığına
-   düzeltilmesi.
+3. **Faz 10c (içerik kapsamı)**: ~~genel belge desteği~~ ✅, taranmış
+   PDF için OCR fallback (hâlâ açık), doğal dil tarih filtrelerinin
+   takvim aralığına düzeltilmesi (hâlâ açık).
 4. **Doğrulama**: gerçek OpenAI + `service_role` key'leriyle, iki ayrı
    hesabı da içeren izole bir ortamda dokümanın 66. bölümündeki MVP
    senaryosunu uçtan uca çalıştırmak — yalnızca o zaman "MVP tamamlandı"

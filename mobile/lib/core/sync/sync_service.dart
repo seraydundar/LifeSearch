@@ -17,7 +17,7 @@ import '../error/failure.dart';
 /// `upload_file` op — see backend/app/services/processing_pipeline.py
 /// SUPPORTED_TYPES. `create_url` items are triggered unconditionally
 /// instead (see `_shouldTriggerAi`), since a link has no upload step.
-const _aiSupportedUploadTypes = {'pdf', 'image', 'screenshot', 'audio'};
+const _aiSupportedUploadTypes = {'pdf', 'image', 'screenshot', 'audio', 'document'};
 
 /// Sync-queue operation types that target a collection itself (as opposed
 /// to an item, or a collection's membership). Kept as a Set rather than a

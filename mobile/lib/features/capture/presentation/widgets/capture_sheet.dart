@@ -34,7 +34,7 @@ class _CaptureSheet extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref, {
     required FileType fileType,
-    required ItemType itemType,
+    required ItemType Function(String? extension) itemTypeFor,
     List<String>? allowedExtensions,
   }) async {
     final files = await FilePicker.pickFiles(
@@ -55,7 +55,7 @@ class _CaptureSheet extends ConsumerWidget {
           localFilePath: file!.path!,
           originalFilename: file.name,
           mimeType: _guessMimeType(file.extension),
-          type: itemType,
+          type: itemTypeFor(file.extension),
         );
 
     if (!context.mounted) return;
@@ -140,10 +140,23 @@ class _CaptureSheet extends ConsumerWidget {
   String _guessMimeType(String? extension) {
     return switch (extension?.toLowerCase()) {
       'pdf' => 'application/pdf',
+      'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'txt' => 'text/plain',
       'png' => 'image/png',
       'jpg' || 'jpeg' => 'image/jpeg',
       'heic' => 'image/heic',
       _ => 'application/octet-stream',
+    };
+  }
+
+  /// "Upload Document" picks from `pdf`/`docx`/`txt` (backend
+  /// SUPPORTED_TYPES, see processing_pipeline.py) — a PDF keeps its own
+  /// `ItemType.pdf` (existing detail-screen/icon treatment), everything
+  /// else lands as the generic `ItemType.document`.
+  ItemType _documentItemTypeFor(String? extension) {
+    return switch (extension?.toLowerCase()) {
+      'pdf' => ItemType.pdf,
+      _ => ItemType.document,
     };
   }
 
@@ -188,19 +201,19 @@ class _CaptureSheet extends ConsumerWidget {
                   context,
                   ref,
                   fileType: FileType.image,
-                  itemType: ItemType.image,
+                  itemTypeFor: (_) => ItemType.image,
                 ),
               ),
               _CaptureTile(
-                icon: Icons.picture_as_pdf_outlined,
+                icon: Icons.description_outlined,
                 label: 'Upload Document',
                 enabled: !isUploading,
                 onTap: () => _pickAndUpload(
                   context,
                   ref,
                   fileType: FileType.custom,
-                  allowedExtensions: const ['pdf'],
-                  itemType: ItemType.pdf,
+                  allowedExtensions: const ['pdf', 'docx', 'txt'],
+                  itemTypeFor: _documentItemTypeFor,
                 ),
               ),
               _CaptureTile(

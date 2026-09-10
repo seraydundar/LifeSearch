@@ -1,4 +1,27 @@
-from app.services.document_service import normalize_text
+import io
+import zipfile
+
+import pytest
+
+from app.services.document_service import extract_document_text, normalize_text
+
+_WORDPROCESSING_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _minimal_docx(paragraphs: list[str]) -> bytes:
+    """A real .docx needs several other parts ([Content_Types].xml,
+    relationships, ...) to open in Word — but `extract_document_text()`
+    only ever reads `word/document.xml`, so that's the only part this
+    needs to actually exercise it.
+    """
+    body = "".join(f"<w:p><w:r><w:t>{p}</w:t></w:r></w:p>" for p in paragraphs)
+    document_xml = (
+        f'<w:document xmlns:w="{_WORDPROCESSING_NS}"><w:body>{body}</w:body></w:document>'
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("word/document.xml", document_xml)
+    return buffer.getvalue()
 
 
 def test_normalizes_line_endings():
@@ -22,3 +45,55 @@ def test_strips_trailing_whitespace_on_each_line():
 
 def test_strips_leading_and_trailing_whitespace_overall():
     assert normalize_text("\n\n  hello world  \n\n") == "hello world"
+
+
+def test_extract_document_text_reads_plain_text_by_mime_type():
+    text = extract_document_text(
+        "Docker Compose notları.".encode(), "text/plain", "notes.txt"
+    )
+    assert text == "Docker Compose notları."
+
+
+def test_extract_document_text_reads_plain_text_by_extension_when_mime_type_is_generic():
+    # A picker that doesn't recognize .txt can hand back a generic
+    # content-type instead of leaving it empty — the extension still
+    # has to save this from being rejected as "unsupported".
+    text = extract_document_text(b"hello", "application/octet-stream", "notes.txt")
+    assert text == "hello"
+
+
+def test_extract_document_text_reads_docx_by_mime_type():
+    docx_bytes = _minimal_docx(["First paragraph.", "Second paragraph."])
+    text = extract_document_text(
+        docx_bytes,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "report.docx",
+    )
+    assert text == "First paragraph.\n\nSecond paragraph."
+
+
+def test_extract_document_text_reads_docx_by_extension_when_mime_type_is_generic():
+    docx_bytes = _minimal_docx(["Only paragraph."])
+    text = extract_document_text(docx_bytes, "application/octet-stream", "report.docx")
+    assert text == "Only paragraph."
+
+
+def test_extract_document_text_skips_empty_paragraphs():
+    docx_bytes = _minimal_docx(["Real content.", "", "   "])
+    text = extract_document_text(docx_bytes, None, "report.docx")
+    assert text == "Real content."
+
+
+def test_extract_document_text_rejects_a_corrupt_docx():
+    with pytest.raises(ValueError, match="valid .docx"):
+        extract_document_text(b"not actually a zip file", None, "report.docx")
+
+
+def test_extract_document_text_rejects_an_unsupported_type():
+    with pytest.raises(ValueError, match="Unsupported document type"):
+        extract_document_text(b"...", "application/vnd.ms-excel", "report.xlsx")
+
+
+def test_extract_document_text_rejects_when_neither_mime_type_nor_extension_help():
+    with pytest.raises(ValueError, match="Unsupported document type"):
+        extract_document_text(b"...", None, None)

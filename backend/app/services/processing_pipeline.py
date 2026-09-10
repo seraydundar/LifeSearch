@@ -18,7 +18,7 @@ from ..repositories.items_repository import SupabaseRestRepository
 from ..repositories.search_repository import SearchRepository
 from .ai_provider import AIProvider
 from .chunking_service import chunk_text
-from .document_service import extract_pdf_text, normalize_text
+from .document_service import extract_document_text, extract_pdf_text, normalize_text
 from .embedding_service import embed_chunks, format_embedding_literal
 from .entity_extraction_service import extract_entities
 from .exif_service import extract_exif_metadata
@@ -29,7 +29,7 @@ from .vision_service import analyze_image
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_TYPES = {"note", "pdf", "image", "screenshot", "audio", "url"}
+SUPPORTED_TYPES = {"note", "pdf", "image", "screenshot", "audio", "url", "document"}
 
 
 class UnsupportedItemType(Exception):
@@ -82,6 +82,17 @@ async def process_item(
                 raise ValueError("PDF item has no storage_path.")
             pdf_bytes = await repo.download_file(storage_path)
             raw_text = extract_pdf_text(pdf_bytes)
+        elif item_type == "document":
+            # "Upload Document" (requirements doc, section 13), broadened
+            # past PDF-only in Faz 10c (see docs/roadmap.md) — .docx/.txt
+            # today, routed by extract_document_text() itself.
+            storage_path = item.get("storage_path")
+            if not storage_path:
+                raise ValueError("Document item has no storage_path.")
+            document_bytes = await repo.download_file(storage_path)
+            raw_text = extract_document_text(
+                document_bytes, item.get("mime_type"), item.get("original_filename")
+            )
         elif item_type in {"image", "screenshot"}:
             storage_path = item.get("storage_path")
             if not storage_path:
