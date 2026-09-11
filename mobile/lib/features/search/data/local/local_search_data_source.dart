@@ -4,11 +4,22 @@ import '../../../../core/database/app_database.dart';
 import '../../../item/domain/entities/item.dart';
 import '../../domain/entities/search_filters.dart';
 import '../../domain/entities/search_result.dart';
+import 'tfidf_ranker.dart';
 
-/// Keyword fallback over the local Drift cache (requirements doc,
-/// section 25-33: "offline-first ... + offline keyword search") — used
-/// when the backend's semantic/hybrid search can't be reached, see
-/// `OfflineFallbackSearchRepository`.
+/// On-device relevance ranking over the local Drift cache (requirements
+/// doc, section 25-33: "offline-first ... + offline search") — used
+/// when the backend's real semantic/hybrid search can't be reached,
+/// see `OfflineFallbackSearchRepository`.
+///
+/// Ranks with a from-scratch TF-IDF + cosine similarity model
+/// (`tfidf_ranker.dart` — Faz 11, madde 6b, see docs/roadmap.md) rather
+/// than a plain substring scan: a multi-word query matches even when
+/// its words land in different fields or a different order, and
+/// results are ordered by how much of the query's vocabulary they
+/// actually contain instead of just "newest first". **Not** a neural
+/// embedding — it can't match synonyms/paraphrases, only shared
+/// vocabulary (after lowercasing and Unicode-aware tokenizing) — see
+/// `tfidf_ranker.dart`'s own docstring for why that trade-off was made.
 ///
 /// Matches only what's actually cached locally: title, description, a
 /// note's own body, and a link's URL/filename. OCR text and AI-generated
@@ -28,8 +39,8 @@ class LocalSearchDataSource {
     SearchFilters filters = const SearchFilters(),
   }) async {
     if (userId == null) return [];
-    final needle = query.trim().toLowerCase();
-    if (needle.isEmpty) return [];
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.isEmpty) return [];
 
     final q = _db.select(_db.localItems)..where((t) => t.userId.equals(userId));
     if (filters.types.isNotEmpty) {
@@ -44,33 +55,60 @@ class LocalSearchDataSource {
     }
 
     final rows = await q.get();
-    final matches = <(LocalItem, String)>[];
-    for (final row in rows) {
-      final snippet = _matchingSnippet(row, needle);
-      if (snippet != null) matches.add((row, snippet));
-    }
-    // No real ranking offline (no embeddings, no ts_rank) — newest first
-    // is the least-surprising order for a plain keyword fallback.
-    matches.sort((a, b) => b.$1.createdAt.compareTo(a.$1.createdAt));
+    if (rows.isEmpty) return [];
 
-    return matches
-        .map((match) => SearchResult(
-              itemId: match.$1.id,
-              itemType: ItemTypeX.fromDbValue(match.$1.type),
-              itemTitle: match.$1.title,
-              snippet: match.$2,
-              similarity: 0,
-            ))
-        .toList();
+    final documents = [
+      for (final row in rows) TfidfDocument(id: row.id, text: _combinedText(row)),
+    ];
+    final ranked = rankByTfidf(query: trimmedQuery, documents: documents);
+    if (ranked.isEmpty) return [];
+
+    final rowsById = {for (final row in rows) row.id: row};
+    final queryTokens = tokenize(trimmedQuery);
+
+    return [
+      for (final entry in ranked)
+        SearchResult(
+          itemId: entry.key,
+          itemType: ItemTypeX.fromDbValue(rowsById[entry.key]!.type),
+          itemTitle: rowsById[entry.key]!.title,
+          snippet: _snippetFor(rowsById[entry.key]!, trimmedQuery, queryTokens),
+          similarity: entry.value,
+        ),
+    ];
   }
 
-  String? _matchingSnippet(LocalItem item, String needle) {
-    for (final field in [item.noteContent, item.description, item.title, item.sourceUrl]) {
+  String _combinedText(LocalItem item) {
+    return [item.noteContent, item.description, item.title, item.sourceUrl]
+        .where((field) => field != null && field.isNotEmpty)
+        .join(' ');
+  }
+
+  String _snippetFor(LocalItem item, String query, List<String> queryTokens) {
+    final fields = [item.noteContent, item.description, item.title, item.sourceUrl];
+    final needle = query.toLowerCase();
+
+    for (final field in fields) {
       if (field == null) continue;
       final index = field.toLowerCase().indexOf(needle);
       if (index != -1) return _excerpt(field, index, needle.length);
     }
-    return null;
+
+    // No literal substring match — a multi-word query whose terms
+    // landed in different fields (or a different order) than one
+    // contiguous run of characters. TF-IDF still ranked this as a
+    // match, so fall back to an excerpt around the first shared token
+    // instead of showing nothing.
+    for (final field in fields) {
+      if (field == null) continue;
+      final lower = field.toLowerCase();
+      for (final token in queryTokens) {
+        final index = lower.indexOf(token);
+        if (index != -1) return _excerpt(field, index, token.length);
+      }
+    }
+
+    return fields.firstWhere((f) => f != null && f.isNotEmpty, orElse: () => '') ?? '';
   }
 
   String _excerpt(String text, int matchIndex, int matchLength) {

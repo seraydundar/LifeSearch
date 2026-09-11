@@ -108,7 +108,12 @@ void main() {
   });
 
   test('excerpts long matches around the hit instead of returning the whole field', () async {
-    final longText = '${'x' * 200}docker${'y' * 200}';
+    // "docker" needs to be its own word (space-delimited) here — TF-IDF
+    // ranking (Faz 11, madde 6b) matches whole tokens, not "docker" as
+    // a bare substring glued inside a longer run of letters the way the
+    // old plain-substring search did (arguably a correctness fix on its
+    // own: "xxxdockeryyy" isn't really a match for "docker").
+    final longText = '${'lorem ' * 40}docker${' ipsum' * 40}';
     await insertItem(id: 'a', noteContent: longText);
 
     final results = await dataSource.search('user-1', 'docker');
@@ -118,5 +123,48 @@ void main() {
     expect(snippet, contains('docker'));
     expect(snippet, startsWith('…'));
     expect(snippet, endsWith('…'));
+  });
+
+  // Faz 11, madde 6b (tam offline semantic search — see docs/roadmap.md):
+  // TF-IDF ranking (tfidf_ranker.dart) replaced plain substring search.
+  // These pin down exactly what that upgrade does over the old
+  // behaviour — cross-field/order-independent multi-word matching and
+  // relevance ranking — not just "still finds the same single-word hits".
+  group('TF-IDF ranking (Faz 11, madde 6b)', () {
+    test(
+        'matches a multi-word query even when its words are in different fields, '
+        'not one contiguous substring anywhere', () async {
+      await insertItem(id: 'a', title: 'Kahve alışverişi', noteContent: 'Köşedeki dükkanı ziyaret et');
+      await insertItem(id: 'b', title: 'Tamamen ilgisiz', noteContent: 'bir not');
+
+      final results = await dataSource.search('user-1', 'kahve dükkanı');
+
+      expect(results.map((r) => r.itemId), ['a']);
+      // No field contains "kahve dükkanı" as one substring, so the
+      // snippet falls back to an excerpt around whichever query word it
+      // does find literally, instead of coming back empty.
+      expect(results.single.snippet, isNotEmpty);
+    });
+
+    test('ranks the item containing more of the query terms above one containing fewer',
+        () async {
+      await insertItem(id: 'partial', noteContent: 'docker notes');
+      await insertItem(
+        id: 'full',
+        noteContent: 'docker container image tutorial: building a docker image from a container',
+      );
+
+      final results = await dataSource.search('user-1', 'docker container image');
+
+      expect(results.first.itemId, 'full');
+    });
+
+    test('a shared word gets a non-zero similarity, unlike the old fixed 0', () async {
+      await insertItem(id: 'a', noteContent: 'Docker notes');
+
+      final results = await dataSource.search('user-1', 'docker');
+
+      expect(results.single.similarity, greaterThan(0));
+    });
   });
 }

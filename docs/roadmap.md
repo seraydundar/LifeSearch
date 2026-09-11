@@ -1569,7 +1569,8 @@ en küçükten en büyüğe doğru sırayla ele alınıyor:
    istemci (en büyük, en riskli üçü — en sona bırakıldı, kullanıcı
    isteğiyle üçe bölündü, en küçüğünden başlanıyor):
    - a. ~~Local AI provider (backend)~~ ✅ — bkz. aşağıdaki alt bölüm.
-   - b. Tam offline semantic search (mobil, on-device vektör arama).
+   - b. ~~Tam offline semantic search (mobil)~~ ✅ — bkz. aşağıdaki alt
+     bölüm.
    - c. Masaüstü/web istemci.
 
 #### Faz 11, madde 1: mobilde özel tarih aralığı seçimi ✅
@@ -1943,3 +1944,84 @@ doldurduğunu, boş liste için hiç istek atmadığını, `analyze_image`'ın
 görseli base64 `images` alanına koyup JSON yanıtı ayrıştırdığını, ve
 Ollama'ya bağlanılamazsa okunabilir bir `RuntimeError` fırlatıldığını
 doğruluyor).
+
+#### Faz 11, madde 6b: tam offline semantic search (mobil) ✅
+
+`LocalSearchDataSource` (backend'e ulaşılamayınca devreye giren
+keyword fallback, bkz. `OfflineFallbackSearchRepository`) yalnızca düz
+substring araması yapıyordu: yalnızca sabit üç preset yerine sıralama
+yoktu (her zaman en yeniden en eskiye), ve çok kelimeli bir sorgu
+kelimeleri farklı alanlarda ya da farklı sırada geçtiğinde hiç eşleşmiyordu
+(tek bir alanda tek bir bitişik substring aranıyordu).
+
+**Mimari kararı kullanıcıya soruldu**: gerçek bir nöral embedding modeli
+(GGUF/TFLite, native plugin ile cihazda çalıştırma) mı, yoksa hafif bir
+istatistiksel yaklaşım mı — kullanıcı **hafif TF-IDF/cosine ranking**'i
+seçti. Gerekçe: nöral seçenek 50-150MB'lık bir model dosyasını uygulamaya
+gömüp yeni bir native plugin bağımlılığı eklemeyi gerektiriyordu ve bu
+oturumda (gerçek cihaz/simülatör yok) kodun **çalıştığı hiç
+doğrulanamazdı** — yalnızca arayüz doğrulanabilirdi, Google/Apple
+login'deki "kod tamam, doğrulama kullanıcıda" durumunun bir tekrarı
+olurdu. TF-IDF ise sıfır yeni bağımlılık, sıfır model dosyasıyla, bu
+oturumda `flutter test` ile uçtan uca gerçekten doğrulanabilen tek
+seçenekti.
+
+- **`tfidf_ranker.dart`** (yeni, ~50 satır, sıfır bağımlılık):
+  `rankByTfidf()` — sorguyu ve her dokümanı (title + description +
+  noteContent + sourceUrl birleştirilmiş) Unicode-aware tokenize edip
+  (Türkçe harfler `\w`'nin İngilizce ASCII karşılığından farklı olarak
+  kelime sınırı sayılmıyor — `\p{L}`/`\p{N}` kullanıldı), klasik
+  TF-IDF ağırlıklandırma (log-scaled term frequency × smoothed idf) ve
+  cosine similarity ile sıralıyor. Vokabülerini hiç paylaşmayan bir
+  doküman (cosine tam 0) sonuçtan tamamen çıkarılıyor — eski "hiç
+  eşleşme yoksa hiç sonuç yok" sözleşmesiyle aynı.
+- **Bu, nöral bir embedding DEĞİL** — eşanlamlı/paraphrase yakalamıyor
+  ("araba" sorgusu "otomobil" içeren bir dokümanı bulmaz), yalnızca
+  paylaşılan kelime kökü (tokenize edildikten sonra) eşleşmesi. Bu
+  sınır `tfidf_ranker.dart`'ın kendi docstring'inde ve
+  `LocalSearchDataSource`'ınkinde açıkça yazılı.
+- **`LocalSearchDataSource`**: artık `q.get()`'le gelen tüm satırları
+  `rankByTfidf()`'e veriyor, `similarity` alanına gerçek cosine skorunu
+  yazıyor (eskiden sabit `0`'dı). Snippet çıkarımı iki aşamalı: önce
+  eski davranış gibi sorgunun tam bitişik substring'ini arıyor; o
+  bulunamazsa (çok kelimeli bir sorgunun kelimeleri farklı alanlarda
+  geçtiği için) sorgudaki paylaşılan tokenlardan birinin ilk geçtiği
+  yere düşüyor — TF-IDF bir eşleşme dediği halde snippet'in boş
+  dönmemesi için.
+- **Gerçek bir davranış değişikliği, mevcut bir teste çarptı**: eski
+  testlerden biri, boşluksuz 400+ karakterlik bitişik bir "kelime"nin
+  ortasına gömülü `docker` alt-dizisini arıyordu — düz substring
+  arama bunu (kelime sınırı önemsemeden) buluyordu, ama tokenize
+  edilmiş TF-IDF bunu bulamaz (tüm 400+ karakter TEK bir token
+  sayılıyor, `docker` kendi başına bir token değil). Bu, gerçekte bir
+  düzeltme: "xxxdockeryyy" gerçek bir "docker" eşleşmesi değil. Test,
+  aynı senaryoyu (uzun bir alanın ortasındaki bir eşleşmenin etrafını
+  kırpma) gerçek kelime sınırlarıyla (`'lorem ' * 40 + 'docker' + '
+  ipsum' * 40`) yeniden yazıldı.
+
+**Bilinçli sınırlar**:
+- Yalnızca zaten Drift'e senkronize edilen alanlar aranıyor — OCR
+  metni ve görsellerin/PDF'lerin AI açıklamaları Supabase'in
+  `item_contents` tablosunda yaşıyor, cihaza hiç inmiyor (aynı
+  önceden var olan sınır, değişmedi).
+- Eşanlamlı/paraphrase yakalamıyor (yukarıda açıklandı) — bu maddenin
+  "tam" kelimesini tam anlamıyla karşılamıyor, yalnızca eski düz
+  substring aramaya göre gerçek bir iyileştirme (kelime sırası/alan
+  bağımsız çok kelimeli eşleşme + alaka düzeyine göre sıralama).
+- Sorgu her arama çağrısında sıfırdan hesaplanıyor (kalıcı bir
+  ters-indeks yok) — bir kullanıcının local cache'i gerçekçi olarak
+  yüzlerce-birkaç bin satır olduğu için kabul edilebilir; gerçek bir
+  ölçek sorununu çözmeye çalışmıyor.
+
+Mobile: `flutter analyze` temiz, testler 168 → **180** (+12: yeni
+`tfidf_ranker_test.dart` — tokenize'ın Türkçe harfleri kelime sınırı
+saymadığını, boş sorgu/korpüsün hiçbir şey döndürmediğini, vokabüler
+paylaşmayan bir dokümanın tamamen dışarıda kaldığını, çok kelimeli bir
+sorgunun kelimeleri farklı alanlara yayılmış bir dokümanı bulduğunu,
+sorgu vokabülerinin daha fazlasını içeren bir dokümanın daha yüksek
+sıralandığını, nadir bir terimin çok tekrarlanan yaygın bir terimden
+daha ağır bastığını, sonuçların skora göre sıralı olduğunu doğruluyor;
+`local_search_data_source_test.dart`'a +3: çok kelimeli sorgunun
+farklı alanlardaki kelimeleri eşleştirdiğini, daha fazla sorgu terimi
+içeren item'ın daha yükseğe sıralandığını, paylaşılan bir kelimenin
+artık sıfırdan farklı bir `similarity` aldığını).
