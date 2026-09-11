@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/utils/go_router_refresh_stream.dart';
+import '../../features/analytics/presentation/screens/analytics_screen.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
 import '../../features/collections/presentation/screens/collection_detail_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
@@ -24,6 +25,7 @@ abstract final class AppRoutes {
   static const settings = '/settings';
   static const newNote = '/item/new';
   static const search = '/search';
+  static const analytics = '/analytics';
 }
 
 /// Central navigation graph. Auth-gated: signed-out users can only reach
@@ -91,6 +93,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         // used by tag chips (see item_detail_screen.dart) to jump
         // straight to that tag's results instead of an empty search box.
         builder: (context, state) => SearchHubScreen(initialQuery: state.extra as String?),
+      ),
+      GoRoute(
+        path: AppRoutes.analytics,
+        builder: (context, state) => const AnalyticsScreen(),
       ),
       GoRoute(
         path: '/collections/:id',

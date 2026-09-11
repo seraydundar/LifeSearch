@@ -73,6 +73,13 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const Divider(),
           ListTile(
+            leading: const Icon(Icons.bar_chart_outlined),
+            title: const Text('Analytics'),
+            subtitle: const Text('Arşivinin türe/aya göre dağılımı, en yaygın etiketler'),
+            onTap: () => context.push('/analytics'),
+          ),
+          const Divider(),
+          ListTile(
             leading: const Icon(Icons.auto_awesome_outlined),
             title: const Text('AI Settings'),
             subtitle: Text(

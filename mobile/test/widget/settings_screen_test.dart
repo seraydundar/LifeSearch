@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lifesearch/core/network/api_client_provider.dart';
 import 'package:lifesearch/features/auth/presentation/providers/auth_providers.dart';
 import 'package:lifesearch/features/auth/domain/entities/app_user.dart';
+import 'package:lifesearch/features/analytics/presentation/screens/analytics_screen.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
 import 'package:lifesearch/features/settings/presentation/screens/settings_screen.dart';
@@ -38,6 +39,7 @@ void main() {
         // doesn't have one.
         routerConfig: GoRouter(routes: [
           GoRoute(path: '/', builder: (context, state) => const SettingsScreen()),
+          GoRoute(path: '/analytics', builder: (context, state) => const AnalyticsScreen()),
         ]),
       ),
     );
@@ -48,6 +50,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('test@example.com'), findsOneWidget);
+  });
+
+  testWidgets('Analytics tile navigates to the Analytics screen', (tester) async {
+    await tester.pumpWidget(wrap());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Analytics'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AnalyticsScreen), findsOneWidget);
   });
 
   testWidgets('Storage tile sums fileSizeBytes across items', (tester) async {
@@ -144,6 +156,13 @@ void main() {
     await tester.pumpWidget(wrap(appLock: FakeAppLockService(deviceSupported: false)));
     await tester.pumpAndSettle();
 
+    // A plain `ListView(children:)` only builds tiles within (or near)
+    // the viewport — the Privacy tile has moved past that as more tiles
+    // (Analytics among them) landed above it, so it needs scrolling into
+    // view before `byType(Switch)` can find its Element at all.
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+
     final toggle = tester.widget<Switch>(find.byType(Switch));
     expect(toggle.value, isFalse);
     expect(toggle.onChanged, isNull);
@@ -151,6 +170,9 @@ void main() {
 
   testWidgets('Privacy switch reflects a persisted enabled value', (tester) async {
     await tester.pumpWidget(wrap(appLock: FakeAppLockService(initiallyEnabled: true)));
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
     await tester.pumpAndSettle();
 
     final toggle = tester.widget<Switch>(find.byType(Switch));

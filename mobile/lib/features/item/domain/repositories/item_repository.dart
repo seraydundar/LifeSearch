@@ -19,6 +19,12 @@ abstract interface class ItemRepository {
   /// same as `getSignedUrl` — needs a connection to show.
   Future<List<String>> fetchTags(String itemId);
 
+  /// Every tag occurrence across the whole archive, one entry per
+  /// (item, tag) — the Analytics screen's "most common tags" (see
+  /// docs/roadmap.md, Faz 11, madde 3). Same "not cached locally yet,
+  /// needs a connection to show" contract as [fetchTags].
+  Future<List<String>> fetchAllTagNames();
+
   /// AI-extracted named entities (people, places, organizations, dates)
   /// mentioned in an item's content, see
   /// backend/app/services/entity_extraction_service.py. Same "not cached

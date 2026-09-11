@@ -72,6 +72,18 @@ class RemoteItemDataSource {
     return rows.map((row) => (row['tags'] as Map<String, dynamic>)['name'] as String).toList();
   }
 
+  /// Every tag *occurrence* across the signed-in user's whole archive —
+  /// one entry per (item, tag) association, not deduplicated (Analytics'
+  /// "most common tags" counts the duplicates, see
+  /// `analytics.dart`'s `topTags`). Same join shape as `fetchTags`, just
+  /// without the `item_id` filter — RLS (see `item_tags_owner` in
+  /// infra/supabase/migrations/0001_init.sql) already scopes this to the
+  /// caller's own rows on its own.
+  Future<List<String>> fetchAllTagNames() async {
+    final rows = await _client.from('item_tags').select('tags(name)');
+    return rows.map((row) => (row['tags'] as Map<String, dynamic>)['name'] as String).toList();
+  }
+
   /// Same join-through-the-junction-table shape as `fetchTags`.
   Future<List<ExtractedEntity>> fetchEntities(String itemId) async {
     final rows =

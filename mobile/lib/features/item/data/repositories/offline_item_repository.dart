@@ -53,6 +53,9 @@ class OfflineItemRepository implements ItemRepository {
   Future<List<String>> fetchTags(String itemId) => _remote.fetchTags(itemId);
 
   @override
+  Future<List<String>> fetchAllTagNames() => _remote.fetchAllTagNames();
+
+  @override
   Future<List<ExtractedEntity>> fetchEntities(String itemId) => _remote.fetchEntities(itemId);
 
   @override

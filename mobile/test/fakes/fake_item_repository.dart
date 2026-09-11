@@ -44,6 +44,11 @@ class FakeItemRepository implements ItemRepository {
   @override
   Future<List<String>> fetchTags(String itemId) async => tagsByItemId[itemId] ?? const [];
 
+  List<String> allTagNames = [];
+
+  @override
+  Future<List<String>> fetchAllTagNames() async => allTagNames;
+
   Map<String, List<ExtractedEntity>> entitiesByItemId = {};
 
   @override

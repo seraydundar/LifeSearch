@@ -1559,7 +1559,7 @@ en küçükten en büyüğe doğru sırayla ele alınıyor:
 
 1. ~~Mobilde özel tarih aralığı seçimi~~ ✅ — bkz. aşağıdaki alt bölüm.
 2. ~~Item-bazlı Privacy Mode~~ ✅ — bkz. aşağıdaki alt bölüm.
-3. Analytics ekranı.
+3. ~~Analytics ekranı~~ ✅ — bkz. aşağıdaki alt bölüm.
 4. Gemini/local AI provider.
 5. Google/Apple login (Google/Apple Developer Console + Supabase
    Dashboard'da kullanıcının kendisinin yapması gereken bir kurulum
@@ -1683,3 +1683,56 @@ item detay ekranında private işaretleme/kaldırmanın onay istemediğini
 `private` alanının doğru taşındığını — 2 test; Search'te bir private
 item'ın kendi sonucunun gizlenip diğerlerinin kaldığını — 1 test —
 doğruluyor).
+
+#### Faz 11, madde 3: Analytics ekranı ✅
+
+Home'da tür başına sayaçlar vardı ("Images: 3" gibi) ama ayrı, arşivi
+bütün olarak gösteren bir Analytics ekranı, zaman içindeki büyüme ve
+en yaygın etiketler yoktu.
+
+- **`analytics.dart`** (yeni, `mobile/lib/features/analytics/domain/`):
+  saf fonksiyonlar — `totalItemCount`/`favoriteCount`/`privateCount`,
+  `countsByType`, `itemsPerMonth` (son N ay, boş aylar da sıfırla
+  dolduruluyor — bir bar grafiğinin "veri yok" ile "sorulmadı"
+  arasında tahmin yapmasına gerek kalmıyor), `topTags` (bir tag
+  isim listesini frekansa göre sayıp sıralıyor).
+- **Veri kaynağı**: her şey zaten local cache'te (`itemsProvider`) —
+  ayrı bir backend endpoint'i yok, uygulamanın her yerindeki
+  offline-first sözleşmesiyle aynı. Tek istisna **en yaygın
+  etiketler**: tag'ler local'de cache'lenmiyor (`fetchTags`'in kendi
+  belgesindeki "bağlantı gerekiyor" sözleşmesi), o yüzden yeni
+  `RemoteItemDataSource.fetchAllTagNames()` tüm arşivin (item, tag)
+  eşleşmelerini **tek bir istekte** çekiyor — `item_tags_owner` RLS
+  politikası zaten `item_id` filtresi olmadan da yalnızca çağıranın
+  kendi satırlarını döndürüyor; frekans sayımı istemci tarafında.
+- **Ekran**: toplam/favori/depolama stat kutucukları, türe göre
+  azalan sıralı bar listesi (mevcut `itemTypeColor`/`itemTypeIcon`/
+  `itemTypeLabel` ile — Library/Home/arama sonuçlarının zaten
+  kullandığı sabit, hiç döngüye girmeyen renk eşlemesi; her barın
+  kendi ikon+etiketi zaten "direct label", ayrı bir legend'a gerek
+  yok), son 6 ayın item sayısı için tek renkli (marka rengi) aylık
+  bar grafiği, en yaygın etiketler için sayılı chip'ler. Settings'e
+  yeni bir "Analytics" satırı (`/analytics`) eklendi.
+- **item-bazlı Privacy Mode ile entegrasyon**: ekranın geri kalanı
+  `itemsProvider`'ı (zaten private item'ları filtreleyen) kullandığı
+  için hiçbir ekstra iş yapmadan private item'lar hiçbir sayıma
+  girmiyor. "Private: N" stat kutucuğu yalnızca
+  `privateItemsRevealedProvider` `true` iken (aynı reveal kapısından
+  geçilmişse) görünüyor — `itemsProvider`'ın zaten filtrelediği
+  listeyi saymak hep sıfır verirdi, bu yüzden bu tek sayı özellikle
+  filtrelenmemiş ham stream'den okunuyor.
+
+Backend: yalnızca yeni bir salt-okunur sorgu (`fetchAllTagNames`),
+şema/migration değişikliği yok. Mobile: `flutter analyze` temiz,
+testler 144 → **163** (+19: `analytics.dart`'ın saf fonksiyonları için
+11 test — ay bucket'larının yıl sınırını doğru geçtiği, `topTags`'in
+doğru sıraladığı dahil; `AnalyticsScreen` için 7 widget testi — boş
+arşiv/tür dağılımı/private item'ın varsayılan hiçbir sayıma
+girmeyip reveal'da hepsine dahil olması/etiket listesi; Settings'in
+yeni "Analytics" satırının doğru sayfaya gittiğini doğrulayan 1
+test). Bu turda `Analytics` satırı eklenince Settings'in düz
+`ListView(children:)`'ı bir tık uzayıp "Privacy" switch'ini varsayılan
+test viewport'unun art alan (cache extent) dışına itti — iki mevcut
+Privacy testi bunun için scroll etmiyordu, gerçek bir regresyon olarak
+yakalandı ve komşu testlerin zaten kullandığı aynı `drag` deseniyle
+düzeltildi.
