@@ -69,6 +69,25 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+# Nothing in this app's own code calls `logger.debug(...)` — `debug`
+# only ever existed to make root-logger output more verbose in
+# development. Setting the *root* logger to DEBUG did that, but Python's
+# logging hierarchy means every third-party logger that never sets its
+# own level (which is the normal, well-behaved way to write a library)
+# inherits that same DEBUG threshold — including these, whose DEBUG
+# output includes exactly what requirements doc, section 53 says never
+# to log: `openai`'s SDK logs full request/response bodies (prompts,
+# embedding input) at DEBUG, and `httpx`/`httpcore` (which every
+# repository here uses directly for Supabase, not just the OpenAI
+# client) can log request headers at DEBUG — including the
+# `Authorization` bearer token, i.e. the signed-in user's own session,
+# or `service_role`'s if that repository happens to be the sweep in
+# job_recovery.py. Pinning each of these to its own level, regardless of
+# `debug`, stops root's level from ever reaching them — a logger's
+# *own* level always wins over whatever level an ancestor has.
+_NOISY_THIRD_PARTY_LOGGERS = ("openai", "httpx", "httpcore")
+
+
 def configure_logging(debug: bool = True) -> None:
     # On the handler, not the logger: `Logger.filter()` only checks the
     # *originating* logger's own filters (e.g. `getLogger("app.request")`,
@@ -83,6 +102,9 @@ def configure_logging(debug: bool = True) -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(logging.DEBUG if debug else logging.INFO)
+
+    for name in _NOISY_THIRD_PARTY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 async def request_logging_middleware(

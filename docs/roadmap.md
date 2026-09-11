@@ -1039,6 +1039,40 @@ oluyordu, hesap silinemeden.
 Backend: 87 → **88** test (yerelde doğrulanan kapsamda). `ruff check`
 temiz.
 
+#### Faz 10a, madde 5: Debug log seviyesi içerik sızdırıyor ✅
+
+Bu madde "Önerilen sıra"da Faz 10a'nın (P0) bir parçası olarak
+yazılmıştı ama fiilen atlanmış kalmıştı — kod hâlâ orijinal haliyle
+duruyordu. `configure_logging(debug=True)` yalnızca **root** logger'ı
+`DEBUG`'a çekiyordu; Python'ın logging hiyerarşisinde kendi seviyesini
+hiç ayarlamamış (bir kütüphanenin normal, iyi huylu davranışı) her
+üçüncü parti logger da bunu miras alıyor. `openai` SDK'sı `DEBUG`
+seviyesinde tam istek/yanıt gövdesini (prompt, embedding girdisi)
+loglayıyor; `httpx`/`httpcore` — burada yalnızca OpenAI istemcisi değil,
+her repository'nin Supabase'e giderken doğrudan kullandığı kütüphane —
+`DEBUG` seviyesinde istek header'larını, `Authorization` bearer token'ı
+dahil, loglayabiliyor. `settings.debug`'ın varsayılanı `True` olduğu
+için bu, üretimde de varsayılan davranıştı.
+
+- **`configure_logging()`**: artık `openai`/`httpx`/`httpcore`
+  logger'larını açıkça `WARNING`'e sabitliyor — bir logger'ın **kendi**
+  seviyesi her zaman bir ata'nın seviyesine kazanır, yani root ne
+  olursa olsun bunlar asla `DEBUG`'a çıkamıyor. Uygulamanın kendi kodu
+  hiçbir yerde `logger.debug(...)` çağırmadığı için (kontrol edildi),
+  `debug` bayrağının bugüne kadarki tek gözlemlenebilir etkisi tam da
+  bu sızıntıydı — kaybedilen bir şey yok.
+- Regresyon testi yalnızca seviyeyi değil, gerçek bir `logger.debug(...)`
+  çağrısını "içerik" taşıyan bir `extra` ile simüle edip bunun log
+  buffer'ına hiç yazılmadığını doğruluyor — seviye kontrolünün kağıt
+  üzerinde doğru ama fiilen etkisiz olduğu bir senaryoyu (örn. formatter
+  seviyeyi görmezden gelirse) da yakalar.
+
+Backend: `ruff check` temiz, testler 162 → **168** (yeni
+`test_logging.py` testleri — `openai`/`httpx`/`httpcore`'un `debug=True`
+iken bile `DEBUG` seviyesine hiç ulaşamadığını, ve bu logger'lardan
+birine yapılan "içerik" taşıyan bir çağrının log buffer'ında hiç
+görünmediğini doğruluyor).
+
 #### Faz 10a, madde 11: Android `INTERNET` izni ✅
 
 Ana `AndroidManifest.xml`'de `CAMERA`/`RECORD_AUDIO`/`USE_BIOMETRIC`
@@ -1458,11 +1492,10 @@ maddeler (öncelik sırasıyla, denetim raporundan):
 
 4. ~~Hesap silme: dosyalar `service_role` key kontrolünden önce
    siliniyordu~~ ✅ düzeltildi — bkz. yukarıdaki alt bölüm.
-5. `configure_logging(debug=True)` root logger'ı DEBUG'a çekiyor; kurulu
-   OpenAI SDK'sı bu seviyede istek gövdesini (prompt/embedding girdisi)
-   loglayabiliyor — "asla içerik loglama" kuralını uygulamanın kendi
-   `logger` çağrıları değil, üçüncü parti SDK'nın log seviyesi de
-   belirliyor ([logging.py:72](../backend/app/core/logging.py)).
+5. ~~`configure_logging(debug=True)` root logger'ı DEBUG'a çekiyor;
+   kurulu OpenAI SDK'sı bu seviyede istek gövdesini (prompt/embedding
+   girdisi) loglayabiliyor~~ ✅ düzeltildi — bkz. yukarıdaki alt bölüm
+   (Faz 10a, madde 5).
 6. ~~AI job tetikleme hatası tamamen yutuluyor, kalıcı retry/kullanıcıya
    "Tekrar Dene" yok; backend `BackgroundTasks` restart sonrası job
    kurtarmıyor; mobilde işleme sonucu için Realtime/polling yok~~ ✅
@@ -1488,10 +1521,18 @@ maddeler (öncelik sırasıyla, denetim raporundan):
 **Önerilen sıra** (denetim raporundan, projenin kendi faz mantığıyla
 uyumlu hale getirildi):
 
-1. **Faz 10a (P0 — MVP'yi bloke eden)**: hesap izolasyonu (sync queue +
-   logout'ta local DB temizliği + recent searches), `item_contents`
-   UNIQUE migration'ı, search/RAG/related'tan tam item açma, hesap
-   silme sırası, debug log seviyesi.
+1. **Faz 10a (P0 — MVP'yi bloke eden)** — tamamlandı ✅: ~~hesap
+   izolasyonu (sync queue + recent searches, her okuma/yazma imzalı
+   kullanıcıya göre filtreleniyor)~~, ~~`item_contents` UNIQUE
+   migration'ı~~, ~~search/RAG/related'tan tam item açma~~, ~~hesap
+   silme sırası~~, ~~debug log seviyesi~~, ~~Android INTERNET izni~~
+   (madde 11'de). **Küçük, çözülmemiş bir nüans**: bu izolasyon filtreleme
+   ile sağlandı, "logout'ta local DB'yi temizleme" ile değil — A
+   hesabından çıkıldığında A'nın satırları hâlâ cihazın local
+   sqlite dosyasında duruyor, sadece B oturumu açıkken artık hiç
+   okunmuyor/gösterilmiyor/gönderilmiyor. Fonksiyonel izolasyon için
+   yeterli; cihaza fiziksel erişimi olan biri için "veri hâlâ diskte"
+   kalıyor.
 2. **Faz 10b (P1 — güvenilirlik)** — tamamlandı ✅: ~~AI job retry +
    kullanıcıya "Tekrar Dene"~~, ~~realtime/polling ile otomatik mobil
    güncelleme~~, ~~backend job restart-kurtarma~~, ~~chunk/content

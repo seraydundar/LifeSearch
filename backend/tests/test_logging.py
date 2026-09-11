@@ -7,7 +7,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.logging import _JsonFormatter, configure_logging, request_logging_middleware
+from app.core.logging import (
+    _NOISY_THIRD_PARTY_LOGGERS,
+    _JsonFormatter,
+    configure_logging,
+    request_logging_middleware,
+)
 
 
 @pytest.fixture
@@ -25,6 +30,9 @@ def logged_client(monkeypatch):
     original_handlers = list(root.handlers)
     original_filters = list(root.filters)
     original_level = root.level
+    original_third_party_levels = {
+        name: logging.getLogger(name).level for name in _NOISY_THIRD_PARTY_LOGGERS
+    }
 
     buffer = io.StringIO()
     monkeypatch.setattr(sys, "stdout", buffer)
@@ -46,6 +54,8 @@ def logged_client(monkeypatch):
     root.handlers = original_handlers
     root.filters = original_filters
     root.level = original_level
+    for name, level in original_third_party_levels.items():
+        logging.getLogger(name).level = level
 
 
 def _log_lines(buffer: io.StringIO) -> list[dict]:
@@ -144,6 +154,44 @@ def test_json_formatter_omits_fields_that_were_never_set():
 
     assert "request_id" not in payload
     assert "user_id" not in payload
+
+
+@pytest.mark.parametrize("logger_name", _NOISY_THIRD_PARTY_LOGGERS)
+def test_a_noisy_third_party_logger_never_reaches_debug_even_in_debug_mode(
+    logged_client, logger_name
+):
+    """The actual bug: `configure_logging(debug=True)` used to set only
+    the *root* logger to DEBUG — which every third-party logger that
+    never sets its own level (the normal way to write a library)
+    inherits, `openai`/`httpx`/`httpcore` included.
+    """
+    del logged_client  # configure_logging(debug=True) already ran via the fixture
+
+    assert logging.getLogger(logger_name).getEffectiveLevel() > logging.DEBUG
+
+
+@pytest.mark.parametrize("logger_name", _NOISY_THIRD_PARTY_LOGGERS)
+def test_a_noisy_third_party_debug_call_with_content_never_reaches_the_log(
+    logged_client, logger_name
+):
+    """Regression guard for the "never log content" rule (requirements
+    doc, section 53): `openai`'s SDK logs full request/response bodies
+    (prompts, embedding input) at DEBUG, and `httpx`/`httpcore` — used
+    directly by every repository here for Supabase, not just the OpenAI
+    client — can log request headers at DEBUG, including the
+    `Authorization` bearer token. Simulating exactly that kind of call
+    here, rather than only asserting on the level, proves the content
+    itself never lands in the log buffer, not just that the level check
+    is technically satisfied.
+    """
+    client, buffer = logged_client
+    client.get("/ok")  # a real log line first, so the buffer isn't empty by accident
+
+    logging.getLogger(f"{logger_name}._internal").debug(
+        "request", extra={"body": "super secret prompt or embedding text"}
+    )
+
+    assert "super secret" not in buffer.getvalue()
 
 
 def test_json_formatter_only_includes_fields_a_caller_actually_passed():
