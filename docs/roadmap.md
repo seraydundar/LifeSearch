@@ -1560,12 +1560,13 @@ en küçükten en büyüğe doğru sırayla ele alınıyor:
 1. ~~Mobilde özel tarih aralığı seçimi~~ ✅ — bkz. aşağıdaki alt bölüm.
 2. ~~Item-bazlı Privacy Mode~~ ✅ — bkz. aşağıdaki alt bölüm.
 3. ~~Analytics ekranı~~ ✅ — bkz. aşağıdaki alt bölüm.
-4. Gemini/local AI provider.
+4. ~~Gemini AI provider~~ ✅ — bkz. aşağıdaki alt bölüm. "local"
+   sağlayıcı madde 6'ya bırakıldı (aynı yerel çıkarım altyapısı).
 5. Google/Apple login (Google/Apple Developer Console + Supabase
    Dashboard'da kullanıcının kendisinin yapması gereken bir kurulum
    adımı var).
-6. Tam offline semantic search ve masaüstü/web istemci (en büyük,
-   en riskli ikisi — en sona bırakıldı).
+6. Tam offline semantic search + local AI provider + masaüstü/web
+   istemci (en büyük, en riskli üçü — en sona bırakıldı).
 
 #### Faz 11, madde 1: mobilde özel tarih aralığı seçimi ✅
 
@@ -1736,3 +1737,66 @@ test viewport'unun art alan (cache extent) dışına itti — iki mevcut
 Privacy testi bunun için scroll etmiyordu, gerçek bir regresyon olarak
 yakalandı ve komşu testlerin zaten kullandığı aynı `drag` deseniyle
 düzeltildi.
+
+#### Faz 11, madde 4: Gemini AI provider ✅
+
+`AIProvider` arayüzü zaten "bir sağlayıcıdan diğerine geçmek bir alt
+sınıf eklemek demek" diyordu ama `get_ai_provider()`'ın `gemini` dalı
+`NotImplementedError` fırlatıyordu.
+
+- **`GeminiProvider`** (yeni, `google-genai` — Google'ın güncel
+  birleşik SDK'sı; eski `google-generativeai` paketi artık bakım
+  modunda): `generate_text`/`generate_embedding(s)`/`analyze_image`/
+  `transcribe_audio`'nun hepsi `OpenAIProvider`'ın attığı JSON şemasıyla
+  aynı sözleşmeyi uyguluyor — pipeline hangi sağlayıcıyı kullandığını
+  hiç bilmiyor. `transcribe_audio` Whisper gibi ayrı bir ASR endpoint'i
+  yerine Gemini'nin ses girdisini doğrudan multimodal bir parça olarak
+  alıp transkript isteyen genel `generate_content` çağrısını kullanıyor.
+- **Gerçek bir boyut uyuşmazlığı, çözümü ve kanıtı**: `text-embedding-004`
+  768 boyutlu vektör üretiyor, ama `chunks.embedding` (OpenAI'nin
+  `text-embedding-3-small`'ı için) sabit `vector(1536)` — şema
+  değişikliği olmadan bunu düzeltmenin yolu her embedding'i 1536'ya
+  sıfırla doldurmak (`_pad_embedding`). Bu rastgele bir "işe yarıyor
+  gibi görünüyor" hilesi değil: iki vektöre aynı uzunlukta sıfır kuyruğu
+  eklemek ne iç çarpımı ne de normları değiştirdiği için cosine
+  similarity **matematiksel olarak tam olarak** değişmiyor — testlerden
+  biri tam bu özelliği (rastgele iki vektörün cosine'ının
+  pad'lemeden önce/sonra birebir aynı kaldığını) doğruluyor, sadece
+  "uzunluk doğru" demiyor. **Bu, farklı sağlayıcıların embedding
+  uzaylarını karşılaştırılabilir yapmıyor** — `AI_PROVIDER`'ı canlı
+  bir arşivde değiştirmek hâlâ elle tam bir re-embed gerektiriyor,
+  bunun için bir migration yok; docstring'de açıkça uyarılıyor.
+- **Gerçek bir bağımlılık çakışması bulundu ve çözüldü**:
+  `google-genai==2.23.0` `pydantic>=2.12.5` istiyor, ama
+  `requirements.txt` `pydantic==2.10.4`'e sabitlenmişti — Docker'da
+  `pip install`'ın kendisi bunu `ResolutionImpossible` ile net şekilde
+  gösterdi. `fastapi`/`pydantic-settings`/`openai`'ın hiçbiri gerçekte
+  `<3.0`'dan daha katı bir üst sınır istemiyordu, yani bu sabitlemeyi
+  bu kadar aşağıda tutan tek gerçek kısıt buydu — `pydantic` `2.12.5`'e
+  yükseltildi, `pydantic-core`'un eşleşen sürümü (`2.41.5` — `2.12.5`
+  başka bir sürümle çalışmayı reddediyor, kendi kontrolü var) hem
+  Docker'da hem bu makinenin `.venv`'inde ayrıca doğrulandı.
+- **"local" sağlayıcı bu maddeye dahil edilmedi**: gerçek bir yerel
+  çıkarım motoru (model ağırlıkları, Ollama/sentence-transformers vb.)
+  gerektiriyor — bu, Faz 11'in son maddesi olan "tam offline semantic
+  search"le aynı altyapı, o yüzden ikisi birlikte ele alınacak şekilde
+  bilinçli olarak oraya bırakıldı; `get_ai_provider()`'ın `local` dalı
+  hâlâ `NotImplementedError` fırlatıyor, artık bunu neden ve nereye
+  bıraktığını söyleyen bir mesajla.
+
+**Doğrulama ortamı notu**: yerel `.venv`'e kurulum, önceki turlardaki
+gibi (`pymupdf`) aynı `platform.mac_ver()` uyumsuzluğu yüzünden normal
+`pip install` ile çalışmadı; wheel'ler indirilip doğrudan
+`site-packages`'a açıldı — bu kez `pydantic-core`'un pydantic'in
+istediğinden farklı bir sürümü otomatik çekilince gerçek bir
+`SystemError` ile karşılaşıldı ve doğru sürüm elle indirilip
+düzeltildi. Asıl doğrulama, gerçek bir `pip install -r requirements.txt`
+çalıştıran temiz bir Docker container'ında yapıldı.
+
+Backend: `ruff check` temiz (Docker'da ve lokalde), testler 168 →
+**174** (+6: `Settings`'e göre Gemini'nin seçildiğini/key olmadan
+açık bir hata verdiğini, "local"ın hâlâ `NotImplementedError`
+fırlattığını doğrulayan provider-seçim testleri; `_pad_embedding`
+için 4 test — kısa bir embedding'i sıfırla doldurma, doğru uzunluğu
+değiştirmeme, savunmacı kırpma, ve cosine similarity'nin pad'lemeden
+önce/sonra birebir aynı kaldığı).
