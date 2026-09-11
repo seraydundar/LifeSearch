@@ -38,6 +38,22 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="")
     gemini_api_key: str = Field(default="")
 
+    # Local AI provider (Faz 11, madde 6a — see docs/roadmap.md). Text,
+    # embeddings and vision go through a separately-installed Ollama
+    # server (https://ollama.com) over plain HTTP; nothing here talks to
+    # a vendor cloud API. Model names default to small, commonly-pulled
+    # ones but assume nothing — `ollama pull <model>` must be run once on
+    # whatever machine runs the backend before AI_PROVIDER=local works.
+    local_ollama_base_url: str = Field(default="http://localhost:11434")
+    local_text_model: str = Field(default="llama3.2")
+    local_embedding_model: str = Field(default="nomic-embed-text")
+    local_vision_model: str = Field(default="llava")
+    # In-process ASR (faster-whisper) — Ollama has no transcription
+    # endpoint. "base" balances accuracy/speed/download size for a
+    # personal-use backend; bump to "small"/"medium" if a beefier host
+    # runs this. Downloaded automatically on first use, cached locally.
+    local_whisper_model: str = Field(default="base")
+
     # CORS
     allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
 

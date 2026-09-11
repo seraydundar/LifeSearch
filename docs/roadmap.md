@@ -1566,7 +1566,11 @@ en küçükten en büyüğe doğru sırayla ele alınıyor:
    (Google Cloud Console + Apple Developer + Supabase Dashboard) hâlâ
    kullanıcıda, bkz. `docs/google-apple-login-setup.md`.
 6. Tam offline semantic search + local AI provider + masaüstü/web
-   istemci (en büyük, en riskli üçü — en sona bırakıldı).
+   istemci (en büyük, en riskli üçü — en sona bırakıldı, kullanıcı
+   isteğiyle üçe bölündü, en küçüğünden başlanıyor):
+   - a. ~~Local AI provider (backend)~~ ✅ — bkz. aşağıdaki alt bölüm.
+   - b. Tam offline semantic search (mobil, on-device vektör arama).
+   - c. Masaüstü/web istemci.
 
 #### Faz 11, madde 1: mobilde özel tarih aralığı seçimi ✅
 
@@ -1777,12 +1781,12 @@ sınıf eklemek demek" diyordu ama `get_ai_provider()`'ın `gemini` dalı
   başka bir sürümle çalışmayı reddediyor, kendi kontrolü var) hem
   Docker'da hem bu makinenin `.venv`'inde ayrıca doğrulandı.
 - **"local" sağlayıcı bu maddeye dahil edilmedi**: gerçek bir yerel
-  çıkarım motoru (model ağırlıkları, Ollama/sentence-transformers vb.)
-  gerektiriyor — bu, Faz 11'in son maddesi olan "tam offline semantic
-  search"le aynı altyapı, o yüzden ikisi birlikte ele alınacak şekilde
-  bilinçli olarak oraya bırakıldı; `get_ai_provider()`'ın `local` dalı
-  hâlâ `NotImplementedError` fırlatıyor, artık bunu neden ve nereye
-  bıraktığını söyleyen bir mesajla.
+  çıkarım motoru gerektiriyor, o yüzden bilinçli olarak Faz 11 madde
+  6'ya bırakıldı; `get_ai_provider()`'ın `local` dalı hâlâ
+  `NotImplementedError` fırlatıyor. (Sonradan madde 6, kullanıcı
+  isteğiyle üçe bölündü — local provider tek başına madde 6a oldu,
+  bkz. aşağıdaki alt bölüm; "offline semantic search"le paylaşılan tek
+  şey Ollama'nın kurulu olması, kod tarafında bağımlılık yok.)
 
 **Doğrulama ortamı notu**: yerel `.venv`'e kurulum, önceki turlardaki
 gibi (`pymupdf`) aynı `platform.mac_ver()` uyumsuzluğu yüzünden normal
@@ -1872,3 +1876,70 @@ aynısı; Google picker iptal edilirse `AuthRepository` hiç
 çağrılmıyor ve hata gösterilmiyor; native bir hata snackbar olarak
 çıkıyor, çökmüyor; `Env`'in dotenv yüklenmemişken bile `null` döndüğü
 — regresyon düzeltmesinin kendi testi).
+
+#### Faz 11, madde 6a: local AI provider (backend) ✅
+
+Faz 11'in son, en büyük maddesi kullanıcı isteğiyle üçe bölündü —
+local AI provider, tam offline semantic search, masaüstü/web istemci
+— ve en küçüğünden başlandı. `get_ai_provider()`'ın `local` dalı
+`NotImplementedError` fırlatıyordu (bkz. Faz 11 madde 4'ün notu).
+
+- **`LocalProvider`** (yeni, `ai_provider.py`): text/embedding(s)/
+  vision **Ollama**'ya (https://ollama.com — ayrı kurulan, HTTP'yle
+  konuşulan bir model sunucusu) gidiyor; `transcribe_audio` ise
+  Ollama'da ASR endpoint'i olmadığı için **`faster-whisper`**'ı
+  (yeni bağımlılık) backend içinde çalıştırıyor. İkisi de bulut
+  API'sine hiç istek atmıyor — tamamen çevrimdışı çalışabilen tek
+  sağlayıcı bu.
+  - `generate_text`/`analyze_image`: Ollama'nın `POST /api/chat`'i,
+    `stream: false` ile. Vision, OpenAI/Gemini'nin content-parts
+    yapısı yerine mesajın kendi üzerinde base64 string listesi
+    (`images`) bekliyor — API dokümanından (resmi `ollama/ollama`
+    reposunun `docs/api.md`'si) doğrulandı, tahmin edilmedi.
+  - `generate_embeddings`: `POST /api/embed`, `input` tek string
+    veya liste kabul ediyor; `nomic-embed-text` 768 boyut üretiyor,
+    `GeminiProvider`'ın kullandığı aynı `_pad_embedding()` ile
+    1536'ya sıfırla dolduruluyor (aynı matematiksel gerekçe, bkz.
+    `GeminiProvider`'ın docstring'i — burada da yalnızca aynı
+    sağlayıcının kendi embedding'leri karşılaştırılıyor).
+  - `transcribe_audio`: `faster_whisper.WhisperModel` ilk kullanımda
+    lazy oluşturuluyor (gereksiz model indirmeden kaçınmak için) ve
+    `asyncio.to_thread` üzerinden çalıştırılıyor — CPU-bound,
+    senkron bir çağrı event loop'u tıkamasın diye.
+  - Ollama'ya bağlanılamazsa (`httpx.ConnectError`) ham bağlantı
+    hatası yerine `docs/local-ai-provider-setup.md`'ye yönlendiren
+    net bir `RuntimeError` fırlatılıyor.
+- **`Settings`**'e `local_ollama_base_url`/`local_text_model`/
+  `local_embedding_model`/`local_vision_model`/`local_whisper_model`
+  eklendi (`backend/.env.example`'da karşılıkları, açıklamalarıyla).
+- **`docs/local-ai-provider-setup.md`** (yeni, `docs/
+  google-apple-login-setup.md`'nin yapısını izliyor): Ollama kurulumu,
+  hangi modellerin `ollama pull`'lanması gerektiği, sağlayıcılar arası
+  geçişte re-embed gerekliliği — hepsi bu oturumdan yapılamayan/
+  doğrulanamayan, kullanıcının kendisinin yapması gereken adımlar.
+
+**Doğrulama ortamı notu**: `faster-whisper`'ın kendisi saf Python
+wheel'i ama derlenmiş transitive bağımlılıkları (`ctranslate2`,
+`onnxruntime`, `av`) var — önce Docker'da (`python:3.12-slim`, gerçek
+`pip install -r requirements-dev.txt`) hem tek başına hem projenin
+tüm `requirements.txt`'iyle birlikte çakışmasız kurulduğu doğrulandı.
+Yerel `.venv`'e kurulum, önceki turlardaki gibi aynı
+`platform.mac_ver()` uyumsuzluğuna (bu kez ayrıca pip 26.2'nin kendi
+`_prevent_import_hook`'una da) çarptı; `pip download` ile wheel'ler
+indirilip doğrudan `site-packages`'a açılarak çözüldü — asıl doğrulama
+yine Docker'da. Yerel `pytest` çalıştırması bu oturumla ilgisiz, önceden
+var olan ayrı bir ortam sorununa (Homebrew Python'ın `pyexpat`/sistem
+`libexpat` sürüm uyuşmazlığı, `pypdf`'i import ederken patlıyor) çarptı;
+Docker'da tüm test paketi (bu değişikliklerle) sorunsuz geçtiği için bu
+yerel makineye özgü, ilgisiz bir kusur olarak not edildi.
+
+Backend: `ruff check` temiz (Docker'da ve lokalde), testler 174 →
+**179** (+5: `Settings`'e göre `LocalProvider`'ın seçildiğini
+doğrulayan provider-seçim testi; `TestLocalProviderOllamaCalls` —
+`httpx.MockTransport`'la gerçek bir Ollama'ya hiç dokunmadan
+`generate_text`'in `/api/chat`'e doğru gövdeyi attığını,
+`generate_embeddings`'in `/api/embed`'e attığını ve sonucu 1536'ya
+doldurduğunu, boş liste için hiç istek atmadığını, `analyze_image`'ın
+görseli base64 `images` alanına koyup JSON yanıtı ayrıştırdığını, ve
+Ollama'ya bağlanılamazsa okunabilir bir `RuntimeError` fırlatıldığını
+doğruluyor).

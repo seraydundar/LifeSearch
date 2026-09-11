@@ -19,6 +19,16 @@ openai==1.59.6
 # older `google-generativeai` package is in maintenance mode.
 google-genai==2.23.0
 
+# Local AI provider (Faz 11, madde 6a — see docs/roadmap.md): text/
+# embeddings/vision go through a separately-installed Ollama server over
+# plain HTTP (already have httpx above, no new dependency for that part).
+# faster-whisper is the one actual new dependency — an in-process local
+# ASR engine, since Ollama has no transcription endpoint. Pure-Python
+# wheel itself; ctranslate2/onnxruntime/av (its compiled deps) resolve
+# fine on python:3.12-slim, verified via Docker per this repo's usual
+# pip workaround (see docs/roadmap.md for why Docker is the check here).
+faster-whisper==1.2.1
+
 # Content extraction (wired up starting Phase 4)
 pypdf==5.1.0
 beautifulsoup4==4.12.3

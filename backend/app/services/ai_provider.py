@@ -5,12 +5,15 @@ against a specific vendor SDK. Swapping OpenAI for Gemini or a local model
 later means adding one more subclass here — nothing else changes.
 """
 
+import asyncio
 import base64
 import io
 import json
+import tempfile
 from abc import ABC, abstractmethod
 from typing import Any
 
+import httpx
 from google import genai
 from google.genai import types
 from openai import AsyncOpenAI
@@ -236,6 +239,142 @@ class GeminiProvider(AIProvider):
         return response.text or ""
 
 
+class LocalProvider(AIProvider):
+    """A fully local, no-cloud-API provider (Faz 11, madde 6a — see
+    docs/roadmap.md). Text, embeddings and vision go through **Ollama**
+    (https://ollama.com), a server installed and run separately from
+    this backend, reached over plain HTTP — nothing here talks to a
+    vendor cloud API, and no request ever leaves the machine Ollama runs
+    on. Transcription is the one exception: Ollama has no ASR endpoint,
+    so `transcribe_audio` runs **faster-whisper** in-process instead.
+
+    None of this can be verified end-to-end from inside this repo — it
+    needs Ollama actually installed, running, and the right models
+    pulled (`ollama pull llama3.2`, etc.) on whatever machine runs the
+    backend. See docs/local-ai-provider-setup.md for that checklist;
+    `_post()` below at least turns "Ollama isn't running" into a clear
+    error instead of a raw connection-refused traceback.
+
+    **Embedding dimension**: whatever the configured embedding model
+    natively outputs (768 for `nomic-embed-text`, 1024 for
+    `mxbai-embed-large`, etc.) gets zero-padded out to the fixed
+    `vector(1536)` column, exactly like `GeminiProvider` — see that
+    class's docstring for why this is mathematically safe. Same caveat
+    applies: switching `AI_PROVIDER` on a database with embeddings from
+    a *different* provider needs a full manual re-embed first.
+    """
+
+    _EMBEDDING_DIMENSIONS = 1536  # chunks.embedding's fixed column size
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        text_model: str,
+        embedding_model: str,
+        vision_model: str,
+        whisper_model_size: str,
+    ) -> None:
+        self._client = httpx.AsyncClient(base_url=base_url, timeout=120.0)
+        self._text_model = text_model
+        self._embedding_model = embedding_model
+        self._vision_model = vision_model
+        self._whisper_model_size = whisper_model_size
+        self._whisper_model: Any = None  # lazily loaded — see _get_whisper_model()
+
+    async def generate_text(self, prompt: str, *, system: str | None = None) -> str:
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        return await self._chat(self._text_model, messages)
+
+    async def generate_embedding(self, text: str) -> list[float]:
+        embeddings = await self.generate_embeddings([text])
+        return embeddings[0]
+
+    async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        data = await self._post("/api/embed", {"model": self._embedding_model, "input": texts})
+        return [_pad_embedding(e, self._EMBEDDING_DIMENSIONS) for e in data["embeddings"]]
+
+    async def analyze_image(self, image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+        # Ollama's chat API takes images as a list of base64 strings on
+        # the message itself (no separate content-parts structure like
+        # OpenAI/Gemini) — mime_type isn't needed, the model infers format.
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "You analyze a photo or screenshot for a personal search app. "
+                    "Respond with strict JSON: "
+                    '{"title": string, "description": string, "ocr_text": string, '
+                    '"tags": [string, ...]}. title is under 8 words. description is '
+                    "1-2 sentences describing what's shown. ocr_text is every piece "
+                    'of visible text transcribed as-is, or "" if there is none. tags '
+                    "are 3-6 short lowercase keywords."
+                ),
+                "images": [base64.b64encode(image_bytes).decode()],
+            }
+        ]
+        content = await self._chat(self._vision_model, messages, response_format="json")
+        try:
+            data = json.loads(content or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        return {
+            "title": data.get("title") or "",
+            "description": data.get("description") or "",
+            "ocr_text": data.get("ocr_text") or "",
+            "tags": data.get("tags") or [],
+        }
+
+    async def transcribe_audio(self, audio_bytes: bytes, mime_type: str) -> str:
+        # faster-whisper is CPU/GPU-bound and synchronous — run it off
+        # the event loop so one transcription doesn't stall every other
+        # request this backend is handling.
+        return await asyncio.to_thread(self._transcribe_sync, audio_bytes, mime_type)
+
+    async def _chat(
+        self, model: str, messages: list[dict[str, Any]], *, response_format: str | None = None
+    ) -> str:
+        payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
+        if response_format:
+            payload["format"] = response_format
+        data = await self._post("/api/chat", payload)
+        return data["message"]["content"] or ""
+
+    async def _post(self, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            response = await self._client.post(path, json=json_body)
+        except httpx.ConnectError as exc:
+            raise RuntimeError(
+                f"Couldn't reach Ollama at {self._client.base_url}{path} ({exc}). "
+                "AI_PROVIDER=local needs Ollama installed and running separately — "
+                "see docs/local-ai-provider-setup.md."
+            ) from exc
+        response.raise_for_status()
+        return response.json()
+
+    def _get_whisper_model(self) -> Any:
+        if self._whisper_model is None:
+            from faster_whisper import WhisperModel
+
+            self._whisper_model = WhisperModel(
+                self._whisper_model_size, device="cpu", compute_type="int8"
+            )
+        return self._whisper_model
+
+    def _transcribe_sync(self, audio_bytes: bytes, mime_type: str) -> str:
+        extension = mime_type.split("/")[-1] or "m4a"
+        with tempfile.NamedTemporaryFile(suffix=f".{extension}") as audio_file:
+            audio_file.write(audio_bytes)
+            audio_file.flush()
+            segments, _info = self._get_whisper_model().transcribe(audio_file.name)
+            return " ".join(segment.text.strip() for segment in segments).strip()
+
+
 def _pad_embedding(values: list[float], target_dimensions: int) -> list[float]:
     """Zero-pads (or, defensively, truncates) `values` out to exactly
     `target_dimensions` — see `GeminiProvider`'s own docstring for why
@@ -262,10 +401,12 @@ def get_ai_provider(settings: Settings) -> AIProvider:
                 )
             return GeminiProvider(settings.gemini_api_key)
         case "local":
-            raise NotImplementedError(
-                "LocalModelProvider isn't implemented yet — bundled with Faz 11's "
-                "offline-semantic-search work (see docs/roadmap.md), since both need "
-                "the same local inference engine."
+            return LocalProvider(
+                base_url=settings.local_ollama_base_url,
+                text_model=settings.local_text_model,
+                embedding_model=settings.local_embedding_model,
+                vision_model=settings.local_vision_model,
+                whisper_model_size=settings.local_whisper_model,
             )
         case other:
             raise ValueError(f"Unknown AI_PROVIDER '{other}'.")
