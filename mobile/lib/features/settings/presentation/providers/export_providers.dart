@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -21,8 +23,18 @@ class ExportController extends AsyncNotifier<void> {
   Future<void> exportAndShare() async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
-      final file = await ref.read(exportServiceProvider).exportUserDataAsJson();
-      await SharePlus.instance.share(ShareParams(files: [XFile(file.path)]));
+      final json = await ref.read(exportServiceProvider).exportUserDataAsJson();
+      // `XFile.fromData` (bytes in memory), not a `dart:io` File path —
+      // works identically on every platform including web, which has
+      // no real filesystem for `path_provider` to hand back a path for
+      // (Faz 11, madde 6c, see docs/roadmap.md).
+      final fileName = 'lifesearch-export-${DateTime.now().millisecondsSinceEpoch}.json';
+      final file = XFile.fromData(
+        utf8.encode(json),
+        name: fileName,
+        mimeType: 'application/json',
+      );
+      await SharePlus.instance.share(ShareParams(files: [file]));
     });
   }
 }

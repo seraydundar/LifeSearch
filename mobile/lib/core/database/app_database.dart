@@ -127,7 +127,21 @@ class AppDatabase extends _$AppDatabase {
 
   static QueryExecutor _openConnection() {
     // Picks the right native backend per platform and stores the file in
-    // the app's documents directory — see the drift_flutter package.
-    return driftDatabase(name: 'lifesearch');
+    // the app's documents directory — see the drift_flutter package. On
+    // web there's no filesystem to speak of, so drift runs sqlite
+    // compiled to WASM inside a worker instead — `web/sqlite3.wasm` and
+    // `web/drift_worker.dart.js` (Faz 11, madde 6c, see docs/roadmap.md)
+    // downloaded from drift's own GitHub release matching this project's
+    // exact pinned drift version (pubspec.lock's resolved version, not
+    // just pubspec.yaml's `^` range — the two files must match the
+    // drift version exactly or the worker protocol can silently
+    // mismatch). `web:` is simply ignored on every non-web platform.
+    return driftDatabase(
+      name: 'lifesearch',
+      web: DriftWebOptions(
+        sqlite3Wasm: Uri.parse('sqlite3.wasm'),
+        driftWorker: Uri.parse('drift_worker.dart.js'),
+      ),
+    );
   }
 }

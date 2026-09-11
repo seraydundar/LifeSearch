@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- Without this, every outgoing request (Supabase, the AI backend)
+	     fails under App Sandbox — Flutter's own macOS template doesn't
+	     include it by default (Faz 11, madde 6c, see docs/roadmap.md).
+	     Kept identical in Release.entitlements per Flutter's own
+	     guidance: https://docs.flutter.dev/platform-integration/macos/building -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

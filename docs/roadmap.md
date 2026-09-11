@@ -1549,7 +1549,7 @@ Google/Apple login, Gemini/local provider, masaüstü/web, tam offline
 semantic search, analytics ekranı, item-bazlı Privacy Mode — doküman
 zaten bunları "ileri aşama" sayıyor; Faz 10'un kapsamı dışında.
 
-### Faz 11 — İleri aşama özellikleri
+### Faz 11 — İleri aşama özellikleri ✅ (6c'nin Windows/Linux kısmı hariç, bkz. madde 6c)
 
 Faz 10'da bilinçli olarak kapsam dışı bırakılan maddeler — kullanıcı
 bunları da eklemek istedi. Büyüklükleri çok farklı (bazıları yarım
@@ -1571,7 +1571,8 @@ en küçükten en büyüğe doğru sırayla ele alınıyor:
    - a. ~~Local AI provider (backend)~~ ✅ — bkz. aşağıdaki alt bölüm.
    - b. ~~Tam offline semantic search (mobil)~~ ✅ — bkz. aşağıdaki alt
      bölüm.
-   - c. Masaüstü/web istemci.
+   - c. ~~Masaüstü/web istemci~~ ✅ (web + macOS) — bkz. aşağıdaki alt
+     bölüm. Windows/Linux eklenmedi (bkz. alt bölümdeki gerekçe).
 
 #### Faz 11, madde 1: mobilde özel tarih aralığı seçimi ✅
 
@@ -2025,3 +2026,101 @@ daha ağır bastığını, sonuçların skora göre sıralı olduğunu doğruluy
 farklı alanlardaki kelimeleri eşleştirdiğini, daha fazla sorgu terimi
 içeren item'ın daha yükseğe sıralandığını, paylaşılan bir kelimenin
 artık sıfırdan farklı bir `similarity` aldığını).
+
+#### Faz 11, madde 6c: masaüstü/web istemci ✅ (web + macOS)
+
+Faz 11 madde 6'nın üçe bölünen son parçası. Kullanıcıya kapsam
+soruldu: gerçek bir nöral embedding gibi, bu oturumda derlenip/
+çalıştırılıp doğrulanabilen platformlar **web** ve **macOS**'tu (bu
+makinede Xcode kurulu, gerçek bir macOS cihaz bulundu); Windows/Linux
+için gerçek bir makine yok — kod eklense de burada hiç
+derlenip/çalıştırılamazdı. Kullanıcı **"Web + macOS masaüstü"**
+kapsamını seçti.
+
+- **`flutter create --platforms=web,macos .`**: `web/` ve `macos/`
+  scaffold edildi — aynı Dart/Flutter kod tabanı, ayrı bir istemci
+  değil. `.metadata`'daki migration listesi bu komutun bir yan etkiyle
+  android/ios girdilerini SİLİP macos/web ile değiştirdiğini ortaya
+  çıkardı (gerçek bir `flutter create` tuhaflığı) — dördü de geri
+  eklendi, yoksa `flutter migrate` ileride android/ios şablon
+  dosyalarını artık takip edilmiyor sanabilirdi.
+- **Drift'in web'de sqlite'ı WASM'a derlemesi gerekiyor** — tarayıcıda
+  gerçek bir dosya sistemi yok. `AppDatabase._openConnection()`'a
+  `DriftWebOptions(sqlite3Wasm:, driftWorker:)` eklendi;
+  `web/sqlite3.wasm` ve `web/drift_worker.dart.js` drift'in kendi
+  GitHub release'inden, **`pubspec.lock`'ın çözümlenmiş drift
+  sürümüyle (2.34.4) tam eşleşecek şekilde** indirildi — sürüm
+  uyuşmazlığında worker protokolü sessizce bozulabiliyor. Bu olmadan
+  uygulama web'de hiç açılmıyordu (`driftDatabase()` web'de `web:`
+  parametresi verilmeden `ArgumentError` fırlatıyor).
+- **`capture_platform_support.dart`** (yeni, saf fonksiyonlar):
+  `Choose Image`/`Upload Document`/`Take Photo`/`Record Audio`'nun
+  hepsi `OfflineItemRepository.uploadFile()` üzerinden `dart:io`'nun
+  `File`'ını kullanıyor — web'de gerçek bir dosya sistemi yok, bu da
+  crash demek. Dördü de web'de devre dışı, "Web'de henüz
+  desteklenmiyor" alt metniyle (Google/Apple login'deki "bozuk bir
+  düğme göstermek yerine hiç gösterme" deseninin aynısı). `Take Photo`
+  macOS'ta da AYRICA devre dışı — `camera` paketinin macOS
+  implementasyonu hiç yok (kendi `pubspec.yaml`'ı yalnızca
+  android/ios/web tanımlıyor); `Choose Image`/`Upload Document`/
+  `Record Audio` macOS'ta normal çalışıyor (`file_picker`/`record`'ın
+  gerçek masaüstü backend'leri var).
+  - **Testability kararı**: bu kontroller `kIsWeb`/`Platform.isMacOS`'u
+    widget içinde doğrudan okumak yerine saf `isWeb`/`isMacOS`
+    parametreli fonksiyonlar olarak yazıldı — `flutter test` her zaman
+    `kIsWeb == false` ile çalışıyor ve `Platform.isMacOS` testi
+    çalıştıran makineye bağlı, o yüzden widget'ın kendisi hiçbir
+    platform kombinasyonunu deterministik test edemezdi.
+- **`ExportService`/`ExportController`**: `dart:io` `File` + temp
+  dizine yazıp paylaşmak yerine, JSON'ı doğrudan bytes'tan
+  paylaşacak şekilde (`XFile.fromData`) yeniden yazıldı — bu bir
+  "web'de devre dışı" sınırı değil, her platformda aynı şekilde
+  çalışan daha basit bir tasarım; `path_provider`/`dart:io` bağımlılığı
+  export'tan tamamen kalktı.
+- **Gerçek bir hata bulundu, düzeltildi, ve before/after ile
+  doğrulandı**: Flutter'ın kendi macOS şablonu
+  `com.apple.security.app-sandbox`'ı açıyor ama
+  `com.apple.security.network.client`'ı **eklemiyor** — bu olmadan
+  App Sandbox altında her giden istek (Supabase, AI backend) sessizce
+  engelleniyor (Flutter'ın kendi dokümanında da belgeli, bu projeye
+  özgü değil). Düzeltmeden önce derlenip çalıştırılan `.app`, her
+  seferinde birkaç saniye içinde bir arka plan ağ çağrısında
+  (`google_fonts`'un bir fontu HTTPS üzerinden çekmesi) hata veriyordu;
+  entitlement her iki dosyaya da (`DebugProfile.entitlements` VE
+  `Release.entitlements` — Flutter'ın kendi tavsiyesi: ikisini de aynı
+  tut) eklenip yeniden derlendikten sonra, aynı senaryo iki ayrı
+  çalıştırmada da hiç hata vermedi. `codesign -d --entitlements :-`
+  ile entitlement'ın gerçekten imzalı binary'ye gömüldüğü doğrulandı.
+- **`docs/desktop-web-setup.md`** (yeni): yukarıdakilerin hepsinin
+  ayrıntısı, artı Windows/Linux'un neden eklenmediği, drift wasm
+  dosyalarının sürüm senkronizasyonu nasıl yapılır, ve web'de Google/
+  Apple login'in ihtiyaç duyacağı ekstra (bu oturumda yapılmayan)
+  kurulum notları.
+
+**Bilinçli sınırlar**:
+- Windows/Linux hiç eklenmedi — bu sandbox'ta ne derlenebilir ne
+  çalıştırılabilirdi, kod eklemek "yazıldı ama hiç denenmedi" durumu
+  yaratırdı.
+- Web'de gerçek bir tarayıcı çalıştırması hiç yapılamadı — bu
+  makinede Chrome/Chromium kurulu değil (`flutter doctor` bunu
+  doğruluyor). Wasm sqlite kurulumu kod incelemesi + drift'in
+  belgelenmiş sözleşmesiyle birebir eşleşme üzerinden doğrulandı,
+  gerçek bir tarayıcıda veritabanı açıldığı izlenerek değil.
+- macOS uygulamasının gerçek bir kullanıcı akışı (giriş yapıp arama
+  yapmak gibi) hiç uçtan uca izlenemedi — bu oturum bir process
+  başlatıp loglarını okuyabiliyor, GUI'yi tıklayarak süremiyor. Süreç
+  gerçek Supabase kimlik bilgileriyle ~30 saniye boyunca hatasız
+  çalıştığı gözlemlendi, gerçek bir kullanıcı akışını tamamladığı değil.
+- Web'de Google/Apple login için gereken ekstra kurulum (web'e özgü
+  meta tag/redirect URI) eklenmedi — Faz 11 madde 5 zaten "kod var,
+  kurulum kullanıcıda" durumundaydı, bu bir platform daha ekliyor.
+
+Mobile: `flutter analyze` temiz, `flutter build web` ve `flutter build
+macos` ikisi de gerçekten derlendi (macOS için ayrıca gerçekten
+çalıştırılıp gözlemlendi), testler 180 → **189** (+9: yeni
+`capture_platform_support_test.dart` — dosya tabanlı yakalamanın
+web'de desteklenmediğini, her yerde başka desteklendiğini, kameranın
+hem web'de hem macOS'ta desteklenmediğini ama başka bir native
+platformda desteklendiğini, web ve macOS için gösterilen gerekçelerin
+birbirinden farklı olduğunu, gerçekten desteklenen bir platformda hiç
+gerekçe gösterilmediğini doğruluyor).

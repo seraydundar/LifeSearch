@@ -1,23 +1,29 @@
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/error/failure.dart';
 import 'export_payload.dart';
 
 /// Builds a JSON export of everything the user has saved (requirements
-/// doc, section 49-52: "Export") and writes it to a temp file for the
-/// caller to hand off (e.g. via the OS share sheet — see
-/// `ExportController`). Supabase-direct, like the rest of Settings/Items;
-/// see `export_payload.dart` for the (independently testable) shape.
+/// doc, section 49-52: "Export") as a plain string for the caller to
+/// hand off (e.g. via the OS share sheet — see `ExportController`).
+/// Supabase-direct, like the rest of Settings/Items; see
+/// `export_payload.dart` for the (independently testable) shape.
+///
+/// Deliberately returns a `String`, not a `dart:io` `File` written to a
+/// temp directory — that would need `path_provider`, which has no real
+/// filesystem to work with on web (Faz 11, madde 6c, see
+/// docs/roadmap.md). Sharing straight from bytes via `XFile.fromData`
+/// (see `ExportController`) works identically on every platform, so
+/// this isn't a "disabled on web" limitation, just a simpler design
+/// that happens to also be portable.
 class ExportService {
   ExportService(this._client);
 
   final SupabaseClient _client;
 
-  Future<File> exportUserDataAsJson() async {
+  Future<String> exportUserDataAsJson() async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw const AuthFailure('Oturum bulunamadı.');
 
@@ -57,9 +63,6 @@ class ExportService {
       tagsByItemId: tagsByItemId,
     );
 
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/lifesearch-export-${DateTime.now().millisecondsSinceEpoch}.json');
-    await file.writeAsString(const JsonEncoder.withIndent('  ').convert(payload));
-    return file;
+    return const JsonEncoder.withIndent('  ').convert(payload);
   }
 }

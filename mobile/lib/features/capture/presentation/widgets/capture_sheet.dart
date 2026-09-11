@@ -1,4 +1,7 @@
+import 'dart:io' show Platform;
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +12,7 @@ import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../screens/audio_recorder_screen.dart';
 import '../screens/camera_screen.dart';
+import 'capture_platform_support.dart';
 
 /// The "+" flow from the requirements doc (section 13) — every option is
 /// live as of Phase 8.
@@ -29,6 +33,25 @@ Future<void> showCaptureSheet(BuildContext context) {
 
 class _CaptureSheet extends ConsumerWidget {
   const _CaptureSheet();
+
+  // The actual per-platform decision lives in capture_platform_support.dart
+  // as plain functions of `isWeb`/`isMacOS` booleans, not `kIsWeb`/
+  // `Platform.isMacOS` reads buried inside this widget — that's what
+  // lets a test exercise every platform combination deterministically,
+  // regardless of which machine actually runs `flutter test` (Faz 11,
+  // madde 6c, see docs/roadmap.md). `kIsWeb` is still checked *before*
+  // `Platform.isMacOS` here so this short-circuits without ever
+  // touching `dart:io` on web, where referencing `Platform` at all is
+  // unsafe.
+  bool get _fileCaptureSupported => fileCaptureSupportedFor(isWeb: kIsWeb);
+
+  bool get _cameraSupported =>
+      cameraSupportedFor(isWeb: kIsWeb, isMacOS: !kIsWeb && Platform.isMacOS);
+
+  String? get _fileCaptureUnavailableReason => fileCaptureUnavailableReasonFor(isWeb: kIsWeb);
+
+  String? get _cameraUnavailableReason =>
+      cameraUnavailableReasonFor(isWeb: kIsWeb, isMacOS: !kIsWeb && Platform.isMacOS);
 
   Future<void> _pickAndUpload(
     BuildContext context,
@@ -196,7 +219,8 @@ class _CaptureSheet extends ConsumerWidget {
               _CaptureTile(
                 icon: Icons.image_outlined,
                 label: 'Choose Image',
-                enabled: !isUploading,
+                enabled: !isUploading && _fileCaptureSupported,
+                unavailableReason: _fileCaptureUnavailableReason,
                 onTap: () => _pickAndUpload(
                   context,
                   ref,
@@ -207,7 +231,8 @@ class _CaptureSheet extends ConsumerWidget {
               _CaptureTile(
                 icon: Icons.description_outlined,
                 label: 'Upload Document',
-                enabled: !isUploading,
+                enabled: !isUploading && _fileCaptureSupported,
+                unavailableReason: _fileCaptureUnavailableReason,
                 onTap: () => _pickAndUpload(
                   context,
                   ref,
@@ -219,13 +244,15 @@ class _CaptureSheet extends ConsumerWidget {
               _CaptureTile(
                 icon: Icons.camera_alt_outlined,
                 label: 'Take Photo',
-                enabled: !isUploading,
+                enabled: !isUploading && _fileCaptureSupported && _cameraSupported,
+                unavailableReason: _cameraUnavailableReason,
                 onTap: () => _takePhoto(context, ref),
               ),
               _CaptureTile(
                 icon: Icons.mic_none_outlined,
                 label: 'Record Audio',
-                enabled: !isUploading,
+                enabled: !isUploading && _fileCaptureSupported,
+                unavailableReason: _fileCaptureUnavailableReason,
                 onTap: () => _recordAudio(context, ref),
               ),
               _CaptureTile(
@@ -304,6 +331,7 @@ class _CaptureTile extends StatelessWidget {
     required this.label,
     this.onTap,
     this.enabled = true,
+    this.unavailableReason,
   });
 
   final IconData icon;
@@ -311,11 +339,19 @@ class _CaptureTile extends StatelessWidget {
   final VoidCallback? onTap;
   final bool enabled;
 
+  /// Why this tile is greyed out on *this platform specifically* — as
+  /// opposed to the transient "an upload is already in progress"
+  /// disabled state, which has no explanation and needs none (Faz 11,
+  /// madde 6c, see docs/roadmap.md). `null` (including whenever
+  /// [enabled] is true) shows no subtitle at all.
+  final String? unavailableReason;
+
   @override
   Widget build(BuildContext context) {
     return ListTile(
       leading: Icon(icon),
       title: Text(label),
+      subtitle: unavailableReason == null ? null : Text(unavailableReason!),
       enabled: enabled,
       onTap: enabled ? onTap : null,
     );
