@@ -15,5 +15,17 @@ abstract interface class AuthRepository {
 
   Future<AppUser> signUp({required String email, required String password});
 
+  /// Exchanges a Google ID token (already obtained from the native
+  /// Google Sign-In SDK — see `NativeOAuthService`) for a Supabase
+  /// session (Faz 11, madde 5 — see docs/roadmap.md). Works for both a
+  /// brand-new user and one signing back in; Supabase creates the
+  /// account automatically on first use, same as it does for
+  /// email/password `signUp`.
+  Future<AppUser> signInWithGoogleIdToken({required String idToken});
+
+  /// Same contract as [signInWithGoogleIdToken], for Apple's identity
+  /// token.
+  Future<AppUser> signInWithAppleIdToken({required String idToken});
+
   Future<void> signOut();
 }

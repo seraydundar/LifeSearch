@@ -42,6 +42,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     final isLoading = ref.watch(authControllerProvider).isLoading;
+    final googleAvailable = ref.watch(googleSignInAvailableProvider);
+    final appleAvailable = ref.watch(appleSignInAvailableProvider);
 
     return Scaffold(
       body: SafeArea(
@@ -91,6 +93,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ),
                   const SizedBox(height: 24),
                   PrimaryButton(label: 'Giriş Yap', isLoading: isLoading, onPressed: _submit),
+                  if (googleAvailable || appleAvailable) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        const Expanded(child: Divider()),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text('veya', style: Theme.of(context).textTheme.bodySmall),
+                        ),
+                        const Expanded(child: Divider()),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  if (googleAvailable) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: isLoading
+                            ? null
+                            : () => ref.read(authControllerProvider.notifier).signInWithGoogle(),
+                        icon: const Icon(Icons.login),
+                        label: const Text('Google ile devam et'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (appleAvailable)
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: isLoading
+                            ? null
+                            : () => ref.read(authControllerProvider.notifier).signInWithApple(),
+                        icon: const Icon(Icons.apple),
+                        label: const Text('Apple ile devam et'),
+                      ),
+                    ),
                   const SizedBox(height: 16),
                   Center(
                     child: TextButton(

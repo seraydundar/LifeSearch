@@ -62,6 +62,40 @@ class SupabaseAuthRepository implements AuthRepository {
   }
 
   @override
+  Future<AppUser> signInWithGoogleIdToken({required String idToken}) async {
+    try {
+      final response = await _client.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+      );
+      final user = _toAppUser(response.user);
+      if (user == null) {
+        throw const AuthFailure('Google ile giriş başarısız oldu. Lütfen tekrar dene.');
+      }
+      return user;
+    } on AuthException catch (e) {
+      throw AuthFailure(_mapAuthError(e));
+    }
+  }
+
+  @override
+  Future<AppUser> signInWithAppleIdToken({required String idToken}) async {
+    try {
+      final response = await _client.auth.signInWithIdToken(
+        provider: OAuthProvider.apple,
+        idToken: idToken,
+      );
+      final user = _toAppUser(response.user);
+      if (user == null) {
+        throw const AuthFailure('Apple ile giriş başarısız oldu. Lütfen tekrar dene.');
+      }
+      return user;
+    } on AuthException catch (e) {
+      throw AuthFailure(_mapAuthError(e));
+    }
+  }
+
+  @override
   Future<void> signOut() async {
     try {
       await _client.auth.signOut();

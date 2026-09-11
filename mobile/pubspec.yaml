@@ -56,6 +56,10 @@ dependencies:
   share_plus: ^13.3.0
   local_auth: ^3.0.2
   google_fonts: ^8.2.1
+  google_sign_in: ^7.2.0
+  # Pinned below latest (8.x needs Dart >=3.11, this project is on 3.10.1
+  # — see pubspec.yaml's `environment.sdk`).
+  sign_in_with_apple: ^7.0.1
 
 dev_dependencies:
   flutter_test:

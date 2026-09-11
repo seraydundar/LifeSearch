@@ -1562,9 +1562,9 @@ en küçükten en büyüğe doğru sırayla ele alınıyor:
 3. ~~Analytics ekranı~~ ✅ — bkz. aşağıdaki alt bölüm.
 4. ~~Gemini AI provider~~ ✅ — bkz. aşağıdaki alt bölüm. "local"
    sağlayıcı madde 6'ya bırakıldı (aynı yerel çıkarım altyapısı).
-5. Google/Apple login (Google/Apple Developer Console + Supabase
-   Dashboard'da kullanıcının kendisinin yapması gereken bir kurulum
-   adımı var).
+5. ~~Google/Apple login~~ ✅ (kod) — bkz. aşağıdaki alt bölüm. Kurulum
+   (Google Cloud Console + Apple Developer + Supabase Dashboard) hâlâ
+   kullanıcıda, bkz. `docs/google-apple-login-setup.md`.
 6. Tam offline semantic search + local AI provider + masaüstü/web
    istemci (en büyük, en riskli üçü — en sona bırakıldı).
 
@@ -1800,3 +1800,75 @@ fırlattığını doğrulayan provider-seçim testleri; `_pad_embedding`
 için 4 test — kısa bir embedding'i sıfırla doldurma, doğru uzunluğu
 değiştirmeme, savunmacı kırpma, ve cosine similarity'nin pad'lemeden
 önce/sonra birebir aynı kaldığı).
+
+#### Faz 11, madde 5: Google/Apple login ✅ (kod) — kurulum kullanıcıda
+
+Yalnızca e-posta/şifre ile giriş/kayıt vardı.
+
+- **`NativeOAuthService`** (yeni — `AppLockService`'in `local_auth`'ı
+  sardığı gibi, `google_sign_in`/`sign_in_with_apple`'ı sarıyor; bir
+  testin gerçek bir platform kanalına hiç dokunmadan sahtesini
+  koyabilmesi için): `signInWithGoogle()`/`signInWithApple()` bir ID
+  token döndürüyor (kullanıcı native seçiciyi iptal ederse `null` —
+  bir hata değil), `AuthRepository.signInWithGoogleIdToken()`/
+  `signInWithAppleIdToken()` bunu Supabase'in `signInWithIdToken()`'ına
+  veriyor. Supabase hesabı ilk kullanımda otomatik oluşturuyor —
+  e-posta/şifre `signUp`'ın zaten yaptığı gibi.
+- **`google_sign_in` 7.x'in tamamen yeniden tasarlanmış API'si**: bu
+  paket 7.0'da (mevcut sürüm) imperatif `GoogleSignIn().signIn()`'den
+  `GoogleSignIn.instance.initialize()` + `.authenticate()` + bir
+  `authenticationEvents` stream'ine dayanan çok farklı bir mimariye
+  geçti — ID token artık `account.authentication.idToken` üzerinden
+  senkron olarak alınıyor (paketin kendi kaynağından doğrulandı, bkz.
+  aşağıdaki "Doğrulama" notu). `initialize()` tam olarak bir kez, başka
+  hiçbir çağrıdan önce çalışmalı — `main.dart`'a, yalnızca
+  `GOOGLE_CLIENT_ID`/`GOOGLE_SERVER_CLIENT_ID` ayarlıyken eklendi.
+- **Gerçek bir sürüm kısıtı bulundu**: `sign_in_with_apple`'ın en
+  güncel sürümü (8.x) Dart `>=3.11` istiyor, bu proje `^3.10.1`'de —
+  `flutter pub get` bunu net şekilde reddetti. `7.0.1`'e sabitlendi
+  (Dart SDK yükseltildiğinde tekrar değerlendirilebilir).
+- **`LoginScreen`**: Google/Apple düğmeleri yalnızca kendi ön koşulları
+  karşılanmışken görünüyor (`googleSignInAvailableProvider`/
+  `appleSignInAvailableProvider`) — yapılandırılmamış bir sağlayıcıyı
+  bozuk gösteren bir düğme yerine, hiç göstermiyor. Apple yalnızca iOS/
+  macOS'ta (`NativeOAuthService.isAppleAvailable`) — Android ayrı bir
+  web tabanlı akış gerektirir, kurulmadı.
+- **Gerçek bir regresyon bulundu ve düzeltildi**: `Env._optional()`
+  (`backendUrl`, ve yeni `googleClientId`/`googleServerClientId`)
+  `dotenv.env[...]`'i hiç try/catch'siz çağırıyordu — `dotenv.load()`
+  hiç çalışmamışken (çoğu widget testinde olduğu gibi) bu sessizce
+  `null` dönmek yerine `NotInitializedError` **fırlatıyordu**.
+  `LoginScreen`'in yeni `googleSignInAvailableProvider` okuması, bu
+  spesifik `Env` erişimini mock'lanmadan çalıştıran **ilk** test oldu
+  ve var olan bir testi (`login_screen_test.dart`'ın "signs in..."
+  testi, hiçbir Google/Apple provider'ını override etmiyordu) gerçekten
+  kırdı — spekülasyonla değil, gerçek bir test çalıştırmasıyla
+  yakalandı. `_optional()` artık `NotInitializedError`'ı "hiçbir şey
+  ayarlanmamış" ile aynı şekilde ele alıyor — bu, yalnızca yeni kodu
+  değil, `backendUrl`'ün de daha önce hiç ortaya çıkmamış aynı gizli
+  kırılganlığını düzeltti.
+- **`docs/google-apple-login-setup.md`** (yeni): Google Cloud
+  Console'da Web/iOS/Android OAuth client'ları oluşturma, Supabase
+  Dashboard'da her iki sağlayıcıyı yapılandırma, Apple Developer'da
+  Services ID + Sign in with Apple key oluşturma, `mobile/.env` ve
+  Xcode capability adımlarının tam kontrol listesi — hepsi kullanıcının
+  kendisinin yapması gereken, bu oturumdan yapılamayan/doğrulanamayan
+  adımlar.
+
+**Doğrulanamayan**: gerçek bir Google/Apple giriş turu uçtan uca —
+gerçek OAuth kimlik bilgileri, her iki sağlayıcının da gerçekten
+yapılandırıldığı bir Supabase projesi, (Apple için) capability'li bir
+provisioning profille imzalanmış gerçek bir cihaz/simülatör gerektiriyor,
+hiçbiri bu ortamda yok. Yapılabilecek kadarı doğrulandı: `flutter
+analyze` temiz; widget testleri `AuthController.signInWithGoogle()`/
+`signInWithApple()`'ın her dalını (başarı, kullanıcı iptali, native SDK
+hatası) gerçek SDK'lar yerine `FakeNativeOAuthService`'e karşı test
+ediyor.
+
+Mobile: `flutter analyze` temiz, testler 163 → **169** (+6: Google/
+Apple düğmelerinin ikisi de yokken hiçbiri görünmüyor; Google'a
+basmak native picker'dan gelen token'la giriş yapıyor; Apple için
+aynısı; Google picker iptal edilirse `AuthRepository` hiç
+çağrılmıyor ve hata gösterilmiyor; native bir hata snackbar olarak
+çıkıyor, çökmüyor; `Env`'in dotenv yüklenmemişken bile `null` döndüğü
+— regresyon düzeltmesinin kendi testi).
