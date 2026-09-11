@@ -47,6 +47,7 @@ class RemoteItemDataSource {
             ? null
             : DateTime.parse(row['captured_at'] as String),
         fileSizeBytes: (row['file_size_bytes'] as num?)?.toInt(),
+        private: row['private'] as bool? ?? false,
       );
 
   /// One-shot snapshot of every item the user has — used by `SyncService`
@@ -193,6 +194,14 @@ class RemoteItemDataSource {
   Future<void> setFavorite(String itemId, bool favorite) async {
     try {
       await _client.from('items').update({'favorite': favorite}).eq('id', itemId);
+    } on PostgrestException catch (e) {
+      throw UnexpectedFailure('Güncellenemedi: ${e.message}');
+    }
+  }
+
+  Future<void> setPrivate(String itemId, bool private) async {
+    try {
+      await _client.from('items').update({'private': private}).eq('id', itemId);
     } on PostgrestException catch (e) {
       throw UnexpectedFailure('Güncellenemedi: ${e.message}');
     }

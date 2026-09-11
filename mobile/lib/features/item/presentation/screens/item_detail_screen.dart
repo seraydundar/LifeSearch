@@ -111,6 +111,24 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     }
   }
 
+  /// Item-level Privacy Mode (Faz 11, madde 2 — see docs/roadmap.md).
+  /// Marking/unmarking doesn't itself need a biometric check — that's
+  /// only required to *reveal* already-private items in Library/Home/
+  /// Search (see `LibraryScreen`'s reveal button); this is just editing
+  /// one of the signed-in user's own items, same trust level as
+  /// favoriting it.
+  Future<void> _togglePrivate() async {
+    final next = !_item.private;
+    setState(() => _item = _item.copyWith(private: next)); // optimistic
+    try {
+      await ref.read(itemRepositoryProvider).setPrivate(_item.id, next);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _item = _item.copyWith(private: !next)); // revert
+      context.showErrorSnackBar('Güncellenemedi.');
+    }
+  }
+
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -195,6 +213,11 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
           IconButton(
             icon: Icon(_item.favorite ? Icons.star : Icons.star_border),
             onPressed: _toggleFavorite,
+          ),
+          IconButton(
+            icon: Icon(_item.private ? Icons.lock_outline : Icons.lock_open_outlined),
+            tooltip: _item.private ? 'Private\'dan çıkar' : 'Private yap',
+            onPressed: _togglePrivate,
           ),
           IconButton(
             icon: _isDeleting

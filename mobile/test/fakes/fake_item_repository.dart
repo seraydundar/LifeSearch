@@ -123,6 +123,14 @@ class FakeItemRepository implements ItemRepository {
   }
 
   @override
+  Future<void> setPrivate(String itemId, bool private) async {
+    final index = _items.indexWhere((i) => i.id == itemId);
+    if (index == -1) return;
+    _items[index] = _items[index].copyWith(private: private);
+    _notify();
+  }
+
+  @override
   Future<void> dismissDuplicate(String itemId) async {}
 
   @override

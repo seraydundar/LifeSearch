@@ -34,6 +34,36 @@ void main() {
     );
   }
 
+  testWidgets('the private toggle marks and unmarks an item, no auth needed either way',
+      (tester) async {
+    final item = Item(
+      id: 'item-1',
+      type: ItemType.note,
+      title: 'A note',
+      processingStatus: 'completed',
+      favorite: false,
+      createdAt: DateTime(2026, 1, 1),
+    );
+    final repo = FakeItemRepository(initialItems: [item]);
+
+    await tester.pumpWidget(wrap(item, repo: repo));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.lock_open_outlined), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.lock_open_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.lock_outline), findsOneWidget);
+    expect((await repo.findById('item-1'))!.private, isTrue);
+
+    await tester.tap(find.byIcon(Icons.lock_outline));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.lock_open_outlined), findsOneWidget);
+    expect((await repo.findById('item-1'))!.private, isFalse);
+  });
+
   testWidgets('an item already tapped from Library (storagePath already known) shows Open File immediately',
       (tester) async {
     final full = Item(

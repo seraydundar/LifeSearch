@@ -54,6 +54,12 @@ class ItemLocalDataSource {
     );
   }
 
+  Future<void> setPrivate(String itemId, bool private, {required String syncStatus}) {
+    return (_db.update(_db.localItems)..where((t) => t.id.equals(itemId))).write(
+      LocalItemsCompanion(private: Value(private), syncStatus: Value(syncStatus)),
+    );
+  }
+
   Future<void> setNoteContent(
     String itemId,
     String title,

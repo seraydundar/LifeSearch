@@ -9,19 +9,43 @@ import 'package:lifesearch/features/item/presentation/providers/item_providers.d
 import 'package:lifesearch/features/item/presentation/widgets/item_list_tile.dart';
 import 'package:lifesearch/features/library/presentation/screens/library_screen.dart';
 import 'package:lifesearch/features/library/presentation/widgets/item_grid_tile.dart';
+import 'package:lifesearch/features/settings/data/app_lock_service.dart';
+import 'package:lifesearch/features/settings/presentation/providers/app_lock_providers.dart';
 
 import '../fakes/fake_collection_repository.dart';
 import '../fakes/fake_collection_suggestion_repository.dart';
 import '../fakes/fake_item_repository.dart';
 
+/// Overrides just the two methods that would otherwise hit a real
+/// platform channel — the base `AppLockService()` constructor itself
+/// touches no platform state, only `isDeviceSupported()`/`authenticate()`
+/// do, and both are overridden here.
+class _FakeAppLockService extends AppLockService {
+  _FakeAppLockService({this.deviceSupported = true, this.authenticateResult = true});
+
+  final bool deviceSupported;
+  final bool authenticateResult;
+
+  @override
+  Future<bool> isDeviceSupported() async => deviceSupported;
+
+  @override
+  Future<bool> authenticate() async => authenticateResult;
+}
+
 void main() {
-  Widget wrap(FakeItemRepository repo, {FakeCollectionRepository? collections}) {
+  Widget wrap(
+    FakeItemRepository repo, {
+    FakeCollectionRepository? collections,
+    AppLockService? appLockService,
+  }) {
     return ProviderScope(
       overrides: [
         itemRepositoryProvider.overrideWithValue(repo),
         collectionRepositoryProvider.overrideWithValue(collections ?? FakeCollectionRepository()),
         collectionSuggestionRepositoryProvider
             .overrideWithValue(FakeCollectionSuggestionRepository()),
+        appLockServiceProvider.overrideWithValue(appLockService ?? _FakeAppLockService()),
       ],
       child: MaterialApp.router(
         routerConfig: GoRouter(routes: [
@@ -208,5 +232,69 @@ void main() {
     for (final tile in tiles) {
       expect(tile.key, equals(ValueKey(tile.item.id)));
     }
+  });
+
+  Item makeItem({required String id, required String title, bool private = false}) => Item(
+        id: id,
+        type: ItemType.note,
+        title: title,
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+        private: private,
+      );
+
+  testWidgets('private items are hidden by default and shown once revealed', (tester) async {
+    final repo = FakeItemRepository(initialItems: [
+      makeItem(id: '1', title: 'Public note'),
+      makeItem(id: '2', title: 'Private note', private: true),
+    ]);
+    await tester.pumpWidget(wrap(repo));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Public note'), findsOneWidget);
+    expect(find.text('Private note'), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.lock_outline));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Private note'), findsOneWidget);
+
+    // Hiding again needs no re-authentication.
+    await tester.tap(find.byIcon(Icons.lock_open_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Private note'), findsNothing);
+  });
+
+  testWidgets('a failed authentication keeps private items hidden', (tester) async {
+    final repo = FakeItemRepository(initialItems: [
+      makeItem(id: '1', title: 'Private note', private: true),
+    ]);
+    await tester.pumpWidget(
+      wrap(repo, appLockService: _FakeAppLockService(authenticateResult: false)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.lock_outline));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Private note'), findsNothing);
+  });
+
+  testWidgets('a device with no biometric/PIN set up gets an error, not a reveal', (tester) async {
+    final repo = FakeItemRepository(initialItems: [
+      makeItem(id: '1', title: 'Private note', private: true),
+    ]);
+    await tester.pumpWidget(
+      wrap(repo, appLockService: _FakeAppLockService(deviceSupported: false)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.lock_outline));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('biyometrik/PIN'), findsOneWidget);
+    expect(find.text('Private note'), findsNothing);
   });
 }

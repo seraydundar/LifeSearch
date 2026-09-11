@@ -7,9 +7,12 @@ import 'package:intl/intl.dart';
 import 'package:lifesearch/core/database/app_database.dart';
 import 'package:lifesearch/core/database/database_provider.dart';
 import 'package:lifesearch/core/error/failure.dart';
+import 'package:lifesearch/features/item/domain/entities/item.dart';
+import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
 import 'package:lifesearch/features/search/presentation/providers/search_providers.dart';
 import 'package:lifesearch/features/search/presentation/screens/search_tab.dart';
 
+import '../fakes/fake_item_repository.dart';
 import '../fakes/fake_search_repository.dart';
 
 void main() {
@@ -18,7 +21,12 @@ void main() {
   // real footgun it's meant to catch, so it's just noise here.
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
 
-  Widget wrap(FakeSearchRepository repo, {List<String> recent = const [], String? initialQuery}) {
+  Widget wrap(
+    FakeSearchRepository repo, {
+    List<String> recent = const [],
+    String? initialQuery,
+    FakeItemRepository? itemRepo,
+  }) {
     return ProviderScope(
       overrides: [
         searchRepositoryProvider.overrideWithValue(repo),
@@ -26,6 +34,7 @@ void main() {
         // SearchController.search() records to recentSearchesDataSourceProvider
         // on success — give it an in-memory db instead of touching a real file.
         appDatabaseProvider.overrideWithValue(AppDatabase.forTesting(NativeDatabase.memory())),
+        if (itemRepo != null) itemRepositoryProvider.overrideWithValue(itemRepo),
       ],
       child: MaterialApp(home: Scaffold(body: SearchTab(initialQuery: initialQuery))),
     );
@@ -83,6 +92,43 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Arama şu anda kullanılamıyor.'), findsOneWidget);
+  });
+
+  testWidgets("a private item's own result is hidden from search, others still show",
+      (tester) async {
+    // A `SearchResult` only carries an id/snippet — this checks it
+    // against the local cache's `private` flag (Faz 11, madde 2 — see
+    // docs/roadmap.md), so the corresponding Item has to exist there too.
+    final privateItem = Item(
+      id: 'item-1',
+      type: ItemType.note,
+      title: 'Secret note',
+      processingStatus: 'completed',
+      favorite: false,
+      createdAt: DateTime(2026, 1, 1),
+      private: true,
+    );
+    final publicItem = Item(
+      id: 'item-2',
+      type: ItemType.note,
+      title: 'Public note',
+      processingStatus: 'completed',
+      favorite: false,
+      createdAt: DateTime(2026, 1, 1),
+    );
+    final repo = FakeSearchRepository(resultsToReturn: [
+      fakeSearchResult(itemId: 'item-1', itemTitle: 'Secret note'),
+      fakeSearchResult(itemId: 'item-2', itemTitle: 'Public note'),
+    ]);
+    await tester.pumpWidget(wrap(
+      repo,
+      initialQuery: 'note',
+      itemRepo: FakeItemRepository(initialItems: [privateItem, publicItem]),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Public note'), findsOneWidget);
+    expect(find.text('Secret note'), findsNothing);
   });
 
   testWidgets('an initialQuery (e.g. a tapped tag) runs automatically', (tester) async {

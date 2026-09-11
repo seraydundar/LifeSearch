@@ -50,6 +50,14 @@ class LocalItems extends Table {
   /// this column existed.
   IntColumn get fileSizeBytes => integer().nullable()();
 
+  /// Item-level Privacy Mode (requirements doc; see docs/roadmap.md,
+  /// Faz 11, madde 2) — hidden from Home/Library/Search
+  /// (`item_providers.dart`'s `itemsProvider`) unless the user passes a
+  /// biometric/PIN check to reveal private items for the session,
+  /// independent of whether the whole-app lock (Settings' "Privacy"
+  /// switch) is even turned on.
+  BoolColumn get private => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {id};
 }

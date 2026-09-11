@@ -233,6 +233,18 @@ class OfflineItemRepository implements ItemRepository {
   }
 
   @override
+  Future<void> setPrivate(String itemId, bool private) async {
+    await _local.setPrivate(itemId, private, syncStatus: 'pending');
+    await _queue.enqueue(
+      userId: _userId,
+      operationType: 'set_private',
+      itemId: itemId,
+      payload: {'private': private},
+    );
+    _syncService.syncSoon();
+  }
+
+  @override
   Future<void> dismissDuplicate(String itemId) async {
     await _local.setDuplicateDismissed(itemId, syncStatus: 'pending');
     await _queue.enqueue(userId: _userId, operationType: 'dismiss_duplicate', itemId: itemId, payload: const {});

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../shared/extensions/build_context_x.dart';
 import '../../../collections/presentation/widgets/collection_suggestions_section.dart';
 import '../../../collections/presentation/widgets/collections_bar.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../../item/presentation/widgets/item_list_tile.dart';
+import '../../../settings/presentation/providers/app_lock_providers.dart';
 import '../../domain/library_sort.dart';
 import '../providers/library_view_providers.dart';
 import '../widgets/item_grid_tile.dart';
@@ -19,11 +21,33 @@ class LibraryScreen extends ConsumerStatefulWidget {
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   bool _favoritesOnly = false;
 
+  /// Item-level Privacy Mode (Faz 11, madde 2 — see docs/roadmap.md).
+  /// Hiding never needs a check; revealing does. `AppLockGate` already
+  /// re-hides on backgrounding regardless of how this got turned on.
+  Future<void> _togglePrivateReveal() async {
+    if (ref.read(privateItemsRevealedProvider)) {
+      ref.read(privateItemsRevealedProvider.notifier).state = false;
+      return;
+    }
+    final supported = await ref.read(appLockDeviceSupportedProvider.future);
+    if (!mounted) return;
+    if (!supported) {
+      context.showErrorSnackBar(
+        'Private içerikleri görmek için cihazında biyometrik/PIN kilidi ayarlı olmalı.',
+      );
+      return;
+    }
+    final authenticated = await ref.read(appLockServiceProvider).authenticate();
+    if (!mounted || !authenticated) return;
+    ref.read(privateItemsRevealedProvider.notifier).state = true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final itemsAsync = ref.watch(itemsProvider);
     final viewMode = ref.watch(libraryViewModeProvider);
     final sort = ref.watch(librarySortProvider);
+    final privateRevealed = ref.watch(privateItemsRevealedProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -50,6 +74,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             icon: Icon(_favoritesOnly ? Icons.star : Icons.star_border),
             tooltip: 'Sadece favoriler',
             onPressed: () => setState(() => _favoritesOnly = !_favoritesOnly),
+          ),
+          IconButton(
+            icon: Icon(privateRevealed ? Icons.lock_open_outlined : Icons.lock_outline),
+            tooltip: privateRevealed ? 'Private içerikleri gizle' : 'Private içerikleri göster',
+            onPressed: _togglePrivateReveal,
           ),
         ],
       ),

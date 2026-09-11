@@ -244,6 +244,32 @@ void main() {
     expect(row!.syncStatus, 'synced');
   });
 
+  test('pushes a queued set_private', () async {
+    await local.upsert(LocalItemsCompanion.insert(
+      id: 'item-1',
+      userId: 'user-1',
+      type: ItemType.note.dbValue,
+      processingStatus: const Value('completed'),
+      createdAt: DateTime(2026, 1, 1),
+      private: const Value(true),
+      syncStatus: const Value('pending'),
+    ));
+    await queue.enqueue(
+      userId: 'user-1',
+      operationType: 'set_private',
+      itemId: 'item-1',
+      payload: {'private': true},
+    );
+    when(() => remote.setPrivate('item-1', true)).thenAnswer((_) async {});
+
+    await sync.syncNow();
+
+    verify(() => remote.setPrivate('item-1', true)).called(1);
+    expect(await queue.pendingEntries('user-1'), isEmpty);
+    final row = await local.findById('item-1');
+    expect(row!.syncStatus, 'synced');
+  });
+
   test('pulling remote state does not clobber a not-yet-synced local edit', () async {
     await local.upsert(LocalItemsCompanion.insert(
       id: 'note-1',
@@ -299,6 +325,19 @@ void main() {
         'favorite': false,
         'created_at': DateTime(2026, 1, 1).toIso8601String(),
       };
+
+  test("pulling remote state carries a row's private flag into the local cache", () async {
+    when(() => remote.fetchAllRows()).thenAnswer(
+      (_) async => [
+        {...noteRow('note-1', title: 'Secret'), 'private': true},
+      ],
+    );
+    when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'shh');
+
+    await sync.syncNow();
+
+    expect((await local.findById('note-1'))!.private, isTrue);
+  });
 
   test('pulling remote notes fetches and stores each one\'s content', () async {
     when(() => remote.fetchAllRows()).thenAnswer(

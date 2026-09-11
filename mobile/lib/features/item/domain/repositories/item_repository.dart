@@ -52,6 +52,12 @@ abstract interface class ItemRepository {
 
   Future<void> setFavorite(String itemId, bool favorite);
 
+  /// Item-level Privacy Mode (requirements doc; see docs/roadmap.md,
+  /// Faz 11, madde 2) — a private item is hidden from Home/Library/Search
+  /// (see `item_providers.dart`'s `itemsProvider`) unless private items
+  /// have been revealed for the session.
+  Future<void> setPrivate(String itemId, bool private);
+
   /// User says "this isn't actually a duplicate" (or "I know, ignore it") —
   /// hides the banner for good, doesn't touch either item's content.
   Future<void> dismissDuplicate(String itemId);

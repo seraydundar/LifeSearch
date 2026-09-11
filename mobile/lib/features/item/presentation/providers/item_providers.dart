@@ -38,12 +38,40 @@ final itemRepositoryProvider = Provider<ItemRepository>((ref) {
   );
 });
 
-/// Local-first item list for the signed-in user — reads the Drift cache,
-/// which `SyncService` keeps reconciled with Supabase. Home/Library both
-/// watch this directly and it works fully offline.
-final itemsProvider = StreamProvider<List<Item>>((ref) {
+/// Whether private items should currently be shown (Faz 11, madde 2 —
+/// see docs/roadmap.md) — starts `false` every time the app is opened,
+/// same amnesia as `appLockUnlockedProvider`, and flips back to `false`
+/// whenever the app is backgrounded (see `AppLockGate`'s lifecycle
+/// observer) — a private item re-hides itself even if the user never
+/// turned on the whole-app lock. Only a successful `AppLockService.
+/// authenticate()` (see `LibraryScreen`'s reveal button) sets this true.
+final privateItemsRevealedProvider = StateProvider<bool>((ref) => false);
+
+/// The repository's raw item stream, `private` items included — used
+/// only where something needs to know which ids are private
+/// (`SearchController`'s result filtering, via `.future`, so it awaits
+/// the first real emission instead of reading a possibly-still-`loading`
+/// cached value — a plain `.valueOrNull` here raced the very first
+/// search of a session and let a private item's result through) without
+/// ever *displaying* them. Every screen-facing list goes through
+/// [itemsProvider] instead. Not private (no leading `_`) — search_providers.dart
+/// awaits it directly.
+final allItemsIncludingPrivateProvider = StreamProvider<List<Item>>((ref) {
   return ref.watch(itemRepositoryProvider).watchItems();
 });
+
+/// Local-first item list for the signed-in user — reads the Drift cache,
+/// which `SyncService` keeps reconciled with Supabase. Home/Library both
+/// watch this directly and it works fully offline. Hides `private` items
+/// unless [privateItemsRevealedProvider] is true — the one place that
+/// filter has to live for both screens to get it "for free".
+final itemsProvider = StreamProvider<List<Item>>((ref) {
+  final revealed = ref.watch(privateItemsRevealedProvider);
+  return ref.watch(itemRepositoryProvider).watchItems().map(
+        (items) => revealed ? items : items.where((i) => !i.private).toList(),
+      );
+});
+
 
 /// Number of local changes still waiting to reach the server — shown in
 /// Settings (requirements doc, section 49: "Sync"). Scoped to the

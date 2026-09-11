@@ -17,7 +17,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.connection);
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -76,6 +76,11 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(recentSearches, recentSearches.userId);
             await backfillSyncQueueOwnership();
             await delete(recentSearches).go();
+          }
+          // v8 (Faz 11 — item-level Privacy Mode): mirrors
+          // infra/supabase/migrations/0014_item_private.sql.
+          if (from < 8) {
+            await m.addColumn(localItems, localItems.private);
           }
         },
       );

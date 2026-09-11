@@ -207,6 +207,7 @@ class SyncService {
           row['captured_at'] == null ? null : DateTime.parse(row['captured_at'] as String),
         ),
         fileSizeBytes: Value((row['file_size_bytes'] as num?)?.toInt()),
+        private: Value(row['private'] as bool? ?? false),
         syncStatus: const Value('synced'),
       ));
     }
@@ -292,6 +293,8 @@ class SyncService {
             );
           case 'set_favorite':
             await _remote.setFavorite(entry.itemId, payload['favorite'] as bool);
+          case 'set_private':
+            await _remote.setPrivate(entry.itemId, payload['private'] as bool);
           case 'dismiss_duplicate':
             await _remote.dismissDuplicate(entry.itemId);
           case 'delete_item':

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../features/item/presentation/providers/item_providers.dart';
 import '../features/settings/presentation/providers/app_lock_providers.dart';
 import '../features/settings/presentation/screens/app_lock_screen.dart';
 
@@ -39,6 +40,11 @@ class _AppLockGateState extends ConsumerState<AppLockGate> with WidgetsBindingOb
     if (state == AppLifecycleState.paused) {
       final enabled = ref.read(appLockEnabledProvider).valueOrNull ?? false;
       if (enabled) ref.read(appLockUnlockedProvider.notifier).state = false;
+      // Item-level Privacy Mode (Faz 11, madde 2) re-hides itself on
+      // backgrounding independently of whether the whole-app lock is even
+      // turned on — a private item revealed a moment ago shouldn't still
+      // be visible after the app comes back from the background.
+      ref.read(privateItemsRevealedProvider.notifier).state = false;
     }
   }
 

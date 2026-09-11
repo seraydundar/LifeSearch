@@ -1558,7 +1558,7 @@ işleri, bazıları Google/Apple/Supabase'de harici kurulum gerektiriyor);
 en küçükten en büyüğe doğru sırayla ele alınıyor:
 
 1. ~~Mobilde özel tarih aralığı seçimi~~ ✅ — bkz. aşağıdaki alt bölüm.
-2. Item-bazlı Privacy Mode.
+2. ~~Item-bazlı Privacy Mode~~ ✅ — bkz. aşağıdaki alt bölüm.
 3. Analytics ekranı.
 4. Gemini/local AI provider.
 5. Google/Apple login (Google/Apple Developer Console + Supabase
@@ -1606,3 +1606,80 @@ Mobile: `flutter analyze` temiz, 135 → **137** test (+2: özel aralık
 seçiminin her iki ucu da doğru filtre olarak uyguladığını — gerçek
 takvim grid'inde iki güne dokunup "Save"e basarak — ve picker iptal
 edilirse önceki seçimin değişmediğini doğruluyor).
+
+#### Faz 11, madde 2: item-bazlı Privacy Mode ✅
+
+Yalnızca biyometrik/PIN'le tüm uygulamayı kilitleyen bir "Privacy"
+switch'i vardı (Settings) — tek bir hassas içeriği tüm uygulamayı
+kilitlemeye gerek kalmadan gizli tutmanın bir yolu yoktu.
+
+- **Şema**: `items.private` (yeni migration
+  `0014_item_private.sql`) ve `LocalItems.private` (Drift şeması
+  v7→v8) — `favorite` ile birebir aynı desen. **RLS bu sütuna göre
+  hiçbir şey filtrelemiyor**; bu bilinçli bir tercih (aşağıdaki
+  "Bilinçli sınır"a bkz.).
+- **`ItemDetailScreen`**: kilit ikonlu bir aksiyon — işaretlemek/
+  kaldırmak biyometrik onay istemiyor (kendi item'ını favorilemekle
+  aynı güven seviyesi); yalnızca zaten private olanları **görmek**
+  onay istiyor.
+- **`item_providers.dart`**: `itemsProvider` (Home + Library'nin
+  paylaştığı tek kaynak) artık `privateItemsRevealedProvider` `false`
+  iken `private` item'ları listeden çıkarıyor — iki ekran da tek bir
+  yerden "bedavaya" doğru davranışı alıyor.
+- **`LibraryScreen`**: kilit/kilit-açık ikonlu bir "reveal" düğmesi —
+  basılınca `AppLockService.authenticate()` (mevcut whole-app-lock
+  altyapısı, `Settings`'in "Privacy" switch'inin zaten kullandığı)
+  çağrılıyor; başarılıysa private item'lar o oturum için görünür
+  oluyor. Gizlemek hiç onay istemiyor. `AppLockGate`'in arka plana
+  alma dinleyicisi artık bunu da sıfırlıyor — whole-app-lock kapalı
+  olsa bile, uygulama arka plana alınınca private item'lar tekrar
+  gizleniyor.
+- **`SearchController`/`relatedItemsProvider`**: bir `SearchResult`
+  yalnızca id/snippet taşıyor, kendi `.private`'ına bakamıyor — local
+  cache'teki gerçek `Item` listesiyle çapraz kontrol ediliyor.
+
+**İki gerçek hata bulundu ve düzeltildi** (ikisi de bu turda eklenen
+widget testleriyle yakalandı, spekülasyonla değil):
+1. İlk tasarım `ref.read(...).valueOrNull` ile senkron okuyordu —
+   oturumun ilk aramasında, alttaki stream henüz hiç yayın
+   yapmamışken bu `null` dönüyor, yani private bir item'ın sonucu
+   filtrelenmeden sızabiliyordu. Düzeltme: `allItemsIncludingPrivateProvider.future`'ı
+   `await` etmek — ilk gerçek yayını bekliyor, anlık/boş bir
+   snapshot okumuyor.
+2. O `await` eklendikten sonra, provider'ın kendisi hata durumuna
+   düşerse (örn. imzalı kullanıcı yok) `.future` bu hatayı fırlatıyor
+   — `.valueOrNull`'ın sessizce yuttuğunun aksine — bu da tüm aramayı
+   başarısız gösteriyordu. Düzeltme: `try/catch` ile, kontrol edilecek
+   bir şey yokken tüm aramayı düşürmek yerine sonuçları filtrelenmemiş
+   döndürmek.
+
+**Bilinçli sınır** (kapsamlı, açıkça belgelendi): `private` yalnızca
+istemci tarafında uygulanıyor — RLS hâlâ her satırı yalnızca sahibine
+göre kısıtlıyor, öncekiyle aynı. Backend'in `private` diye bir kavramı
+yok, yani:
+- **Ask AI (RAG)** bir private item'ın içeriğinden hâlâ alıntı
+  yapabilir/cevaba dahil edebilir.
+- **Smart Collection önerileri** ve **duplicate-detection banner'ı**
+  hâlâ private item'lara referans verebilir.
+- Bir item'ın id'sini zaten bilen (örn. eski bir deep link) doğrudan
+  `/item/:id`'ye gidip detay ekranını açabilir — Library/Home/Search
+  filtrelese de, `ItemByIdLoader`/deep link rotası bu kontrolü
+  yapmıyor.
+
+Bunların hepsini kapatmak, backend'in her retrieval RPC'sinin
+(hybrid_search, find_related, find_duplicate_candidate, collection
+suggestions) `private`'ı bilmesini ve filtrelemesini gerektirir —
+burada yapılmadı, gerçek bir sunucu-taraflı erişim kontrolü değil,
+"rastgele göz atmadan gizleme" seviyesinde bir özellik olarak
+belgelendi.
+
+Backend: yalnızca migration (`0014_item_private.sql`), kod
+değişikliği yok. Mobile: `flutter analyze` temiz, testler 137 →
+**144** (+7: `LibraryScreen`'de private item'ların varsayılan
+gizlendiğini/reveal ile göründüğünü, başarısız kimlik doğrulamanın
+gizli tuttuğunu, cihaz desteklemediğinde hata gösterdiğini — 3 test;
+item detay ekranında private işaretleme/kaldırmanın onay istemediğini
+— 1 test; `SyncService`'te `set_private` push'unu ve pull'da
+`private` alanının doğru taşındığını — 2 test; Search'te bir private
+item'ın kendi sonucunun gizlenip diğerlerinin kaldığını — 1 test —
+doğruluyor).

@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/database/database_provider.dart';
 import '../../../../core/network/api_client_provider.dart';
 import '../../../../core/network/supabase_client_provider.dart';
+import '../../../item/domain/entities/item.dart';
+import '../../../item/presentation/providers/item_providers.dart';
 import '../../data/local/local_search_data_source.dart';
 import '../../data/local/offline_fallback_search_repository.dart';
 import '../../data/local/recent_searches_data_source.dart';
@@ -10,6 +12,35 @@ import '../../data/remote/api_search_repository.dart';
 import '../../domain/entities/search_filters.dart';
 import '../../domain/entities/search_result.dart';
 import '../../domain/repositories/search_repository.dart';
+
+/// A `SearchResult` only ever carries an id/snippet, not the full `Item`
+/// — it can't check `.private` on itself the way `itemsProvider`'s list
+/// can, so Search/Related Items need this cross-check instead (Faz 11,
+/// madde 2 — see docs/roadmap.md). Skipped entirely once private items
+/// are revealed, same as `itemsProvider`.
+///
+/// Awaits `allItemsIncludingPrivateProvider.future` rather than reading
+/// a `.valueOrNull` snapshot — the very first search of a session can
+/// run before that stream's first emission arrives, and a `valueOrNull`
+/// read at exactly that moment sees `null`/`loading`, which would have
+/// let a private item's result straight through unfiltered.
+///
+/// If that provider itself errors (no signed-in session — `.future`
+/// rethrows a `StreamProvider`'s error state, unlike `.valueOrNull`,
+/// which swallows it into `null`) this falls back to showing every
+/// result rather than failing the whole search over a privacy check
+/// that has nothing to check against yet.
+Future<List<SearchResult>> _hidePrivateResults(Ref ref, List<SearchResult> results) async {
+  if (ref.read(privateItemsRevealedProvider)) return results;
+  List<Item> items;
+  try {
+    items = await ref.read(allItemsIncludingPrivateProvider.future);
+  } catch (_) {
+    return results;
+  }
+  final privateIds = {for (final item in items) if (item.private) item.id};
+  return results.where((r) => !privateIds.contains(r.itemId)).toList();
+}
 
 /// `Supabase.instance` asserts if `Supabase.initialize()` never ran —
 /// harmless in the real app (`main()` always initializes it first, see
@@ -72,9 +103,10 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
 
     state = const AsyncLoading();
     final filters = ref.read(searchFiltersProvider);
-    state = await AsyncValue.guard(
-      () => ref.read(searchRepositoryProvider).search(trimmed, filters: filters),
-    );
+    state = await AsyncValue.guard(() async {
+      final results = await ref.read(searchRepositoryProvider).search(trimmed, filters: filters);
+      return _hidePrivateResults(ref, results);
+    });
 
     final userId = _currentUserIdOrNull(ref);
     if (!state.hasError && userId != null) {
@@ -99,5 +131,8 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
 /// section on the item detail screen. Keyed by item id so switching
 /// between items doesn't reuse a stale result.
 final relatedItemsProvider = FutureProvider.autoDispose.family<List<SearchResult>, String>(
-  (ref, itemId) => ref.watch(searchRepositoryProvider).related(itemId),
+  (ref, itemId) async {
+    final results = await ref.watch(searchRepositoryProvider).related(itemId);
+    return _hidePrivateResults(ref, results);
+  },
 );

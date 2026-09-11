@@ -52,6 +52,11 @@ sealed class Item with _$Item {
     // (requirements doc, section 49-52). `null` for notes/links, and for
     // anything uploaded before this field existed.
     int? fileSizeBytes,
+    // Item-level Privacy Mode (Faz 11, madde 2 — see docs/roadmap.md) —
+    // hidden from Home/Library/Search unless private items are revealed
+    // for the session (see item_providers.dart's
+    // `privateItemsRevealedProvider`).
+    @Default(false) bool private,
   }) = _Item;
 }
 

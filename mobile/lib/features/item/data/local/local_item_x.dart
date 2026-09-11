@@ -25,5 +25,6 @@ extension LocalItemX on LocalItem {
         longitude: longitude,
         capturedAt: capturedAt,
         fileSizeBytes: fileSizeBytes,
+        private: private,
       );
 }
