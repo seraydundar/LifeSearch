@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/intl.dart';
 import 'package:lifesearch/core/database/app_database.dart';
 import 'package:lifesearch/core/database/database_provider.dart';
 import 'package:lifesearch/core/error/failure.dart';
@@ -91,5 +92,72 @@ void main() {
 
     expect(repo.lastQuery, 'docker');
     expect(find.text('Docker Notes'), findsOneWidget);
+  });
+
+  testWidgets('picking a custom date range applies both ends as filters', (tester) async {
+    final repo = FakeSearchRepository(resultsToReturn: [fakeSearchResult()]);
+    await tester.pumpWidget(wrap(repo, initialQuery: 'docker'));
+    await tester.pumpAndSettle();
+
+    // The date chip sits at the end of a horizontally-scrolling filter
+    // row — off the default test viewport until scrolled into view.
+    await tester.ensureVisible(find.text('Her zaman'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Her zaman')); // opens the date preset menu
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Özel aralık…'));
+    await tester.pumpAndSettle();
+
+    // The picker opens on the current month's calendar grid (no
+    // `initialDateRange` yet) — picking the 1st and 5th of that month
+    // directly is far less brittle across Flutter versions than typing
+    // into the keyboard-entry mode's date fields.
+    await tester.tap(find.text('1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('5'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    final now = DateTime.now();
+    final expectedFrom = DateTime(now.year, now.month, 1);
+    final expectedTo = DateTime(now.year, now.month, 5, 23, 59, 59, 999, 999);
+    expect(repo.lastFilters!.dateFrom, expectedFrom);
+    expect(repo.lastFilters!.dateTo, expectedTo);
+    final format = DateFormat('d MMM');
+    expect(
+      find.text('${format.format(expectedFrom)} - ${format.format(expectedTo)}'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('cancelling the date range picker keeps the previous filter active',
+      (tester) async {
+    final repo = FakeSearchRepository(resultsToReturn: [fakeSearchResult()]);
+    await tester.pumpWidget(wrap(repo, initialQuery: 'docker'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Her zaman'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Her zaman'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bugün')); // a real filter, not "Her zaman" itself
+    await tester.pumpAndSettle();
+    final filtersAfterToday = repo.lastFilters;
+
+    await tester.ensureVisible(find.text('Bugün'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bugün'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Özel aralık…'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.close)); // the picker's own dismiss button
+    await tester.pumpAndSettle();
+
+    // Neither the chip nor the last-applied filters changed — a
+    // cancelled picker must never wipe out what was already selected.
+    expect(find.text('Bugün'), findsOneWidget);
+    expect(find.text('Özel aralık…'), findsNothing); // the menu itself closed
+    expect(repo.lastFilters, filtersAfterToday);
   });
 }

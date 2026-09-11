@@ -1424,11 +1424,10 @@ doğruluyor, "dün"ün `date_to`'sunun kesinlikle bugünden önce kaldığını
 doğruluyor, "bu X" ifadelerinin hâlâ üst sınırsız olduğunu, "geçen
 hafta"/"geçen yıl"ın da kapalı aralık olduğunu doğruluyor).
 
-**Kapsam dışı bırakılan**: mobilde özel tarih aralığı seçimi (Search
-sekmesinin üç sabit preset'i — bugün/bu hafta/bu ay — hâlâ aynı;
-kullanıcının kendi başlangıç/bitiş tarihini seçmesi ayrı, planlanmamış
-bir özellik) — denetim raporunun bu maddesi özellikle NLP parser'ın
-takvim matematiğiydi, mobil UI değil.
+**O zaman kapsam dışı bırakılan** (sonradan eklendi): mobilde özel
+tarih aralığı seçimi — denetim raporunun bu maddesi özellikle NLP
+parser'ın takvim matematiğiydi, mobil UI değil. Kullanıcı bunu da
+istedi, bkz. Faz 11, madde 1.
 
 #### Faz 10c, madde 3: taranmış PDF için OCR fallback ✅
 
@@ -1549,3 +1548,61 @@ uyumlu hale getirildi):
 Google/Apple login, Gemini/local provider, masaüstü/web, tam offline
 semantic search, analytics ekranı, item-bazlı Privacy Mode — doküman
 zaten bunları "ileri aşama" sayıyor; Faz 10'un kapsamı dışında.
+
+### Faz 11 — İleri aşama özellikleri
+
+Faz 10'da bilinçli olarak kapsam dışı bırakılan maddeler — kullanıcı
+bunları da eklemek istedi. Büyüklükleri çok farklı (bazıları yarım
+günlük mobil özellikler, bazıları haftalarca sürebilecek altyapı
+işleri, bazıları Google/Apple/Supabase'de harici kurulum gerektiriyor);
+en küçükten en büyüğe doğru sırayla ele alınıyor:
+
+1. ~~Mobilde özel tarih aralığı seçimi~~ ✅ — bkz. aşağıdaki alt bölüm.
+2. Item-bazlı Privacy Mode.
+3. Analytics ekranı.
+4. Gemini/local AI provider.
+5. Google/Apple login (Google/Apple Developer Console + Supabase
+   Dashboard'da kullanıcının kendisinin yapması gereken bir kurulum
+   adımı var).
+6. Tam offline semantic search ve masaüstü/web istemci (en büyük,
+   en riskli ikisi — en sona bırakıldı).
+
+#### Faz 11, madde 1: mobilde özel tarih aralığı seçimi ✅
+
+Search sekmesinin tarih filtresi yalnızca üç sabit preset sunuyordu
+(Her zaman/Bugün/Geçen hafta/Geçen ay); kullanıcının kendi başlangıç/
+bitiş tarihini seçmesi yoktu — `SearchFilters`'ta `dateTo` alanı da
+hiç yoktu, tek bir alt sınır (`dateFrom`) taşıyordu.
+
+- **`SearchFilters`**'a `dateTo` eklendi (freezed, `build_runner`
+  yeniden çalıştırıldı).
+- **`ApiSearchRepository`**: `date_to` artık backend'in `/search/`
+  isteğine ekleniyor — backend zaten `date_to`'yu kabul ediyordu
+  (Faz 10c, madde 2), mobil taraf hiç göndermiyordu.
+- **`LocalSearchDataSource`**: offline keyword fallback'e de
+  `dateTo` (`isSmallerOrEqualValue`) eklendi — online/offline aynı
+  filtre semantiğini paylaşıyor.
+- **`SearchTab`**: tarih preset menüsüne "Özel aralık…" eklendi —
+  seçilince Flutter'ın kendi `showDateRangePicker()`'ı açılıyor.
+  Seçilen aralık, bitiş gününün tamamını kapsayacak şekilde
+  (`23:59:59.999999`'a kadar) `dateTo`'ya çevriliyor — "20'sine kadar"
+  seçildiğinde 20'sinin 23:59'unda oluşturulmuş bir şeyin de dışarıda
+  kalmaması için (backend'in kendi "geçen X" mantığıyla aynı
+  gerekçe, bkz. query_parser.py). Kullanıcı picker'ı iptal ederse
+  (`showDateRangePicker` `null` döner) önceki seçim aynen kalıyor —
+  hiçbir şey sıfırlanmıyor. Chip artık seçili özel aralığı
+  ("1 Eyl - 5 Eyl" gibi) kendi etiketi yerine gösteriyor.
+- **Gerçek bir hata bulundu ve düzeltildi**: `DateTime`'ın 7.
+  pozisyonel argümanı `millisecond`, `microsecond` değil —
+  `DateTime(y, m, d, 23, 59, 59, 999999)` yazmak "999999 milisaniye"
+  (≈16.7 dakika) ekleyip gece yarısını aşıp bir sonraki güne
+  taşıyordu, tam olarak önlenmek istenen şeyi yeniden yaratıyordu.
+  Doğrusu iki ayrı argüman: `DateTime(y, m, d, 23, 59, 59, 999, 999)`.
+  Bunu bir widget testi (gerçek `showDateRangePicker` takvim
+  grid'iyle etkileşime giren, mock'lanmamış bir test) yakaladı —
+  yalnızca seviyeyi değil gerçek son tarihi doğruladığı için.
+
+Mobile: `flutter analyze` temiz, 135 → **137** test (+2: özel aralık
+seçiminin her iki ucu da doğru filtre olarak uyguladığını — gerçek
+takvim grid'inde iki güne dokunup "Save"e basarak — ve picker iptal
+edilirse önceki seçimin değişmediğini doğruluyor).

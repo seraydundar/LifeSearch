@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../../../core/error/failure.dart';
 import '../../../../shared/widgets/life_search_bar.dart';
@@ -21,7 +22,7 @@ const _typeFilterBuckets = <String, Set<ItemType>>{
   'Audio': {ItemType.audio},
 };
 
-enum _DatePreset { anytime, today, lastWeek, lastMonth }
+enum _DatePreset { anytime, today, lastWeek, lastMonth, custom }
 
 extension on _DatePreset {
   String get label => switch (this) {
@@ -29,8 +30,12 @@ extension on _DatePreset {
         _DatePreset.today => 'Bugün',
         _DatePreset.lastWeek => 'Geçen hafta',
         _DatePreset.lastMonth => 'Geçen ay',
+        _DatePreset.custom => 'Özel aralık…',
       };
 
+  /// `null` for `custom` — that one needs two dates from the user
+  /// (`showDateRangePicker`), not a fixed offset from now; see
+  /// `_SearchTabState._selectDatePreset`.
   DateTime? get since {
     final now = DateTime.now();
     return switch (this) {
@@ -38,6 +43,7 @@ extension on _DatePreset {
       _DatePreset.today => DateTime(now.year, now.month, now.day),
       _DatePreset.lastWeek => now.subtract(const Duration(days: 7)),
       _DatePreset.lastMonth => now.subtract(const Duration(days: 30)),
+      _DatePreset.custom => null,
     };
   }
 }
@@ -59,6 +65,10 @@ class _SearchTabState extends ConsumerState<SearchTab>
   late final _controller = TextEditingController(text: widget.initialQuery);
   Timer? _debounce;
   _DatePreset _datePreset = _DatePreset.anytime;
+  // Only meaningful while `_datePreset == _DatePreset.custom` — kept
+  // separately (rather than folded into the enum) so the chip can show
+  // the actual picked dates, not just the generic "Özel aralık…" label.
+  DateTimeRange? _customRange;
 
   @override
   void initState() {
@@ -102,11 +112,58 @@ class _SearchTabState extends ConsumerState<SearchTab>
     ref.read(searchControllerProvider.notifier).researchWithCurrentFilters();
   }
 
-  void _selectDatePreset(_DatePreset preset) {
-    setState(() => _datePreset = preset);
+  Future<void> _selectDatePreset(_DatePreset preset) async {
+    if (preset == _DatePreset.custom) {
+      final now = DateTime.now();
+      final picked = await showDateRangePicker(
+        context: context,
+        // A decade back is plenty for anything this app could have —
+        // there's no real "first possible date" to derive from data.
+        firstDate: DateTime(now.year - 10),
+        lastDate: now,
+        initialDateRange: _customRange,
+      );
+      if (picked == null) return; // cancelled — whatever was active stays active
+      if (!mounted) return;
+      setState(() {
+        _datePreset = _DatePreset.custom;
+        _customRange = picked;
+      });
+      _applyDateFilter(
+        picked.start,
+        // Inclusive of the whole end day, not just its midnight — a
+        // range picked as "through the 20th" should still match
+        // something created at 23:59 on the 20th (same reasoning as the
+        // backend's own "geçen X" phrases, see query_parser.py).
+        // `DateTime`'s 7th positional argument is `millisecond`, not
+        // `microsecond` — both need setting to actually reach
+        // 23:59:59.999999, not roll past midnight into the next day.
+        DateTime(picked.end.year, picked.end.month, picked.end.day, 23, 59, 59, 999, 999),
+      );
+      return;
+    }
+
+    setState(() {
+      _datePreset = preset;
+      _customRange = null;
+    });
+    _applyDateFilter(preset.since, null);
+  }
+
+  void _applyDateFilter(DateTime? dateFrom, DateTime? dateTo) {
     final current = ref.read(searchFiltersProvider);
-    ref.read(searchFiltersProvider.notifier).state = current.copyWith(dateFrom: preset.since);
+    ref.read(searchFiltersProvider.notifier).state =
+        current.copyWith(dateFrom: dateFrom, dateTo: dateTo);
     ref.read(searchControllerProvider.notifier).researchWithCurrentFilters();
+  }
+
+  /// The chip's own label once a custom range is active — the actual
+  /// picked dates read better than the generic "Özel aralık…" menu entry.
+  String get _dateChipLabel {
+    final range = _customRange;
+    if (_datePreset != _DatePreset.custom || range == null) return _datePreset.label;
+    final format = DateFormat('d MMM');
+    return '${format.format(range.start)} - ${format.format(range.end)}';
   }
 
   void _openResult(SearchResult result) {
@@ -191,7 +248,7 @@ class _SearchTabState extends ConsumerState<SearchTab>
                     .toList(),
                 child: Chip(
                   avatar: const Icon(Icons.calendar_today_outlined, size: 16),
-                  label: Text(_datePreset.label),
+                  label: Text(_dateChipLabel),
                 ),
               ),
             ],

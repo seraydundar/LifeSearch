@@ -39,6 +39,9 @@ class LocalSearchDataSource {
     if (filters.dateFrom != null) {
       q.where((t) => t.createdAt.isBiggerOrEqualValue(filters.dateFrom!));
     }
+    if (filters.dateTo != null) {
+      q.where((t) => t.createdAt.isSmallerOrEqualValue(filters.dateTo!));
+    }
 
     final rows = await q.get();
     final matches = <(LocalItem, String)>[];

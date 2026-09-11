@@ -48,6 +48,7 @@ class ApiSearchRepository implements SearchRepository {
         'query': query,
         if (filters.types.isNotEmpty) 'item_types': filters.types.map((t) => t.dbValue).toList(),
         if (filters.dateFrom != null) 'date_from': filters.dateFrom!.toIso8601String(),
+        if (filters.dateTo != null) 'date_to': filters.dateTo!.toIso8601String(),
       });
       return _parseResults(response.data);
     } on DioException catch (e) {
