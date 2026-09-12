@@ -24,13 +24,30 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   late final _titleController = TextEditingController(text: widget.item?.title);
   late final _contentController = TextEditingController();
   bool _loadingContent = false;
+  bool _isDeleting = false;
+
+  /// `null` in create mode. Mutable (unlike `widget.item`) so favorite/
+  /// private/retry below can update it optimistically and so
+  /// `watchItemByIdProvider` (see `build()`) can keep it fresh — notes
+  /// go through the same AI pipeline (tagging/entities/embedding) as
+  /// every other item type, so this screen needs the same "sil/favori/
+  /// private/retry" actions `ItemDetailScreen` already has (Faz 12,
+  /// madde 12, denetim düzeltmesi — see docs/roadmap.md: this screen
+  /// had none of them before).
+  late Item? _item = widget.item;
 
   bool get _isEditing => widget.item != null;
 
   @override
   void initState() {
     super.initState();
-    if (_isEditing) _loadContent();
+    if (_isEditing) {
+      // Same immediate-correction reasoning as `ItemDetailScreen`'s
+      // `initState()` — see that widget's docstring.
+      final fresh = ref.read(watchItemByIdProvider(widget.item!.id));
+      if (fresh != null) _item = fresh;
+      _loadContent();
+    }
   }
 
   Future<void> _loadContent() async {
@@ -46,6 +63,81 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     _titleController.dispose();
     _contentController.dispose();
     super.dispose();
+  }
+
+  Future<void> _toggleFavorite() async {
+    final current = _item!;
+    final next = !current.favorite;
+    setState(() => _item = current.copyWith(favorite: next)); // optimistic
+    try {
+      await ref.read(itemRepositoryProvider).setFavorite(current.id, next);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _item = current); // revert
+      context.showErrorSnackBar('Güncellenemedi.');
+    }
+  }
+
+  /// Item-level Privacy Mode (Faz 11, madde 2 — see docs/roadmap.md) —
+  /// same contract as `ItemDetailScreen._togglePrivate()`.
+  Future<void> _togglePrivate() async {
+    final current = _item!;
+    final next = !current.private;
+    setState(() => _item = current.copyWith(private: next)); // optimistic
+    try {
+      await ref.read(itemRepositoryProvider).setPrivate(current.id, next);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _item = current); // revert
+      context.showErrorSnackBar('Güncellenemedi.');
+    }
+  }
+
+  Future<void> _delete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Bu içeriği sil'),
+        content: const Text('Bu işlem geri alınamaz.'),
+        actions: [
+          TextButton(onPressed: () => context.pop(false), child: const Text('Vazgeç')),
+          TextButton(onPressed: () => context.pop(true), child: const Text('Sil')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _isDeleting = true);
+    try {
+      await ref.read(itemRepositoryProvider).deleteItem(_item!);
+      if (mounted && context.canPop()) context.pop();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isDeleting = false);
+      context.showErrorSnackBar('Silinemedi.');
+    }
+  }
+
+  /// Same contract as `ItemDetailScreen._retryProcessing()`.
+  Future<void> _retryProcessing() async {
+    final current = _item!;
+    setState(() => _item = current.copyWith(processingStatus: 'pending')); // optimistic
+    try {
+      await ref.read(itemRepositoryProvider).retryProcessing(current.id);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _item = current.copyWith(processingStatus: 'failed')); // revert
+      context.showErrorSnackBar('Tekrar denenemedi.');
+    }
+  }
+
+  String _processingLabel(String status) {
+    return switch (status) {
+      'pending' => 'İşlenmeyi bekliyor',
+      'processing' => 'İşleniyor...',
+      'failed' => 'İşlenemedi',
+      _ => status,
+    };
   }
 
   Future<void> _save() async {
@@ -72,18 +164,50 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isEditing) {
+      // Live, not one-shot — same reasoning as `ItemDetailScreen`'s
+      // `ref.listen(watchItemByIdProvider(...))` (Faz 12, madde 8 — see
+      // docs/roadmap.md): a background sync completing this note's AI
+      // processing (or another device changing it) while this screen
+      // is open should show up here too, not just after leaving and
+      // coming back.
+      ref.listen(watchItemByIdProvider(widget.item!.id), (previous, next) {
+        if (next != null) setState(() => _item = next);
+      });
+    }
     final isSaving = ref.watch(noteEditorControllerProvider).isLoading;
+    final item = _item;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(_isEditing ? 'Notu Düzenle' : 'Yeni Not'),
         actions: [
-          if (_isEditing)
+          if (_isEditing && item != null) ...[
             IconButton(
               icon: const Icon(Icons.folder_outlined),
               tooltip: 'Koleksiyona ekle',
-              onPressed: () => showAddToCollectionSheet(context, widget.item!.id),
+              onPressed: () => showAddToCollectionSheet(context, item.id),
             ),
+            IconButton(
+              icon: Icon(item.favorite ? Icons.star : Icons.star_border),
+              onPressed: _toggleFavorite,
+            ),
+            IconButton(
+              icon: Icon(item.private ? Icons.lock_outline : Icons.lock_open_outlined),
+              tooltip: item.private ? 'Private\'dan çıkar' : 'Private yap',
+              onPressed: _togglePrivate,
+            ),
+            IconButton(
+              icon: _isDeleting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_outline),
+              onPressed: _isDeleting ? null : _delete,
+            ),
+          ],
           IconButton(
             icon: isSaving
                 ? const SizedBox(
@@ -112,6 +236,22 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                       border: InputBorder.none,
                     ),
                   ),
+                  if (item != null && item.processingStatus != 'completed') ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      children: [
+                        Chip(label: Text(_processingLabel(item.processingStatus))),
+                        if (item.processingStatus == 'failed')
+                          TextButton.icon(
+                            onPressed: _retryProcessing,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Tekrar Dene'),
+                          ),
+                      ],
+                    ),
+                  ],
                   const Divider(height: 24),
                   if (_isEditing) ...[
                     TagsRow(itemId: widget.item!.id),

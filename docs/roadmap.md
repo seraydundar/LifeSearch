@@ -2157,7 +2157,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
     bölüm.
 11. ~~Web'de Google sign-in kod seviyesinde çalışamaz~~ ✅ — bkz.
     aşağıdaki alt bölüm.
-12. Not ekranında sil/favori/private/retry yok.
+12. ~~Not ekranında sil/favori/private/retry yok~~ ✅ — bkz. aşağıdaki
+    alt bölüm.
 13. Arama yarışı — hızlı ardışık aramada eski/yavaş yanıt yeni sonucun
     üstüne yazabiliyor.
 
@@ -2702,3 +2703,34 @@ HER ZAMAN gerçek bir değere sahip olması anlamına geliyordu — CI'da ise
 Backend: `ruff check` temiz, testler **181/181** — bu kez gerçekten
 `.env`'siz, CI'yı taklit eden temiz bir kopyada doğrulandı (yalnızca
 gerçek `.env`'i mount eden eski yöntemle değil).
+
+#### Faz 12, madde 12: not ekranında sil/favori/private/retry yok ✅
+
+Notlar da diğer her içerik tipiyle aynı AI pipeline'ından (tag/entity/
+embedding) geçiyor ve aynı favori/Private/silme aksiyonlarını
+destekliyor, ama `NoteEditorScreen`'de bunlardan HİÇBİRİ yoktu —
+yalnızca "koleksiyona ekle" ve "kaydet" vardı. Ayrıca işlem durumu
+(pending/processing/failed) hiç gösterilmiyordu, `ItemDetailScreen`'in
+aksine.
+
+- **`NoteEditorScreen`**: `ItemDetailScreen` ile birebir aynı desende
+  favori/Private toggle'ları (optimistic + hata durumunda geri alma),
+  silme (onay diyaloğu + `_isDeleting` durumu), ve işlem durumu
+  chip'i + `failed` durumunda "Tekrar Dene" eklendi. Yalnızca
+  `_isEditing` (mevcut bir not düzenlenirken) gösteriliyor — yeni,
+  henüz kaydedilmemiş bir notun ne id'si ne de işlem durumu var.
+- **Faz 12 madde 8'in aynı canlı-güncelleme deseni burada da**:
+  `watchItemByIdProvider`'ı `ref.listen` ediyor — arka planda işlem
+  tamamlanınca (ya da başka bir cihazdan bir değişiklik gelince) ekran
+  açıkken bile güncelleniyor, tıpkı `ItemDetailScreen` gibi.
+- **Regresyon testleri, gerçek bir test-altyapısı hatası bulunup
+  düzeltilerek yazıldı**: yeni `note_editor_screen_test.dart`
+  (`NoteEditorScreen`'in hiç dedike bir testi yoktu) — silme testi ilk
+  yazımda düz bir `Navigator.push` ile "No GoRouter found in context"
+  hatasıyla gerçekten patladı (`context.pop()` go_router'ın uzantısı,
+  Settings'in Delete Account testinin roadmap'te zaten dokümante
+  edilmiş aynı gotcha'sı) — `MaterialApp.router` + gerçek bir
+  `GoRouter`'a çevrilip düzeltildi.
+
+Mobile: `flutter analyze` temiz, testler 206 → **213** (+7, yukarıdaki
+yeni test dosyası).
