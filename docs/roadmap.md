@@ -2142,8 +2142,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
    aşağıdaki alt bölüm.
 4. ~~B'nin sync'i A'nın yerel koleksiyon üyeliğini silebiliyor~~ ✅ —
    bkz. aşağıdaki alt bölüm.
-5. Private: arama hata verince tüm sonuçları gösteriyor + reveal
-   kapanınca eski sonuçlar temizlenmiyor.
+5. ~~Private: arama hata verince tüm sonuçları gösteriyor + reveal
+   kapanınca eski sonuçlar temizlenmiyor~~ ✅ — bkz. aşağıdaki alt bölüm.
 6. Polling bütçesi tükenince bir daha hiç çalışmıyor (yeni işler dahil).
 7. `replace_chunks`: eski iş yeni işin chunk'ını silebiliyor.
 8. Item detail ekranı işlem tamamlanınca güncellenmiyor.
@@ -2323,3 +2323,54 @@ siliniyordu**. Bu bir okuma sızıntısı değil, gerçek bir veri kaybıydı.
 Mobile: `flutter analyze` temiz, testler 194 → **197** (+3, yukarıdaki
 yeni test dosyası — `CollectionLocalDataSource`'ın kendi dedike bir
 testi daha önce hiç yoktu).
+
+#### Faz 12, madde 5: Private — arama hata verince açık, reveal kapanınca eski sonuçlar açık kalıyor ✅
+
+İki ayrı gerçek boşluk, ikisi de `search_providers.dart`'ta.
+
+1. **`_hidePrivateResults` fail-open'dı**: `allItemsIncludingPrivateProvider.future`
+   hata verirse (gerçek bir Drift arızası, kapatılmış bağlantı, vb.)
+   `catch` bloğu sonuçları FİLTRELEMEDEN döndürüyordu — "kontrol
+   edilecek bir şey yokken aramayı tamamen düşürmeye değmez" gerekçesi
+   asıl olarak yapılandırılmamış bir test fixture'ı (hiç
+   `itemRepositoryProvider` override'ı yok) için yazılmıştı, ama her
+   GERÇEK hataya da aynı şekilde uygulanıyordu — production'da genuine
+   bir hata, private item'ları sessizce sonuç listesine sızdırabilirdi.
+2. **Reveal kapanınca ekrandaki sonuçlar temizlenmiyordu**:
+   `privateItemsRevealedProvider` `false`'a dönünce (`AppLockGate`'in
+   arka plana düşünce sıfırlaması gibi) `itemsProvider` (Home/Library)
+   reaktif olarak yeniden filtreleniyor, ama `SearchController.state`
+   yalnızca `search()` çağrıldığında hesaplanan tek seferlik bir
+   snapshot — reveal açıkken görünen bir private sonuç, ekranda kalmaya
+   devam ediyordu, yeni bir arama yapılana kadar.
+
+- **`_hidePrivateResults`**: artık try/catch yok, hata varsa rethrow
+  ediyor — `SearchController.search()`'ün zaten sahip olduğu
+  `AsyncValue.guard` bunu gerçek bir arama hatasıyla (bkz.
+  `search_tab.dart`'ın `error:` dalı) aynı, görünür bir hata durumuna
+  çeviriyor; `relatedItemsProvider` da zaten her hatada kendi bölümünü
+  gizliyor (`item_detail_screen.dart`) — ikisi de "belki private olan
+  bir şeyi sessizce göster" yapmıyor artık.
+- **`SearchController.build()`**: `privateItemsRevealedProvider`'ı
+  `ref.listen` ediyor — `true`'dan `false`'a düşüşte, halihazırda
+  ekranda olan sonuç listesini (yeni bir arama YAPMADAN) aynı
+  `_hidePrivateResults`'tan tekrar geçiriyor.
+- **Test harness düzeltmesi**: `search_tab_test.dart`'ın `wrap()`
+  yardımcısı artık `itemRepo` verilmese bile HER ZAMAN boş bir
+  `FakeItemRepository()` ile override ediyor — eskiden override
+  edilmeden bırakılıp gerçek (Supabase'siz test ortamında hata veren)
+  provider'a düşüyordu, ki bu da tam olarak artık kaldırılan fail-open
+  yolunu tetikleyen şeydi. Bu, `search_providers.dart`'ın kendi hiç
+  test edilmemiş olmasının (bu maddeye kadar `search_providers.dart`
+  için dedike bir test dosyası hiç yoktu) bir sonucuydu.
+- **Regresyon testleri, düzeltmeden önce gerçekten kırmızı çıktığı
+  doğrulanarak yazıldı**: yeni `search_controller_test.dart` — (1)
+  `watchItems()`'ı hata fırlatan bir sahte repository ile aramanın
+  gerçekten `AsyncError`'a düştüğünü, (2) reveal açıkken bir private
+  sonucun göründüğünü, reveal kapanınca (yeni arama yapılmadan) o
+  sonucun listeden kalktığını doğruluyor. Her iki fix de geçici geri
+  alınınca ilgili test gerçekten kırmızı çıktı, geri konunca yeşile
+  döndü.
+
+Mobile: `flutter analyze` temiz, testler 197 → **199** (+2, yukarıdaki
+yeni test dosyası — `search_providers.dart`'ın kendi ilk dedike testi).

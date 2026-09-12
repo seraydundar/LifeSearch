@@ -34,7 +34,15 @@ void main() {
         // SearchController.search() records to recentSearchesDataSourceProvider
         // on success — give it an in-memory db instead of touching a real file.
         appDatabaseProvider.overrideWithValue(AppDatabase.forTesting(NativeDatabase.memory())),
-        if (itemRepo != null) itemRepositoryProvider.overrideWithValue(itemRepo),
+        // Always overridden, even with no explicit `itemRepo` — search's
+        // private-item filter (Faz 12, madde 5, see docs/roadmap.md)
+        // rethrows if this can't be resolved at all, instead of the old
+        // silent "show everything" fallback; a real, unconfigured
+        // itemRepositoryProvider here would touch Supabase, which isn't
+        // initialized in a test. An empty `FakeItemRepository()` means
+        // "no private items" — the correct, safe default for every test
+        // that isn't specifically exercising the private-filter itself.
+        itemRepositoryProvider.overrideWithValue(itemRepo ?? FakeItemRepository()),
       ],
       child: MaterialApp(home: Scaffold(body: SearchTab(initialQuery: initialQuery))),
     );

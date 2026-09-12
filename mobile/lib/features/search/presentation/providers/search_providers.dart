@@ -4,7 +4,6 @@ import '../../../../core/database/database_provider.dart';
 import '../../../../core/network/api_client_provider.dart';
 import '../../../../core/network/supabase_client_provider.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
-import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../data/local/local_search_data_source.dart';
 import '../../data/local/offline_fallback_search_repository.dart';
@@ -26,19 +25,22 @@ import '../../domain/repositories/search_repository.dart';
 /// read at exactly that moment sees `null`/`loading`, which would have
 /// let a private item's result straight through unfiltered.
 ///
-/// If that provider itself errors (no signed-in session — `.future`
-/// rethrows a `StreamProvider`'s error state, unlike `.valueOrNull`,
-/// which swallows it into `null`) this falls back to showing every
-/// result rather than failing the whole search over a privacy check
-/// that has nothing to check against yet.
+/// **Fails closed, not open** (Faz 12, madde 5 — denetim düzeltmesi, see
+/// docs/roadmap.md): if that provider itself errors, this used to fall
+/// back to showing every result — including private ones — rather than
+/// failing the whole search. That was reasoning about an *unconfigured
+/// test fixture* (no `itemRepositoryProvider` override, so nothing to
+/// check against), but it applied to every real error too: a genuine
+/// Drift hiccup in production would have silently leaked private items
+/// into the results list instead of surfacing as a failure. Now it
+/// rethrows — `SearchController.search()`'s `AsyncValue.guard` turns
+/// that into the same visible error state a real network failure gets
+/// (see `search_tab.dart`'s `error:` branch), and `relatedItemsProvider`
+/// already hides its whole section on any error (`item_detail_screen
+/// .dart`) — neither silently shows something that might be private.
 Future<List<SearchResult>> _hidePrivateResults(Ref ref, List<SearchResult> results) async {
   if (ref.read(privateItemsRevealedProvider)) return results;
-  List<Item> items;
-  try {
-    items = await ref.read(allItemsIncludingPrivateProvider.future);
-  } catch (_) {
-    return results;
-  }
+  final items = await ref.read(allItemsIncludingPrivateProvider.future);
   final privateIds = {for (final item in items) if (item.private) item.id};
   return results.where((r) => !privateIds.contains(r.itemId)).toList();
 }
@@ -97,7 +99,27 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
   String _lastQuery = '';
 
   @override
-  List<SearchResult> build() => [];
+  List<SearchResult> build() {
+    // Faz 12, madde 5 (denetim düzeltmesi — see docs/roadmap.md): a
+    // result set fetched *while* private items were revealed doesn't
+    // re-filter itself when the reveal flag flips back off (e.g. the
+    // app is backgrounded — see `AppLockGate`'s lifecycle observer) —
+    // every other private-item entry point (Home, Library) re-hides
+    // live because they read `itemsProvider` reactively; this list is a
+    // one-shot snapshot from whenever `search()` last ran, so without
+    // this listener a private item's result would keep showing in an
+    // already-displayed list even after reveal turns back off.
+    ref.listen(privateItemsRevealedProvider, (previous, next) {
+      if (previous == true && next == false) _reapplyPrivacyFilter();
+    });
+    return [];
+  }
+
+  Future<void> _reapplyPrivacyFilter() async {
+    final current = state.valueOrNull;
+    if (current == null || current.isEmpty) return;
+    state = await AsyncValue.guard(() => _hidePrivateResults(ref, current));
+  }
 
   Future<void> search(String query) async {
     final trimmed = query.trim();
