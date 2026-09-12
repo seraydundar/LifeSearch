@@ -1,5 +1,6 @@
 import base64
 import json
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -52,12 +53,16 @@ def test_unknown_provider_name_is_rejected():
 
 
 class TestPadEmbedding:
-    """`GeminiProvider.generate_embeddings()`'s zero-padding — Gemini's
-    `text-embedding-004` outputs 768 dims, `chunks.embedding` is a fixed
-    `vector(1536)` column (see infra/supabase/migrations/0001_init.sql).
-    Getting this wrong would silently corrupt every Gemini-embedded
-    chunk's vector search, so it gets its own direct tests rather than
-    relying only on an end-to-end call through the real API.
+    """`_pad_embedding()`'s own contract — kept as a defensive fallback
+    even now that `GeminiProvider` requests its embeddings at exactly
+    `chunks.embedding`'s fixed `vector(1536)` size (see
+    infra/supabase/migrations/0001_init.sql) via `output_dimensionality`
+    (Faz 12, madde 10, see docs/roadmap.md), rather than always doing
+    the resizing itself the way it had to for the older
+    `text-embedding-004` (a fixed 768 dims). Getting this wrong would
+    silently corrupt vector search for whatever provider still needs
+    it, so it gets its own direct tests rather than relying only on an
+    end-to-end call through a real API.
     """
 
     def test_pads_a_shorter_embedding_with_trailing_zeros(self):
@@ -208,3 +213,39 @@ class TestLocalProviderOllamaCalls:
         provider = _local_provider_with_transport(handler)
         with pytest.raises(RuntimeError, match="docs/local-ai-provider-setup.md"):
             await provider.generate_text("hello")
+
+
+class TestGeminiProviderDefaults:
+    """Faz 12, madde 10 (denetim düzeltmesi — see docs/roadmap.md):
+    `text-embedding-004`/`gemini-2.0-flash` (the old defaults) are
+    confirmed shut down by Google's own changelog. `gemini-embedding-2`
+    is asked for exactly `chunks.embedding`'s fixed size directly via
+    `output_dimensionality`, rather than requesting its native (larger,
+    3072-dim) size and relying on `_pad_embedding` to truncate it —
+    truncating a real embedding vector isn't the mathematically safe
+    operation zero-padding a *shorter* one is (see `GeminiProvider`'s
+    own docstring), so getting this right matters for search quality,
+    not just column-size compatibility.
+    """
+
+    def test_default_models_are_not_the_confirmed_shut_down_ones(self):
+        provider = GeminiProvider("test-key")
+        assert provider._text_model != "gemini-2.0-flash"
+        assert provider._embedding_model != "text-embedding-004"
+
+    @pytest.mark.asyncio
+    async def test_requests_the_embedding_at_exactly_the_chunks_column_size(self):
+        provider = GeminiProvider("test-key")
+        fake_embedding = MagicMock()
+        fake_embedding.values = [0.1] * 1536
+        fake_response = MagicMock()
+        fake_response.embeddings = [fake_embedding]
+        provider._client.aio.models.embed_content = AsyncMock(return_value=fake_response)
+
+        result = await provider.generate_embeddings(["hello"])
+
+        provider._client.aio.models.embed_content.assert_awaited_once()
+        call_kwargs = provider._client.aio.models.embed_content.call_args.kwargs
+        assert call_kwargs["model"] == provider._embedding_model
+        assert call_kwargs["config"].output_dimensionality == 1536
+        assert result == [[0.1] * 1536]

@@ -2152,8 +2152,9 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
    aşağıdaki alt bölüm.
 9. ~~Büyük arşivde sync, gelmeyen kayıtları "silinmiş" sanıp local'den
    siliyor~~ ✅ — bkz. aşağıdaki alt bölüm.
-10. Gemini varsayılan modelleri (`text-embedding-004`, `gemini-2.0-flash`)
-    gerçekten kapatılmış (Google'ın changelog'undan doğrulandı).
+10. ~~Gemini varsayılan modelleri (`text-embedding-004`,
+    `gemini-2.0-flash`) gerçekten kapatılmış~~ ✅ — bkz. aşağıdaki alt
+    bölüm.
 11. Web'de Google sign-in kod seviyesinde çalışamaz (`google_sign_in_web`
     `authenticate()`'i `UnimplementedError` fırlatıyor).
 12. Not ekranında sil/favori/private/retry yok.
@@ -2565,3 +2566,47 @@ silinmiş sanılıp local cache'ten kalıcı olarak siliniyordu.
 Mobile: `flutter analyze` temiz, testler 201 → **205** (+4, yukarıdaki
 yeni test dosyası — `fetchAllPages`'in kendisi, Supabase'e hiç
 dokunmadan, saf bir fonksiyon olarak test ediliyor).
+
+#### Faz 12, madde 10: Gemini varsayılan modelleri gerçekten kapatılmış ✅
+
+Faz 11 madde 4 `text-embedding-004`/`gemini-2.0-flash`'ı varsayılan
+yaptığında ikisi de gerçek, çalışan modeldi. Google'ın kendi
+changelog'undan doğrulandı: `text-embedding-004` 14 Ocak 2026'da,
+`gemini-2.0-flash` 1 Haziran 2026'da kapatılmış — "sadece bir API key
+ekle" artık sessizce "kırık" demek, `AI_PROVIDER=gemini` kullanan
+hiç kimse varsayılanları değiştirmediyse.
+
+- **Güncel modeller** (Google'ın changelog'undan, fix anında
+  doğrulandı — bu sabitlenemez, Google'ın kendi model yaşam döngüsü
+  bugünkü kararlı varsayılanı da bir gün kapatacak): metin/vision/ses
+  için `gemini-3.8-flash` (kararlı, GA), embedding için
+  `gemini-embedding-2` (kararlı GA — `-preview` çok modlu varyantı
+  DEĞİL).
+- **Embedding boyutu artık dolgu/kırpma değil, doğrudan isteniyor**:
+  `gemini-embedding-2` Matryoshka Representation Learning ile
+  eğitilmiş — `output_dimensionality` parametresiyle çıktıyı doğrudan
+  `chunks.embedding`'in sabit boyutunda (1536) istemek mümkün ve
+  Google'ın kendi belgelediği önerilen boyutlardan biri (768/1536/3072),
+  model bunu kendi kendine normalize ediyor. Eski `text-embedding-004`
+  sabit 768 boyut üretiyordu, `_pad_embedding()` onu 1536'ya sıfırla
+  DOLDURMAK zorundaydı — matematiksel olarak güvenli bir işlem
+  (docstring'de kanıtlı). Yeni model 3072 (daha BÜYÜK) üretiyor;
+  `_pad_embedding()` bunu doğrudan istemeden kullansaydı 1536'ya
+  KIRPARDI — bu, sıfırla doldurmayla AYNI matematiksel güvenceye sahip
+  değil (gerçek bilgi atılıyor). `output_dimensionality` bu ihtiyacı
+  tamamen ortadan kaldırıyor; `_pad_embedding()` savunmacı bir no-op
+  olarak kalıyor (gelecekte bu parametreyi desteklemeyen bir model
+  gelirse sessizce eski dolgu/kırpma davranışına düşer, sert bir hataya
+  değil).
+- **Doğrulanmayan**: `gemini-3.8-flash`'ın görsel/ses girdisini
+  (`analyze_image`/`transcribe_audio`'nun ikisi de aynı `_text_model`'i
+  kullanıyor) gerçekten desteklediği Google'ın belgelerinden ayrı bir
+  tabloyla teyit edilemedi — Flash ailesinin her zaman çok modlu olması
+  makul bir varsayım ama doğrulanmış bir gerçek değil. Yanlışsa,
+  sonuç sessiz bir hata değil, API'den net bir hata olurdu.
+
+Backend: `ruff check` temiz (Docker'da), testler 179 → **181** (+2:
+varsayılan modellerin artık kapatılmış olanlar OLMADIĞINI, ve
+`generate_embeddings()`'in gerçekten `output_dimensionality=1536`
+geçtiğini doğrulayan yeni testler — ikincisi geçici olarak geri alınıp
+gerçekten kırmızı çıktığı doğrulanarak yazıldı).

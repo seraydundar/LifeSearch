@@ -142,36 +142,55 @@ class GeminiProvider(AIProvider):
     """Google's Gemini models via `google-genai` — the current unified
     SDK (the older `google-generativeai` package is in maintenance mode).
 
-    **Embedding dimension mismatch, and why the fix here is safe**:
-    `text-embedding-004` outputs 768-dim vectors, but `chunks.embedding`
-    is a fixed `vector(1536)` column (sized for OpenAI's
-    `text-embedding-3-small` — see infra/supabase/migrations/0001_init.sql).
-    `generate_embeddings()` zero-pads every vector out to 1536 dims to
-    fit that column without a schema change. That's mathematically
-    inert for cosine similarity specifically: appending the same-length
-    all-zero tail to two vectors changes neither their dot product nor
-    either one's norm, so `cosine(pad(a), pad(b)) == cosine(a, b)`
-    exactly — comparing two Gemini-embedded (and therefore identically
-    padded) chunks is unaffected.
+    **Defaults, and why they keep needing to be revisited** (Faz 12,
+    madde 10, denetim düzeltmesi — see docs/roadmap.md): this provider's
+    original defaults (`text-embedding-004`, `gemini-2.0-flash`) were
+    both real, working models when Faz 11 madde 4 shipped them — and
+    were both later shut down by Google (confirmed against Google's own
+    changelog: `text-embedding-004` on 2026-01-14, `gemini-2.0-flash` on
+    2026-06-01), silently turning "just add an API key" into "silently
+    broken" for anyone who never overrode `LOCAL_TEXT_MODEL`/
+    `LOCAL_EMBEDDING_MODEL`-style env vars. There's no way to pin this
+    forever — Google's own model lifecycle means today's stable default
+    will eventually be deprecated too. `gemini-3.8-flash`/
+    `gemini-embedding-2` are the current (2026-09) stable, non-preview
+    replacements, verified against Google's changelog at fix time; if a
+    provider call ever starts failing with a "model not found" style
+    error, that changelog is the first place to check.
 
-    **What padding does NOT fix**: it doesn't make a Gemini embedding
-    comparable to an OpenAI one — the two models' embedding spaces
-    aren't related at all, padded or not. Switching `AI_PROVIDER` on a
-    database that already has embeddings from the *other* provider
-    needs a full re-embed of every existing chunk; this backend has no
-    migration for that, so don't switch providers on a live archive
-    without doing one by hand first.
+    **`gemini-embedding-2` requests its output at exactly `chunks.
+    embedding`'s column size** (`vector(1536)`, sized for OpenAI's
+    `text-embedding-3-small` — see
+    infra/supabase/migrations/0001_init.sql) via `output_dimensionality`
+    — the model is trained with Matryoshka Representation Learning
+    specifically to support this (768/1536/3072 are Google's own
+    documented recommended sizes) and auto-normalizes the truncated
+    output itself, unlike the older `text-embedding-004`, which only
+    ever output a fixed 768 dims that then had to be zero-padded out to
+    1536 here. `_pad_embedding()` is kept as a defensive no-op (it's a
+    no-op whenever the input is already the target length) rather than
+    trusted to newly do the heavy lifting — if some future embedding
+    model doesn't support `output_dimensionality`, this still degrades
+    to the same zero-padding as before, not a hard failure.
+
+    **What none of this fixes**: it doesn't make a Gemini embedding
+    comparable to an OpenAI (or a *previous Gemini model's*) one — each
+    model's embedding space is its own, unrelated to any other's, right
+    dimension or not. Switching `AI_PROVIDER`, or bumping
+    `embedding_model` to a different model than whatever embedded the
+    existing archive, needs a full re-embed of every existing chunk;
+    this backend has no migration for that, so don't do either on a live
+    archive without doing one by hand first.
     """
 
     _EMBEDDING_DIMENSIONS = 1536  # chunks.embedding's fixed column size
-    _NATIVE_EMBEDDING_DIMENSIONS = 768  # text-embedding-004's own output size
 
     def __init__(
         self,
         api_key: str,
         *,
-        embedding_model: str = "text-embedding-004",
-        text_model: str = "gemini-2.0-flash",
+        embedding_model: str = "gemini-embedding-2",
+        text_model: str = "gemini-3.8-flash",
     ) -> None:
         self._client = genai.Client(api_key=api_key)
         self._embedding_model = embedding_model
@@ -196,6 +215,7 @@ class GeminiProvider(AIProvider):
         response = await self._client.aio.models.embed_content(
             model=self._embedding_model,
             contents=texts,
+            config=types.EmbedContentConfig(output_dimensionality=self._EMBEDDING_DIMENSIONS),
         )
         return [_pad_embedding(e.values, self._EMBEDDING_DIMENSIONS) for e in response.embeddings]
 
