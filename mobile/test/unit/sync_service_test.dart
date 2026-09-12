@@ -800,7 +800,7 @@ void main() {
 
       await sync.syncNow();
 
-      final memberships = await localCollections.allMemberships();
+      final memberships = await localCollections.allMemberships('user-1');
       expect(memberships, [('coll-1', 'new-item')]);
     });
   });

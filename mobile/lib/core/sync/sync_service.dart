@@ -266,7 +266,7 @@ class SyncService {
       );
     }
 
-    final localMemberships = await _localCollections.allMemberships();
+    final localMemberships = await _localCollections.allMemberships(userId);
     for (final pair in localMemberships) {
       if (!remoteMemberships.contains(pair) && !pendingMemberships.contains(pair)) {
         await _localCollections.removeItem(pair.$1, pair.$2);

@@ -90,11 +90,29 @@ class CollectionLocalDataSource {
         .write(const LocalCollectionItemsCompanion(syncStatus: Value('synced')));
   }
 
-  /// Every (collectionId, itemId) pair currently cached locally — used by
-  /// `SyncService` to reconcile against the server's membership rows.
-  Future<List<(String, String)>> allMemberships() async {
-    final rows = await _db.select(_db.localCollectionItems).get();
-    return rows.map((r) => (r.collectionId, r.itemId)).toList();
+  /// Every (collectionId, itemId) pair currently cached locally for
+  /// [userId] — used by `SyncService` to reconcile against the server's
+  /// membership rows. Scoped via an inner join against `LocalCollections`
+  /// (Faz 12, madde 4, denetim düzeltmesi — see docs/roadmap.md):
+  /// `LocalCollectionItems` itself carries no `userId` column of its own,
+  /// and without this join, syncing as one account would see — and then
+  /// *delete*, as "stale" — a different, previously signed-in account's
+  /// still-cached membership rows, since they'd never appear in this
+  /// account's own server-fetched membership set.
+  Future<List<(String, String)>> allMemberships(String userId) async {
+    final query = _db.select(_db.localCollectionItems).join([
+      innerJoin(
+        _db.localCollections,
+        _db.localCollections.id.equalsExp(_db.localCollectionItems.collectionId),
+      ),
+    ])
+      ..where(_db.localCollections.userId.equals(userId));
+
+    final rows = await query.get();
+    return rows.map((row) {
+      final membership = row.readTable(_db.localCollectionItems);
+      return (membership.collectionId, membership.itemId);
+    }).toList();
   }
 
   /// The items in a collection, joined against `LocalItems`, newest-added

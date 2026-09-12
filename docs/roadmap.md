@@ -2140,7 +2140,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
    düşebiliyor~~ ✅ — bkz. aşağıdaki alt bölüm.
 3. ~~`findById`/`fetchNoteContent` kullanıcı filtresiz~~ ✅ — bkz.
    aşağıdaki alt bölüm.
-4. B'nin sync'i A'nın yerel koleksiyon üyeliğini silebiliyor.
+4. ~~B'nin sync'i A'nın yerel koleksiyon üyeliğini silebiliyor~~ ✅ —
+   bkz. aşağıdaki alt bölüm.
 5. Private: arama hata verince tüm sonuçları gösteriyor + reveal
    kapanınca eski sonuçlar temizlenmiyor.
 6. Polling bütçesi tükenince bir daha hiç çalışmıyor (yeni işler dahil).
@@ -2290,3 +2291,35 @@ link, bildirim, vs.), A'nın not içeriği B'ye gösterilebiliyordu.
 Mobile: `flutter analyze` temiz, testler 191 → **194** (+3, yukarıdaki
 yeni test dosyası — `ItemLocalDataSource`'ın kendi dedike bir testi
 daha önce hiç yoktu).
+
+#### Faz 12, madde 4: B'nin sync'i A'nın yerel koleksiyon üyeliğini silebiliyor ✅
+
+`CollectionLocalDataSource.allMemberships()` hiç `userId` almıyordu —
+`_db.select(_db.localCollectionItems).get()` ile CİHAZDAKİ TÜM
+HESAPLARIN üyelik satırlarını döndürüyordu (`LocalCollectionItems`'ın
+kendi `userId` kolonu yok, yalnızca `collectionId`/`itemId`).
+`SyncService._pullRemoteCollections(userId)` bunu B'nin sunucudan gelen
+üyelik kümesiyle karşılaştırıp eşleşmeyeni "stale" kabul edip
+`removeItem` ile siliyordu — A'nın hiç ilgisi olmayan, cihazda hâlâ
+duran üyelik satırları, B senkron olduğu anda **kalıcı olarak
+siliniyordu**. Bu bir okuma sızıntısı değil, gerçek bir veri kaybıydı.
+
+- **`allMemberships(String userId)`**: artık `LocalCollections`'a
+  `innerJoin` ile bağlanıp `LocalCollections.userId = userId` filtresi
+  uyguluyor — `LocalCollectionItems`'ın kendi kolonu olmadığı için
+  sahiplik bilgisi, `collectionId` üzerinden sahibi bilinen
+  `LocalCollections`'tan geliyor (`watchItemsForCollection`'ın zaten
+  kullandığı join deseniyle aynı).
+- **Regresyon testi, düzeltmeden önce gerçekten kırmızı çıktığı
+  doğrulanarak yazıldı**: yeni `collection_local_data_source_test.dart`
+  — A ve B'nin ayrı koleksiyon+üyelikleri eklenip her ikisi için ayrı
+  ayrı `allMemberships` çağrılıyor, yalnızca kendi üyeliklerini
+  görmeleri doğrulanıyor; ayrıca sahibi hiç cache'te olmayan (defensive)
+  bir üyeliğin kimseye görünmediği ayrıca test edildi. Fix geçici geri
+  alınınca her iki test de gerçekten kırmızı çıktı (B'nin sorgusu A'nın
+  satırını da döndürdü; sahipsiz satır boş liste yerine göründü), geri
+  konunca ikisi de yeşile döndü.
+
+Mobile: `flutter analyze` temiz, testler 194 → **197** (+3, yukarıdaki
+yeni test dosyası — `CollectionLocalDataSource`'ın kendi dedike bir
+testi daha önce hiç yoktu).
