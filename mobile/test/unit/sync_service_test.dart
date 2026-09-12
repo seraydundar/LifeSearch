@@ -124,6 +124,68 @@ void main() {
     expect(await queue.pendingEntries('user-1'), isEmpty);
   });
 
+  test(
+      'an account switch *mid-flush* stops the rest of the queue instead of risking it '
+      'going out under the new session (Faz 12, madde 2 — see docs/roadmap.md)', () async {
+    // Two of user-1's notes queued — the previous test covers the switch
+    // happening *before* syncNow() is ever called; this one covers the
+    // switch happening *while the flush loop is still running*, which
+    // `_currentUserIdOrNull() != userId`'s one-shot check at the top of
+    // syncNow() can't catch on its own (userId is only captured once,
+    // before the loop starts) — that's exactly the gap this fix closes.
+    for (final id in ['note-1', 'note-2']) {
+      await local.upsert(LocalItemsCompanion.insert(
+        id: id,
+        userId: 'user-1',
+        type: ItemType.note.dbValue,
+        title: Value("user-1's $id"),
+        processingStatus: const Value('pending'),
+        createdAt: DateTime(2026, 1, 1),
+        noteContent: const Value('body'),
+        syncStatus: const Value('pending'),
+      ));
+      await queue.enqueue(
+        userId: 'user-1',
+        operationType: 'create_note',
+        itemId: id,
+        payload: {'title': "user-1's $id", 'content': 'body'},
+      );
+    }
+
+    // `remote.userId` is read twice before the switch matters here: once
+    // by syncNow() itself, once by the flush loop's guard for the
+    // *first* queue entry — both still 'user-1'. The switch to 'user-2'
+    // lands exactly between the first and second entries.
+    var reads = 0;
+    when(() => remote.userId).thenAnswer((_) {
+      reads++;
+      return reads <= 2 ? 'user-1' : 'user-2';
+    });
+    when(() => remote.createNote(
+          id: any(named: 'id'),
+          title: any(named: 'title'),
+          content: any(named: 'content'),
+        )).thenAnswer((_) async {});
+
+    await sync.syncNow();
+
+    // Only the entry that was already "in the guard's clear" when the
+    // switch happened went out...
+    verify(() => remote.createNote(id: 'note-1', title: "user-1's note-1", content: 'body'))
+        .called(1);
+    // ...the second was never even attempted under user-2's live session...
+    verifyNever(() => remote.createNote(
+          id: 'note-2',
+          title: any(named: 'title'),
+          content: any(named: 'content'),
+        ));
+    // ...and is still safely sitting in user-1's queue, untouched — not
+    // dropped, not marked failed, ready to flush normally once user-1
+    // signs back in.
+    final remaining = await queue.pendingEntries('user-1');
+    expect(remaining.map((e) => e.itemId), ['note-2']);
+  });
+
   test('pushes a queued create_note and marks it synced', () async {
     await local.upsert(LocalItemsCompanion.insert(
       id: 'note-1',

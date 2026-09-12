@@ -276,6 +276,32 @@ class SyncService {
 
   Future<void> _flushQueue(String userId) async {
     for (final entry in await _queue.pendingEntries(userId)) {
+      // Faz 12, madde 2 (denetim düzeltmesi — see docs/roadmap.md): every
+      // `_remote`/`_remoteCollections` write below reads the *live*
+      // Supabase session at call time (see `RemoteItemDataSource.userId`),
+      // not the `userId` this `syncNow()` run was scoped to — without
+      // this check, a user signing out of A and into a different account
+      // B while this loop is still draining A's queue would have A's
+      // remaining writes go out under B's live session (both the row's
+      // `user_id` field *and* the auth token would silently be B's,
+      // since both come from the same racy live read — RLS's `auth.uid()
+      // = user_id` check doesn't catch this, since the two sides are
+      // consistent with *each other*, just not with the account this
+      // entry was actually queued for). Stopping here — rather than
+      // continuing, or marking every remaining entry "failed" — leaves
+      // the rest of A's queue exactly as it was; `pendingEntries(userId)`
+      // already scopes it to A, so it resumes correctly next time A
+      // signs back in.
+      //
+      // **Residual gap, deliberately not closed here** (same spirit as
+      // `url_service.py`'s documented DNS-rebinding gap): this only
+      // protects between entries, not mid-flight *inside* a single
+      // already-dispatched request — closing that fully would need
+      // pinning the exact access token this request should use rather
+      // than trusting "whichever session happens to be current when the
+      // request actually lands", which is a materially larger change to
+      // how `RemoteItemDataSource` authenticates than this fix makes.
+      if (_currentUserIdOrNull() != userId) return;
       try {
         final payload = jsonDecode(entry.payload) as Map<String, dynamic>;
         switch (entry.operationType) {

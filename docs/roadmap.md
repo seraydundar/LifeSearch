@@ -2136,7 +2136,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
 
 1. ~~Hesap değişince eski hesabın listesi ekranda kalıyor~~ ✅ — bkz.
    aşağıdaki alt bölüm.
-2. Sync sırasında hesap değişirse A'nın yazması B'nin hesabına düşebiliyor.
+2. ~~Sync sırasında hesap değişirse A'nın yazması B'nin hesabına
+   düşebiliyor~~ ✅ — bkz. aşağıdaki alt bölüm.
 3. `findById`/`fetchNoteContent` kullanıcı filtresiz.
 4. B'nin sync'i A'nın yerel koleksiyon üyeliğini silebiliyor.
 5. Private: arama hata verince tüm sonuçları gösteriyor + reveal
@@ -2207,3 +2208,48 @@ BEKLEYEN bir YAZMASININ B'nin hesabına gitmesi ayrı bir hata — madde 2'de.
 Mobile: `flutter analyze` temiz, testler 189 → **190** (+1,
 yukarıdaki regresyon testi — hem gerçekten kırmızı çıktığı hem
 düzeltmeyle yeşile döndüğü doğrulanarak yazıldı).
+
+#### Faz 12, madde 2: sync sırasında hesap değişirse A'nın yazması B'ye gidebiliyor ✅
+
+`SyncService.syncNow()` `userId`'yi başında bir kez yakalayıp
+`_flushQueue(userId)`'a geçiriyordu, ama `_flushQueue`'nun içindeki her
+`_remote.createNote()`/`updateNote()`/... çağrısı kendi `user_id`
+alanını `RemoteItemDataSource.userId` getter'ından — yani **o anki
+canlı Supabase oturumundan** — dolduruyordu, hiç `userId` parametresini
+kullanmadan. A'nın kuyruğu boşaltılırken (birden fazla girdi varsa,
+network I/O'nun tamamlanmasını beklerken) hesap B'ye değiştirilirse,
+A'nın kalan yazmaları B'nin `user_id`'siyle ve B'nin auth token'ıyla
+gönderiliyordu. **RLS bunu yakalamıyor**: `items_owner` policy'si
+`auth.uid() = user_id` kontrol ediyor, ama hem `user_id` alanı hem
+`auth.uid()` (JWT) aynı racy canlı okumadan geliyor — ikisi birbiriyle
+tutarlı (ikisi de B), yalnızca bu girdinin GERÇEKTEN kime ait olduğuyla
+tutarsız.
+
+- **`SyncService._flushQueue()`**: döngünün her adımının başında
+  `if (_currentUserIdOrNull() != userId) return;` — canlı oturum artık
+  bu `syncNow()` çağrısının başladığı hesapla eşleşmiyorsa, kuyruğun
+  geri kalanını hiç denemeden tamamen duruyor. Kalan girdiler
+  `_queue.recordFailure`/`_markFailed` ile "başarısız" işaretlenmiyor —
+  hiç dokunulmadan, olduğu gibi kuyrukta kalıyor (`pendingEntries(userId)`
+  zaten A'ya göre filtrelendiği için, A tekrar giriş yapınca normal
+  şekilde devam ediyor).
+- **Bilinçli olarak kapatılmayan artık kalan (residual) boşluk**
+  (`url_service.py`'nin DNS-rebinding notuyla aynı ruhta): bu yalnızca
+  KUYRUK GİRDİLERİ ARASINDA koruyor, tek bir isteğin ORTASINDA (kontrol
+  geçti, tam istek gönderilirken hesap değişti) değil — bunu tam
+  kapatmak, "şu an hangi oturum aktifse ona güven" yerine bu isteğin
+  kullanması gereken tam access token'ı sabitlemeyi gerektirir, bu
+  fixin kapsamından daha büyük bir değişiklik.
+- **Regresyon testi, düzeltmeden önce gerçekten kırmızı çıktığı
+  doğrulanarak yazıldı**: `sync_service_test.dart`'a yeni bir test —
+  user-1'in kuyruğunda 2 not varken, `remote.userId` mock'u SAYAÇLA
+  ilk iki okumada 'user-1', sonrasında 'user-2' dönecek şekilde
+  ayarlanıyor (ilk okuma `syncNow()`'ın kendisi, ikincisi ilk kuyruk
+  girdisinin guard kontrolü — üçüncü okuma, ikinci girdinin guard'ı,
+  artık 'user-2'). Yalnızca ilk not gönderiliyor, ikincisi hiç
+  denenmiyor ve kuyrukta user-1'e ait olarak sağlam kalıyor. Fix geçici
+  geri alınınca test gerçekten kırmızı çıktı ("Unexpected calls:
+  createNote(note-2...)"), geri konunca yeşile döndü.
+
+Mobile: `flutter analyze` temiz, testler 190 → **191** (+1, yukarıdaki
+regresyon testi).
