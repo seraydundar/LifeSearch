@@ -98,6 +98,20 @@ final searchControllerProvider =
 class SearchController extends AsyncNotifier<List<SearchResult>> {
   String _lastQuery = '';
 
+  /// Bumped by every `search()` call (and `clear()`) — Faz 12, madde 13
+  /// (denetim düzeltmesi — see docs/roadmap.md): nothing here previously
+  /// stopped a slow, *older* `search()` call's response from landing
+  /// after a faster, *newer* one already updated `state` (or after
+  /// `clear()` reset it) — typing a query, changing your mind and
+  /// typing a different one, or clearing the field entirely, could all
+  /// have the earlier call's stale results silently reappear once its
+  /// request/private-filter round trip finally completed. Each call
+  /// captures its own generation number before doing any `await`; if
+  /// `_searchGeneration` has moved on by the time it's ready to write
+  /// `state`, that means something newer superseded it, so it discards
+  /// its own (now-stale) result instead.
+  int _searchGeneration = 0;
+
   @override
   List<SearchResult> build() {
     // Faz 12, madde 5 (denetim düzeltmesi — see docs/roadmap.md): a
@@ -124,6 +138,8 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
   Future<void> search(String query) async {
     final trimmed = query.trim();
     _lastQuery = trimmed;
+    final generation = ++_searchGeneration;
+
     if (trimmed.isEmpty) {
       state = const AsyncData([]);
       return;
@@ -131,10 +147,16 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
 
     state = const AsyncLoading();
     final filters = ref.read(searchFiltersProvider);
-    state = await AsyncValue.guard(() async {
+    final result = await AsyncValue.guard(() async {
       final results = await ref.read(searchRepositoryProvider).search(trimmed, filters: filters);
       return _hidePrivateResults(ref, results);
     });
+
+    // Something newer (another search(), or clear()) has already
+    // started since this call began — a slow response for a query the
+    // user has since moved on from should never overwrite it.
+    if (generation != _searchGeneration) return;
+    state = result;
 
     final userId = _currentUserIdOrNull(ref);
     if (!state.hasError && userId != null) {
@@ -151,6 +173,9 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
 
   void clear() {
     _lastQuery = '';
+    // Invalidates any still-in-flight search() so its late-arriving
+    // result can't overwrite this reset once it finally completes.
+    _searchGeneration++;
     state = const AsyncData([]);
   }
 }

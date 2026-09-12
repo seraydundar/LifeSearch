@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/search/domain/entities/search_filters.dart';
 import 'package:lifesearch/features/search/domain/entities/search_result.dart';
@@ -8,6 +10,8 @@ class FakeSearchRepository implements SearchRepository {
     this.resultsToReturn = const [],
     this.relatedToReturn = const [],
     this.errorToThrow,
+    this.resultsByQuery,
+    this.gates,
   });
 
   List<SearchResult> resultsToReturn;
@@ -17,12 +21,25 @@ class FakeSearchRepository implements SearchRepository {
   SearchFilters? lastFilters;
   String? lastRelatedItemId;
 
+  /// Per-query results, for tests that need two different queries to
+  /// resolve with two different result sets. Falls back to
+  /// [resultsToReturn] for any query not present here.
+  Map<String, List<SearchResult>>? resultsByQuery;
+
+  /// Optional per-query completers that [search] awaits before
+  /// returning, so a test can control the order in which two
+  /// concurrent `search()` calls actually resolve — see the search
+  /// race condition regression test (Faz 12, madde 13, docs/roadmap.md).
+  Map<String, Completer<void>>? gates;
+
   @override
   Future<List<SearchResult>> search(String query, {SearchFilters filters = const SearchFilters()}) async {
     lastQuery = query;
     lastFilters = filters;
+    final gate = gates?[query];
+    if (gate != null) await gate.future;
     if (errorToThrow != null) throw errorToThrow!;
-    return resultsToReturn;
+    return resultsByQuery?[query] ?? resultsToReturn;
   }
 
   @override

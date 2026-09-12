@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
@@ -82,6 +84,78 @@ void main() {
 
       final after = container.read(searchControllerProvider).valueOrNull;
       expect(after?.map((r) => r.itemId), ['public-item']);
+    });
+  });
+
+  // Faz 12, madde 13 (denetim düzeltmesi — see docs/roadmap.md): nothing
+  // previously stopped a slow, older search()'s response from landing
+  // after a faster, newer one already updated state (or after clear()
+  // reset it).
+  group('SearchController race condition', () {
+    test(
+        "a slower, older search's response does not overwrite a faster, newer "
+        'one that already resolved', () async {
+      final gates = {'slow': Completer<void>(), 'fast': Completer<void>()};
+      final repo = FakeSearchRepository(
+        gates: gates,
+        resultsByQuery: {
+          'slow': [fakeSearchResult(itemId: 'slow-result')],
+          'fast': [fakeSearchResult(itemId: 'fast-result')],
+        },
+      );
+      final container = ProviderContainer(overrides: [
+        searchRepositoryProvider.overrideWithValue(repo),
+        itemRepositoryProvider.overrideWithValue(FakeItemRepository()),
+      ]);
+      addTearDown(container.dispose);
+      final controller = container.read(searchControllerProvider.notifier);
+
+      // The user types "slow", then quickly changes their mind and types
+      // "fast" before the first request comes back.
+      final slowFuture = controller.search('slow');
+      final fastFuture = controller.search('fast');
+
+      // "fast" wins the race and lands first...
+      gates['fast']!.complete();
+      await fastFuture;
+      expect(
+        container.read(searchControllerProvider).valueOrNull?.map((r) => r.itemId),
+        ['fast-result'],
+      );
+
+      // ...then "slow"'s response finally arrives, late. It must not
+      // clobber the newer result already on screen.
+      gates['slow']!.complete();
+      await slowFuture;
+      expect(
+        container.read(searchControllerProvider).valueOrNull?.map((r) => r.itemId),
+        ['fast-result'],
+      );
+    });
+
+    test("clear() invalidates an in-flight search so its late result can't reappear",
+        () async {
+      final gate = Completer<void>();
+      final repo = FakeSearchRepository(
+        gates: {'query': gate},
+        resultsToReturn: [fakeSearchResult()],
+      );
+      final container = ProviderContainer(overrides: [
+        searchRepositoryProvider.overrideWithValue(repo),
+        itemRepositoryProvider.overrideWithValue(FakeItemRepository()),
+      ]);
+      addTearDown(container.dispose);
+      final controller = container.read(searchControllerProvider.notifier);
+
+      final searchFuture = controller.search('query');
+      controller.clear();
+      expect(container.read(searchControllerProvider).valueOrNull, isEmpty);
+
+      // The in-flight search finally resolves after the field was
+      // already cleared — it must not repopulate the (now empty) list.
+      gate.complete();
+      await searchFuture;
+      expect(container.read(searchControllerProvider).valueOrNull, isEmpty);
     });
   });
 }

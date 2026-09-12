@@ -2159,8 +2159,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
     aşağıdaki alt bölüm.
 12. ~~Not ekranında sil/favori/private/retry yok~~ ✅ — bkz. aşağıdaki
     alt bölüm.
-13. Arama yarışı — hızlı ardışık aramada eski/yavaş yanıt yeni sonucun
-    üstüne yazabiliyor.
+13. ~~Arama yarışı — hızlı ardışık aramada eski/yavaş yanıt yeni sonucun
+    üstüne yazabiliyor~~ ✅ — bkz. aşağıdaki alt bölüm.
 
 #### Faz 12, madde 1: hesap değişince eski hesabın listesi ekranda kalıyor ✅
 
@@ -2734,3 +2734,45 @@ aksine.
 
 Mobile: `flutter analyze` temiz, testler 206 → **213** (+7, yukarıdaki
 yeni test dosyası).
+
+#### Faz 12, madde 13: arama yarışı ✅
+
+`SearchController.search()`, her çağrıda `state`'i sırasıyla
+`AsyncLoading` yapıp sonra ağ/local sorgusunun (+ Faz 12 madde 5'in
+private filtresinin) sonucuna set ediyordu — ama iki `search()` çağrısı
+üst üste (kullanıcı hızlı yazıp fikrini değiştirdiğinde, ya da eski bir
+sorgu ağ gecikmesi yüzünden yavaş kaldığında) çakıştığında, hangisinin
+`state`'i EN SON yazacağı çağrıların gerçek dünyadaki (network) bitiş
+sırasına bağlıydı — çağrılma sırasına değil. Daha yeni bir arama zaten
+sonucunu göstermişken, daha eski/yavaş bir aramanın geç gelen yanıtı
+onun üzerine yazabiliyordu; aynı şekilde kullanıcı arama kutusunu
+tamamen temizlese (`clear()`) bile, hâlâ uçuşta olan eski bir `search()`
+sonunda gelip boşaltılmış listeyi yeniden dolduruyordu.
+
+- **`_searchGeneration` sayacı**: `SearchController`'a eklenen bir
+  `int` alan. Her `search()` çağrısı, herhangi bir `await`'ten önce
+  kendi jenerasyon numarasını (`++_searchGeneration`) yakalıyor;
+  sonucu `state`'e yazmadan hemen önce sayaç hâlâ kendi numarasında mı
+  diye kontrol ediyor — değilse (yani araya başka bir `search()` ya da
+  bir `clear()` girmişse) kendi (artık bayat) sonucunu sessizce atıyor.
+  `clear()` de kendi sayacını artırıyor, böylece hâlâ uçuşta olan eski
+  bir `search()`'ün geç yanıtı, az önce temizlenmiş listeyi geri
+  doldurmuyor.
+- **Regresyon testleri, iki eşzamanlı `search()` çağrısının bitiş
+  sırasını gerçekten kontrol ederek yazıldı**: `FakeSearchRepository`'ye
+  sorgu başına `Completer` ("gate") ve sorgu başına farklı sonuç seti
+  desteği eklendi, böylece test "yavaş" sorguyu önce başlatıp "hızlı"
+  sorguyu sonra başlatabiliyor, sonra "hızlı"yı önce, "yavaş"ı ondan
+  sonra tamamlanmaya bırakabiliyor — tam olarak üretimde olacağı gibi.
+  İki yeni test: (1) yavaş/eski aramanın geç yanıtı, zaten ekranda olan
+  hızlı/yeni sonucun üstüne yazmıyor, (2) `clear()` sırasında uçuşta
+  olan bir arama, sonradan tamamlanınca boşaltılmış listeyi yeniden
+  doldurmuyor. Düzeltme geçici olarak geri alınıp testlerin gerçekten
+  kırmızıya düştüğü doğrulandı (ikisi de somut, yanlış sonuçla — "slow-
+  result" beklenenin yerine, ve boş liste yerine dolu liste ile —
+  başarısız oldu), sonra düzeltme geri konup yeşile döndüğü doğrulandı.
+
+Mobile: `flutter analyze` temiz, testler 213 → **215** (+2, yukarıdaki
+yeni testler), tüm suite (215 test) yeşil.
+
+Faz 12'nin 13 maddesinin tamamı tamamlandı.
