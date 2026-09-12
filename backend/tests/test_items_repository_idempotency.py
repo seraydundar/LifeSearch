@@ -28,9 +28,23 @@ from app.repositories.items_repository import SupabaseRestRepository
 
 def _repo_with_transport(handler) -> SupabaseRestRepository:
     repo = SupabaseRestRepository("test-token")
+    # Pinned to a fixed, fake absolute URL rather than trusting whatever
+    # `SUPABASE_URL` this repository's own `__init__` picked up from the
+    # environment/`backend/.env` (a real bug, found live: this passed on
+    # every machine that happens to have a real `backend/.env` checked
+    # out locally — silently exercising a real Supabase host string —
+    # and failed on any clean checkout, including CI, where
+    # `settings.supabase_url` defaults to `""` and every request below
+    # ends up as a bare relative path like `/rest/v1/...` — which
+    # httpx's cookie-jar compatibility shim can't parse at all
+    # (`ValueError: unknown url type`), regardless of the mock
+    # transport ever being reached). Every assertion below reads
+    # `.path`/`.params`, never the full URL, so pinning the host here
+    # doesn't weaken anything real being checked.
+    repo._base_url = "https://example.test"
     # Swap in a transport that never touches the network, after
     # construction, so the repository is built exactly the way
-    # production code builds it (real headers, real base_url handling).
+    # production code builds it (real headers).
     repo._client = httpx.AsyncClient(headers=repo._headers, transport=httpx.MockTransport(handler))
     return repo
 

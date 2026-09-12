@@ -2653,3 +2653,52 @@ fırlayan bir buton göstermeye yetiyordu.
 
 Mobile: `flutter analyze` temiz, testler 205 → **206** (+1, yukarıdaki
 yeni test dosyası).
+
+### CI düzeltmesi: `test_items_repository_idempotency.py` gerçek `.env`'i sessizce güveniyordu ✅
+
+Kullanıcı GitHub'ın CI bildirimlerinden `main`'in art arda kırmızı
+çıktığını fark edip bildirdi (bkz. ekran görüntüsü — CI #42-44).
+İncelemede: bu oturumun kendi "Docker'da doğrulama" yöntemi
+(`docker run -v "$PWD":/app ...`) **yanlışlıkla bu makinenin gerçek
+`backend/.env` dosyasını da container'a mount ediyordu** —
+`.gitignore`'da olduğu için git'e hiç girmiyor, ama volume mount dosya
+sistemini olduğu gibi kopyalıyor. Bu, `SUPABASE_URL`'in bu makinede
+HER ZAMAN gerçek bir değere sahip olması anlamına geliyordu — CI'da ise
+`.env` hiç yok, `Settings.supabase_url` boş string'e düşüyor.
+
+- **Gerçek hata**: `SupabaseRestRepository.__init__` (`app/repositories/
+  items_repository.py`) `self._base_url`'i `Settings.supabase_url`'den
+  (ortam/`.env`'den) alıyor. `test_items_repository_idempotency.py`'nin
+  `_repo_with_transport()` yardımcı fonksiyonu bunu HİÇ override
+  etmiyordu — bu makinede sessizce gerçek bir Supabase URL'i
+  kullanıyordu, CI'da ise boş string kalıyordu. Boş `_base_url` ile
+  kurulan istekler (`f"{self._base_url}/rest/v1/..."`) düz `/rest/v1/...`
+  gibi GÖRECELİ bir path'e dönüşüyor — httpx'in cookie-jar uyumluluk
+  katmanı (`_CookieCompatRequest`, stdlib `urllib.request.Request`
+  üzerine kurulu) böyle bir URL'i asla parse edemiyor:
+  `ValueError: unknown url type`. Bu, `MockTransport`'un handler'ı hiç
+  çalışmadan, httpx'in `_send_single_request` içindeki cookie çıkarma
+  adımında (Set-Cookie olsun olmasın HER yanıttan sonra koşulsuz
+  çalışıyor) patlıyordu — 3 test etkilendi (2'si bu oturumun Faz 12
+  madde 7'de eklediği yeni `replace_chunks` testleri, 1'i Faz 10b madde
+  3'ten kalma, bu oturumdan önce yazılmış `replace_item_content` testi).
+- **Bu, bu oturumun "Docker'da doğrulama = CI'ya sadık doğrulama"
+  varsayımının kendisinde bir boşluk olduğunu ortaya çıkardı** — mount
+  edilen dizin, git'in izlemediği yerel dosyaları da (gitignore'lu
+  `.env` dahil) sessizce taşıyor. Bundan sonraki Docker doğrulamaları
+  için: `.env`'siz bir kopya üzerinde çalışmak (`cp -r /app
+  /tmp/clean && rm -f /tmp/clean/.env`) gerçek CI koşulunu taklit
+  ediyor; bu turda böyle doğrulandı.
+- **Düzeltme**: `_repo_with_transport()` artık `repo._base_url`'i sabit,
+  gerçek olmayan bir değere (`"https://example.test"`) pinliyor — hangi
+  makinede/ortamda çalıştırılırsa çalıştırılsın artık ortam durumundan
+  bağımsız. Testlerin hiçbiri tam URL'e değil yalnızca `.path`/`.params`'a
+  bakıyor, yani bu hiçbir gerçek kontrolü zayıflatmıyor.
+- **Regresyon, gerçek CI hatası tekrar üretilerek doğrulandı**: fix
+  geçici geri alınıp `.env`'siz temiz bir kopyada tam olarak CI'daki
+  aynı 3 test aynı hatayla kırmızı çıktığı doğrulandı, geri konunca
+  ikisi de (tüm suite + `.env`'siz temiz kopya) yeşile döndü.
+
+Backend: `ruff check` temiz, testler **181/181** — bu kez gerçekten
+`.env`'siz, CI'yı taklit eden temiz bir kopyada doğrulandı (yalnızca
+gerçek `.env`'i mount eden eski yöntemle değil).
