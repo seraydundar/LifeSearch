@@ -17,8 +17,20 @@ class ItemLocalDataSource {
     return query.watch();
   }
 
-  Future<LocalItem?> findById(String itemId) {
-    return (_db.select(_db.localItems)..where((t) => t.id.equals(itemId))).getSingleOrNull();
+  /// Scoped to [userId] like every other read here (`watchAll`,
+  /// `allIds`, ...) — **not** just `t.id.equals(itemId)` on its own
+  /// (Faz 12, madde 3, denetim düzeltmesi — see docs/roadmap.md). A row
+  /// from a *previous* account can still be sitting in this device's
+  /// local cache (the app never wipes it on sign-out, only stops
+  /// showing it in account-scoped lists — see Faz 10a's own documented
+  /// limitation) — without this filter, a route that resolves an item
+  /// straight from its id (a deep link, `ItemByIdLoader`, tapping a
+  /// duplicate/related item) could hand a *different, currently
+  /// signed-in* account someone else's cached note content.
+  Future<LocalItem?> findById(String userId, String itemId) {
+    return (_db.select(_db.localItems)
+          ..where((t) => t.id.equals(itemId) & t.userId.equals(userId)))
+        .getSingleOrNull();
   }
 
   /// Whether `userId` has any item still waiting on the AI pipeline —

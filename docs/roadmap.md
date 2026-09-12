@@ -2138,7 +2138,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
    aşağıdaki alt bölüm.
 2. ~~Sync sırasında hesap değişirse A'nın yazması B'nin hesabına
    düşebiliyor~~ ✅ — bkz. aşağıdaki alt bölüm.
-3. `findById`/`fetchNoteContent` kullanıcı filtresiz.
+3. ~~`findById`/`fetchNoteContent` kullanıcı filtresiz~~ ✅ — bkz.
+   aşağıdaki alt bölüm.
 4. B'nin sync'i A'nın yerel koleksiyon üyeliğini silebiliyor.
 5. Private: arama hata verince tüm sonuçları gösteriyor + reveal
    kapanınca eski sonuçlar temizlenmiyor.
@@ -2253,3 +2254,39 @@ tutarsız.
 
 Mobile: `flutter analyze` temiz, testler 190 → **191** (+1, yukarıdaki
 regresyon testi).
+
+#### Faz 12, madde 3: `findById`/`fetchNoteContent` kullanıcı filtresiz ✅
+
+`ItemLocalDataSource.findById(itemId)` yalnızca `t.id.equals(itemId)`
+filtreliyordu — `watchAll(userId)`/`allIds(userId)`'ın aksine hiç
+`userId` almıyordu. `OfflineItemRepository.findById()`/
+`fetchNoteContent()` bunu doğrudan kullanıyordu; ikisi de `ItemByIdLoader`
+(deep link, `/item/:id` route restore) ve item detail'in duplicate-hedef
+yüklemesi gibi, kullanıcının kendi filtrelenmiş listesinden GEÇMEYEN
+yollardan çağrılıyor. Sonuç: B oturumdayken, cihazda hâlâ duran (Faz
+10a'nın kendi dokümante ettiği "veri hâlâ diskte" sınırı — sign-out
+local DB'yi hiç temizlemiyor) A'nın bir item id'si biliniyorsa (deep
+link, bildirim, vs.), A'nın not içeriği B'ye gösterilebiliyordu.
+
+- **`ItemLocalDataSource.findById(String userId, String itemId)`**:
+  imza değişti, sorguya `& t.userId.equals(userId)` eklendi — artık
+  `watchAll`/`allIds` ile aynı desende, her okuma kullanıcıya bağlı.
+  `OfflineItemRepository`'nin iki çağrı yeri (`findById`,
+  `fetchNoteContent`) zaten `_userId`'yi biliyordu, tek satırlık geçiş.
+  `ItemRepository` arayüzünün kendisi (public `findById(itemId)`)
+  değişmedi — çağıranlar (`ItemByIdLoader`, `item_detail_screen.dart`)
+  hiç dokunulmadan otomatik düzeldi.
+- **`fetchNoteContent`'in remote fallback'ı** (`_remote.fetchNoteContent`,
+  ilk sync'ten önceki cold-start yolu) zaten güvenliydi — Supabase'in
+  kendi RLS'i (`item_contents_owner`) başka bir hesabın `item_id`'si için
+  sunucu tarafında zaten hiçbir şey döndürmüyor.
+- **Regresyon testi, düzeltmeden önce gerçekten kırmızı çıktığı
+  doğrulanarak yazıldı**: yeni `item_local_data_source_test.dart` —
+  gerçek bir in-memory Drift DB'de A'nın item'ı eklenip B olarak
+  `findById` çağrılıyor, `null` bekleniyor. Fix geçici geri alınınca
+  test gerçekten A'nın satırını (`noteContent: 'secret body'` dahil)
+  döndürerek kırmızı çıktı, geri konunca `null`'a döndü.
+
+Mobile: `flutter analyze` temiz, testler 191 → **194** (+3, yukarıdaki
+yeni test dosyası — `ItemLocalDataSource`'ın kendi dedike bir testi
+daha önce hiç yoktu).

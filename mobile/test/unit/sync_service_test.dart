@@ -214,7 +214,7 @@ void main() {
     verify(() => remote.createNote(id: 'note-1', title: 'Docker Notes', content: 'body'))
         .called(1);
     expect(await queue.pendingEntries('user-1'), isEmpty);
-    final row = await local.findById('note-1');
+    final row = await local.findById('user-1', 'note-1');
     expect(row!.syncStatus, 'synced');
   });
 
@@ -244,7 +244,7 @@ void main() {
     final pending = await queue.pendingEntries('user-1');
     expect(pending, hasLength(1));
     expect(pending.single.retryCount, 1);
-    final row = await local.findById('note-1');
+    final row = await local.findById('user-1', 'note-1');
     expect(row!.syncStatus, 'failed');
   });
 
@@ -275,7 +275,7 @@ void main() {
     verify(() => remote.createUrlItem(id: 'link-1', url: 'https://example.com/docker-guide'))
         .called(1);
     expect(await queue.pendingEntries('user-1'), isEmpty);
-    final row = await local.findById('link-1');
+    final row = await local.findById('user-1', 'link-1');
     expect(row!.syncStatus, 'synced');
   });
 
@@ -302,7 +302,7 @@ void main() {
 
     verify(() => remote.dismissDuplicate('item-1')).called(1);
     expect(await queue.pendingEntries('user-1'), isEmpty);
-    final row = await local.findById('item-1');
+    final row = await local.findById('user-1', 'item-1');
     expect(row!.syncStatus, 'synced');
   });
 
@@ -328,7 +328,7 @@ void main() {
 
     verify(() => remote.setPrivate('item-1', true)).called(1);
     expect(await queue.pendingEntries('user-1'), isEmpty);
-    final row = await local.findById('item-1');
+    final row = await local.findById('user-1', 'item-1');
     expect(row!.syncStatus, 'synced');
   });
 
@@ -371,7 +371,7 @@ void main() {
 
     await sync.syncNow();
 
-    final row = await local.findById('note-1');
+    final row = await local.findById('user-1', 'note-1');
     expect(row!.title, 'Local edit'); // not overwritten by the stale pull
   });
 
@@ -398,7 +398,7 @@ void main() {
 
     await sync.syncNow();
 
-    expect((await local.findById('note-1'))!.private, isTrue);
+    expect((await local.findById('user-1', 'note-1'))!.private, isTrue);
   });
 
   test('pulling remote notes fetches and stores each one\'s content', () async {
@@ -410,8 +410,8 @@ void main() {
 
     await sync.syncNow();
 
-    expect((await local.findById('note-1'))!.noteContent, 'body one');
-    expect((await local.findById('note-2'))!.noteContent, 'body two');
+    expect((await local.findById('user-1', 'note-1'))!.noteContent, 'body one');
+    expect((await local.findById('user-1', 'note-2'))!.noteContent, 'body two');
   });
 
   test('pulling remote notes fetches their content concurrently, not one at a time', () async {
@@ -475,7 +475,7 @@ void main() {
 
       // The create_url itself succeeded — it's gone, and the item shows
       // synced — only the AI kickoff is what's still pending.
-      final row = await local.findById('link-1');
+      final row = await local.findById('user-1', 'link-1');
       expect(row!.syncStatus, 'synced');
       final pending = await queue.pendingEntries('user-1');
       expect(pending, hasLength(1));
@@ -508,7 +508,7 @@ void main() {
       expect(pending.single.retryCount, 1);
       // Nothing local to have flagged failed — trigger_ai has no item/
       // collection row of its own to touch.
-      expect(await local.findById('link-1'), null);
+      expect(await local.findById('user-1', 'link-1'), null);
     });
 
     test('a trigger_ai retry that succeeds is removed from the queue', () async {

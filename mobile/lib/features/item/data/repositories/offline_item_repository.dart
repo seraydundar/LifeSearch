@@ -44,7 +44,7 @@ class OfflineItemRepository implements ItemRepository {
 
   @override
   Future<String> fetchNoteContent(String itemId) async {
-    final local = await _local.findById(itemId);
+    final local = await _local.findById(_userId, itemId);
     if (local?.noteContent != null) return local!.noteContent!;
     return _remote.fetchNoteContent(itemId); // cold-start fallback before the first sync
   }
@@ -60,7 +60,7 @@ class OfflineItemRepository implements ItemRepository {
 
   @override
   Future<Item?> findById(String itemId) async {
-    final local = await _local.findById(itemId);
+    final local = await _local.findById(_userId, itemId);
     return local?.toDomainItem();
   }
 
