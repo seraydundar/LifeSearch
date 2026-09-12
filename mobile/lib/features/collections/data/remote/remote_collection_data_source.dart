@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/error/failure.dart';
+import '../../../../core/network/paginated_fetch.dart';
 import '../../domain/entities/collection.dart';
 
 /// Talks to Supabase directly. Like `RemoteItemDataSource`, every write
@@ -30,17 +31,40 @@ class RemoteCollectionDataSource {
 
   /// One-shot snapshot of every collection the user has — used by
   /// `SyncService` to reconcile the local cache, not by the UI directly.
+  ///
+  /// Paginated — same reasoning as `RemoteItemDataSource.fetchAllRows()`
+  /// (Faz 12, madde 9, denetim düzeltmesi, see docs/roadmap.md).
   Future<List<Map<String, dynamic>>> fetchAllRows() {
-    return _client.from('collections').select().eq('user_id', userId).order('created_at');
+    return fetchAllPages((from, to) {
+      return _client
+          .from('collections')
+          .select()
+          .eq('user_id', userId)
+          .order('created_at')
+          .order('id')
+          .range(from, to);
+    });
   }
 
   /// Every (collection_id, item_id) membership row across the given
   /// collections — `collection_items` carries no `user_id` of its own, so
   /// the caller passes the ids `fetchAllRows()` just returned rather than
   /// this filtering by user itself.
+  ///
+  /// Paginated, same as `fetchAllRows()` above — a user with many
+  /// collections each holding many items could plausibly have more
+  /// membership rows than items themselves.
   Future<List<Map<String, dynamic>>> fetchAllItemRows(List<String> collectionIds) async {
     if (collectionIds.isEmpty) return const [];
-    return _client.from('collection_items').select().inFilter('collection_id', collectionIds);
+    return fetchAllPages((from, to) {
+      return _client
+          .from('collection_items')
+          .select()
+          .inFilter('collection_id', collectionIds)
+          .order('collection_id')
+          .order('item_id')
+          .range(from, to);
+    });
   }
 
   Future<void> createCollection({

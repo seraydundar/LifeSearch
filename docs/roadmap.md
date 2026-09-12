@@ -2150,7 +2150,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
    bkz. aşağıdaki alt bölüm.
 8. ~~Item detail ekranı işlem tamamlanınca güncellenmiyor~~ ✅ — bkz.
    aşağıdaki alt bölüm.
-9. Büyük arşivde sync, gelmeyen kayıtları "silinmiş" sanıp local'den siliyor.
+9. ~~Büyük arşivde sync, gelmeyen kayıtları "silinmiş" sanıp local'den
+   siliyor~~ ✅ — bkz. aşağıdaki alt bölüm.
 10. Gemini varsayılan modelleri (`text-embedding-004`, `gemini-2.0-flash`)
     gerçekten kapatılmış (Google'ın changelog'undan doğrulandı).
 11. Web'de Google sign-in kod seviyesinde çalışamaz (`google_sign_in_web`
@@ -2518,3 +2519,49 @@ gerekiyordu.
 
 Mobile: `flutter analyze` temiz, testler 200 → **201** (+1, yukarıdaki
 regresyon testi).
+
+#### Faz 12, madde 9: büyük arşivde sync, gelmeyen kayıtları "silinmiş" sanıp local'den siliyor ✅
+
+`RemoteItemDataSource.fetchAllRows()`/`RemoteCollectionDataSource.
+fetchAllRows()`/`fetchAllItemRows()` hiç sayfalama yapmıyordu — düz bir
+`.select()`, PostgREST'in yapılandırılmış satır limitini (genelde 1000)
+aşan bir arşivde hata vermeden SESSİZCE kırpıyordu. `SyncService`
+"yanıtta yok" = "sunucuda silinmiş" varsayıyor (`_pullRemote`/
+`_pullRemoteCollections`'ın stale-row temizleme mantığı) — bu limiti
+aşan bir kullanıcı için, sınırın ötesindeki HER ŞEY bir sonraki sync'te
+silinmiş sanılıp local cache'ten kalıcı olarak siliniyordu.
+
+- **`fetchAllPages()`** (yeni, `core/network/paginated_fetch.dart`): saf,
+  Supabase'den bağımsız bir sayfalama döngüsü — `.range(from, to)`
+  çağıran bir callback alıp, dönen sayfa TAMAMEN BOŞ olana kadar
+  çağırmaya devam ediyor. Bilinçli olarak "sayfa `pageSize`'dan kısaysa
+  dur" YERİNE bunu seçti — kısa bir sayfa, sunucunun kendi yapılandırılmış
+  limiti İSTENEN `pageSize`'dan daha düşükse YANLIŞ POZİTİF verir (bu
+  durumda her sayfa "kısa" görünür, hiçbiri gerçekte son sayfa
+  olmayabilir) — yalnızca gerçekten boş bir sayfa, sunucunun gerçek
+  limiti ne olursa olsun güvenilir bir "bitti" sinyali.
+- **`RemoteItemDataSource.fetchAllRows()`**, **`RemoteCollectionDataSource.
+  fetchAllRows()`/`fetchAllItemRows()`**: üçü de artık `fetchAllPages()`
+  üzerinden gidiyor; `created_at`'e (veya `collection_id`/`item_id`'ye)
+  ek olarak `id` ikincil sıralama anahtarı eklendi — aynı `created_at`'e
+  sahip birden fazla satır varsa (ör. toplu bir içe aktarım) sayfalar
+  arası sıralamanın deterministik kalması için (aksi halde sayfa sınırında
+  bir satır atlanabilir ya da tekrar edebilirdi).
+- **Regresyon testleri, gerçek bir uygulama hatası bulunup düzeltilerek
+  yazıldı** (alışılmışın biraz ötesinde): yeni `paginated_fetch_test.dart`
+  yazılırken bir testin kendisi (sahte "bir sayfa döndür" callback'i her
+  çağrıda AYNI 3 satırı döndürüyordu, hiç boş dönmüyordu) gerçek bir
+  SONSUZ DÖNGÜYE yol açtı — `flutter test` gerçekten asılı kaldı (CPU'da
+  2+ dakika, hiç ilerlemeyen bir test), süreç öldürülüp test düzeltildi.
+  Ayrıca iki testin kendi beklenen çağrı listeleri yanlıştı (sunucu
+  limitin altında sayfalarken bile fonksiyonun HER ZAMAN bir "onaylayıcı"
+  boş sayfa çağrısı yaptığını hesaba katmıyorlardı) — gerçek çalıştırma
+  bunları da yakalayıp düzeltti. Son olarak: fonksiyonun kendisi
+  "sayfa `pageSize`'dan kısaysa dur" şekline geçici olarak geri alınıp,
+  3 testin gerçekten kırmızı çıktığı (özellikle sunucu-limit-altı senaryosu
+  yalnızca 1 çağrıda durup 250 satırdan yalnızca 100'ünü döndürdü)
+  doğrulandı, doğru hâline geri döndürüldü.
+
+Mobile: `flutter analyze` temiz, testler 201 → **205** (+4, yukarıdaki
+yeni test dosyası — `fetchAllPages`'in kendisi, Supabase'e hiç
+dokunmadan, saf bir fonksiyon olarak test ediliyor).

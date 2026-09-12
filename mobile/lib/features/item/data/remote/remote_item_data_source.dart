@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/error/failure.dart';
+import '../../../../core/network/paginated_fetch.dart';
 import '../../domain/entities/extracted_entity.dart';
 import '../../domain/entities/item.dart';
 
@@ -52,8 +53,27 @@ class RemoteItemDataSource {
 
   /// One-shot snapshot of every item the user has — used by `SyncService`
   /// to reconcile the local cache, not by the UI directly.
+  ///
+  /// Paginated (Faz 12, madde 9, denetim düzeltmesi — see
+  /// docs/roadmap.md): a plain `.select()` with no `.range()` silently
+  /// truncates past PostgREST's configured row cap instead of erroring.
+  /// `SyncService` treats "not in this response" as "deleted on the
+  /// server" — for an archive larger than one page, everything past the
+  /// cap used to look deleted and get wiped from the local cache on the
+  /// very next sync. `.order('id')` as a tiebreaker after `created_at`
+  /// keeps paging deterministic even when many rows share the exact same
+  /// timestamp (e.g. a bulk import) — without it, a tied ordering could
+  /// vary between page requests and skip or repeat rows across pages.
   Future<List<Map<String, dynamic>>> fetchAllRows() {
-    return _client.from('items').select().eq('user_id', userId).order('created_at');
+    return fetchAllPages((from, to) {
+      return _client
+          .from('items')
+          .select()
+          .eq('user_id', userId)
+          .order('created_at')
+          .order('id')
+          .range(from, to);
+    });
   }
 
   Future<String> fetchNoteContent(String itemId) async {
