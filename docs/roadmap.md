@@ -2148,7 +2148,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
    dahil)~~ ✅ — bkz. aşağıdaki alt bölüm.
 7. ~~`replace_chunks`: eski iş yeni işin chunk'ını silebiliyor~~ ✅ —
    bkz. aşağıdaki alt bölüm.
-8. Item detail ekranı işlem tamamlanınca güncellenmiyor.
+8. ~~Item detail ekranı işlem tamamlanınca güncellenmiyor~~ ✅ — bkz.
+   aşağıdaki alt bölüm.
 9. Büyük arşivde sync, gelmeyen kayıtları "silinmiş" sanıp local'den siliyor.
 10. Gemini varsayılan modelleri (`text-embedding-004`, `gemini-2.0-flash`)
     gerçekten kapatılmış (Google'ın changelog'undan doğrulandı).
@@ -2469,3 +2470,51 @@ Backend: `ruff check` temiz (Docker'da), testler 179 (değişmedi — 2 eski
 olduğu için yeni tek-RPC şeklini doğrulayan 2 yeni testle değiştirildi;
 `test_processing_pipeline.py`'nin `FakeRepo.replace_chunks`'ı yeni
 `job_id` parametresini kabul edecek şekilde güncellendi).
+
+#### Faz 12, madde 8: item detail ekranı işlem tamamlanınca güncellenmiyor ✅
+
+`_loadFullItem()` yalnızca `initState()`'te bir kez çağrılıyordu.
+Ekran açıkken arka planda `SyncService` item'ın `processingStatus`'unu
+`pending`'den `completed`'a çekse (ya da `storagePath`'i doldursa) bile,
+ekran bunu hiç görmüyordu — kullanıcının ekrandan çıkıp geri gelmesi
+gerekiyordu.
+
+- **`watchItemByIdProvider(itemId)`** (yeni, `item_providers.dart`):
+  `itemByIdProvider`'ın (tek seferlik `Future`) canlı karşılığı — düz
+  bir `Provider.autoDispose.family`, `allItemsIncludingPrivateProvider`'ı
+  (zaten reaktif Drift stream'i) `ref.watch` edip listede eşleşen id'yi
+  döndürüyor. Reveal durumundan bağımsız `allItemsIncludingPrivateProvider`'dan
+  türetildi — private bir item'ın kendi detay ekranı, başka yerde reveal
+  kapalı olsa bile onu göstermeye devam etmeli.
+- **`ItemDetailScreen`**: `initState()`'teki tek seferlik `findById()`
+  çağrısı kaldırıldı. Yerine: `initState()`'te `ref.read(watchItemByIdProvider(...))`
+  ile senkron bir anlık düzeltme (local cache zaten hazırsa —
+  arama/related/duplicate'ten gelen kırpılmış stand-in'i anında
+  düzeltiyor); `build()`'de `ref.listen(watchItemByIdProvider(...))` ile
+  SÜREKLİ dinleme — bundan sonraki her yerel değişiklikte (ekranın
+  kendi optimistic yazmaları dahil — `_toggleFavorite` zaten Drift'e
+  doğrudan yazıyor, bu yalnızca ekranda zaten görüneni onaylıyor, görsel
+  bir titreme yok — ve şimdi, sunucudan çekilen gerçek bir tamamlanma)
+  `_item`'ı güncelliyor.
+- **Optimistic revert mantığı korundu**: `_toggleFavorite`/`_togglePrivate`/
+  `_retryProcessing`/`_dismissDuplicate` hâlâ kendi `setState` ile anlık
+  güncelleyip hata durumunda geri alıyor — bu yalnızca YEREL bir yazma
+  başarısız olursa devreye giriyor (nadir), sunucu senkron hatası zaten
+  hiç geri almıyordu (Home/Library'nin de yaptığı gibi, kalıcı olarak
+  yerel durumu gösterip `syncStatus: 'failed'` ile işaretliyor). İki
+  mekanizma (optimistic + reaktif) çakışmıyor: başarı durumunda ikisi de
+  aynı son değere yakınsıyor, nadir yerel hata durumunda yalnızca
+  optimistic katman geri almış oluyor.
+- **Regresyon testi, düzeltmeden önce gerçekten kırmızı çıktığı
+  doğrulanarak yazıldı**: `item_detail_screen_test.dart`'a yeni bir
+  test — `FakeItemRepository`'ye yeni bir `updateItem()` yardımcı metodu
+  eklendi (arka plan senkronunu taklit etmek için — diğer tüm mutasyon
+  metotları ekranın KENDİ yazmasını taklit ediyordu, bu ilk kez "başka
+  bir yerden gelen" bir değişikliği taklit ediyor); ekran açıkken
+  `pending`'den `completed`'a + `storagePath` dolduran bir güncelleme
+  simüle edilip "Dosyayı Aç"ın (yeniden navigasyon olmadan) belirdiği
+  doğrulanıyor. Fix geçici geri alınınca test gerçekten kırmızı çıktı,
+  geri konunca yeşile döndü.
+
+Mobile: `flutter analyze` temiz, testler 200 → **201** (+1, yukarıdaki
+regresyon testi).

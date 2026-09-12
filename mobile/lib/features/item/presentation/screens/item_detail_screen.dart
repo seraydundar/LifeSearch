@@ -34,35 +34,50 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   @override
   void initState() {
     super.initState();
+    // Search results, Ask AI sources and Related Items all push this
+    // route with a *trimmed* stand-in `Item` — just enough to render a
+    // title/type (see e.g. `search_tab.dart`'s `_openResult`) — because
+    // that's all they themselves have; `storagePath`/`sourceUrl`/
+    // `favorite`/`createdAt` are never set on it. If the local cache
+    // already has the real row (the common case — reading a `Provider`
+    // synchronously here needs no `await`), correct it immediately
+    // rather than waiting for the first `ref.listen` change below,
+    // which only fires on a change *after* this point (an item tapped
+    // from Library already carries the real thing, so this is a no-op
+    // there).
+    final fresh = ref.read(watchItemByIdProvider(widget.item.id));
+    if (fresh != null) _item = fresh;
     _loadSignedUrl();
     _loadDuplicateTarget();
-    _loadFullItem();
   }
 
-  /// Search results, Ask AI sources and Related Items all push this route
-  /// with a *trimmed* stand-in `Item` — just enough to render a title/type
-  /// (see e.g. `search_tab.dart`'s `_openResult`) — because that's all
-  /// they themselves have; `storagePath`/`sourceUrl`/`favorite`/`createdAt`
-  /// are never set on it. Left uncorrected, that silently broke "Dosyayı
-  /// Aç"/the favorite star/the date for every item opened that way (an
-  /// item tapped from Library already carries the real thing, so this is
-  /// a no-op there — `findById` is a local Drift lookup either way, cheap
-  /// enough not to bother telling the two cases apart).
+  /// **Live, not one-shot** (Faz 12, madde 8, denetim düzeltmesi — see
+  /// docs/roadmap.md): this used to be a single `findById()` call in
+  /// `initState()` — a background sync completing this item's processing
+  /// (or filling in `storagePath`) while the screen was already open
+  /// never showed up until the user left and came back. `ref.listen` on
+  /// [watchItemByIdProvider] (see `build()`) calls this every time the
+  /// local row actually changes, including this screen's own optimistic
+  /// writes (`_toggleFavorite` etc. already write straight to Drift, so
+  /// this just confirms what's already on screen — no visible flicker)
+  /// and, now, a real completion pulled in from the server; and, since
+  /// `ref.listen` only fires on a *change*, also the initial resolution
+  /// if the local cache wasn't warmed up yet when `initState()` ran.
   ///
   /// Not synced to this device yet (a genuine possibility right after an
-  /// item was created on another device) is the one case this can't fix —
-  /// `findById` only ever reads the local cache, never the network — so it
-  /// silently keeps showing whatever we were already given rather than
-  /// replacing a real (if incomplete) item with a "not found" wall.
-  Future<void> _loadFullItem() async {
-    final full = await ref.read(itemRepositoryProvider).findById(widget.item.id);
-    if (!mounted || full == null) return;
+  /// item was created on another device) is the one case this can't fix
+  /// — [watchItemByIdProvider] only ever reflects the local cache, never
+  /// the network — so a `null` emission is ignored, silently keeping
+  /// whatever we were already given rather than replacing a real (if
+  /// incomplete) item with a "not found" wall.
+  void _applyFreshItem(Item fresh) {
     final hadStoragePath = _item.storagePath;
-    setState(() => _item = full);
-    if (full.storagePath != null && full.storagePath != hadStoragePath) {
-      _loadSignedUrl(); // wasn't known yet when the first call ran
+    final hadDuplicateOfItemId = _item.duplicateOfItemId;
+    setState(() => _item = fresh);
+    if (fresh.storagePath != null && fresh.storagePath != hadStoragePath) {
+      _loadSignedUrl(); // wasn't known yet when we last checked
     }
-    if (full.duplicateOfItemId != null && full.duplicateOfItemId != widget.item.duplicateOfItemId) {
+    if (fresh.duplicateOfItemId != null && fresh.duplicateOfItemId != hadDuplicateOfItemId) {
       _loadDuplicateTarget(); // ditto
     }
   }
@@ -200,6 +215,9 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(watchItemByIdProvider(widget.item.id), (previous, next) {
+      if (next != null) _applyFreshItem(next);
+    });
     final isImage = _item.type == ItemType.image || _item.type == ItemType.screenshot;
 
     return Scaffold(

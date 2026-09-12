@@ -28,6 +28,19 @@ class FakeItemRepository implements ItemRepository {
     yield* _controller.stream;
   }
 
+  /// Stands in for a background `SyncService` pull picking up a change
+  /// made somewhere else — the backend finishing AI processing, a second
+  /// device's edit, etc. — as opposed to every other mutation method
+  /// here, which stands in for *this* screen's own write. Replaces the
+  /// item by id (a no-op if it isn't present) and notifies watchers, same
+  /// as every other mutation.
+  void updateItem(Item updated) {
+    final index = _items.indexWhere((i) => i.id == updated.id);
+    if (index == -1) return;
+    _items[index] = updated;
+    _notify();
+  }
+
   @override
   Future<String> fetchNoteContent(String itemId) async => 'fake content';
 

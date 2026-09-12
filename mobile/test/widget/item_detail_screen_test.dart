@@ -164,6 +164,38 @@ void main() {
     expect(find.text('Tekrar Dene'), findsNothing);
   });
 
+  testWidgets(
+      'processing finishing while the screen is already open updates it live, no navigating away '
+      'and back required (Faz 12, madde 8 — see docs/roadmap.md)', (tester) async {
+    final pending = Item(
+      id: 'item-1',
+      type: ItemType.pdf,
+      title: 'Still processing',
+      processingStatus: 'pending',
+      favorite: false,
+      createdAt: DateTime(2026, 1, 1),
+    );
+    final repo = FakeItemRepository(initialItems: [pending]);
+
+    await tester.pumpWidget(wrap(pending, repo: repo));
+    await tester.pumpAndSettle();
+
+    expect(find.text('İşlenmeyi bekliyor'), findsOneWidget);
+    expect(find.text('Dosyayı Aç'), findsNothing);
+
+    // The backend finishes processing — a background SyncService pull
+    // would apply exactly this kind of update while the screen sits
+    // there untouched, nothing re-navigated or manually refreshed.
+    repo.updateItem(pending.copyWith(
+      processingStatus: 'completed',
+      storagePath: 'user/1/report.pdf',
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('İşlenmeyi bekliyor'), findsNothing);
+    expect(find.text('Dosyayı Aç'), findsOneWidget);
+  });
+
   testWidgets('a stand-in for an item not yet synced to this device degrades gracefully, no crash',
       (tester) async {
     // Nothing in the local cache for this id — e.g. an item search just

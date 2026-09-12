@@ -114,6 +114,25 @@ final itemByIdProvider = FutureProvider.autoDispose.family<Item?, String>((ref, 
   return ref.watch(itemRepositoryProvider).findById(itemId);
 });
 
+/// Same lookup as [itemByIdProvider], but **live** — re-emits on every
+/// local change instead of a one-shot snapshot (Faz 12, madde 8, denetim
+/// düzeltmesi — see docs/roadmap.md). `ItemDetailScreen` used to load
+/// the full item exactly once in `initState()`; a background sync
+/// pulling in a `pending`→`completed` transition (or a newly-known
+/// `storagePath`) while that screen was already open never showed up —
+/// the user had to leave and come back to see it. Derived from
+/// [allItemsIncludingPrivateProvider] (not [itemsProvider]) since a
+/// private item's own detail screen should keep showing it regardless
+/// of whether private items are currently revealed elsewhere.
+final watchItemByIdProvider = Provider.autoDispose.family<Item?, String>((ref, itemId) {
+  final items = ref.watch(allItemsIncludingPrivateProvider).valueOrNull;
+  if (items == null) return null;
+  for (final item in items) {
+    if (item.id == itemId) return item;
+  }
+  return null; // not synced to this device yet — same contract as findById()
+});
+
 final noteEditorControllerProvider =
     AsyncNotifierProvider<NoteEditorController, void>(NoteEditorController.new);
 
