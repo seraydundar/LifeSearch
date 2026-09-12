@@ -2146,7 +2146,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
    kapanınca eski sonuçlar temizlenmiyor~~ ✅ — bkz. aşağıdaki alt bölüm.
 6. ~~Polling bütçesi tükenince bir daha hiç çalışmıyor (yeni işler
    dahil)~~ ✅ — bkz. aşağıdaki alt bölüm.
-7. `replace_chunks`: eski iş yeni işin chunk'ını silebiliyor.
+7. ~~`replace_chunks`: eski iş yeni işin chunk'ını silebiliyor~~ ✅ —
+   bkz. aşağıdaki alt bölüm.
 8. Item detail ekranı işlem tamamlanınca güncellenmiyor.
 9. Büyük arşivde sync, gelmeyen kayıtları "silinmiş" sanıp local'den siliyor.
 10. Gemini varsayılan modelleri (`text-embedding-004`, `gemini-2.0-flash`)
@@ -2413,3 +2414,58 @@ otomatik yansıması) fiilen devre dışı bırakan bir regresyondu.
 
 Mobile: `flutter analyze` temiz, testler 199 → **200** (+1, yukarıdaki
 regresyon testi).
+
+#### Faz 12, madde 7: `replace_chunks`'ta eski iş yeni işin chunk'ını silebiliyor ✅
+
+Faz 10b madde 3'ün kendi düzeltmesinin arta kalanı. `chunks_item_id_chunk_index_key`
+(0013 migration) + UPSERT, iki eşzamanlı işin chunk'ları ÇOĞALTMASINI
+önlemişti — ama bu hâlâ İKİ AYRI HTTP isteğiydi (bir UPSERT, sonra ayrı
+bir DELETE). Eski, yavaş bir iş 1 chunk üretip; yeni, daha hızlı bir iş
+3 chunk üretip önce bitirirse — eski işin gecikmiş DELETE'i
+(`chunk_index >= 1`) yeni işin 1 ve 2 numaralı chunk'larını siliyordu.
+Duplicate'i önleyen aynı fix, bu SIRA sorununu hiç çözmemişti.
+
+- **`replace_chunks_for_job(p_item_id, p_job_id, p_chunks)`** (yeni
+  Postgres fonksiyonu, `0015_replace_chunks_atomic.sql`): tüm işlemi
+  TEK bir atomik RPC çağrısına indiriyor —
+  1. `pg_advisory_xact_lock(hashtext(item_id))` ile item başına
+     serialize ediyor — aynı item için iki eşzamanlı çağrı asla
+     birbirinin SELECT/INSERT/DELETE adımlarıyla iç içe geçemiyor.
+  2. `processing_jobs`'ta bu item için en güncel job hâlâ `p_job_id`
+     mi diye kontrol ediyor — değilse (daha yeni bir iş zaten varsa)
+     hiçbir şey yapmadan dönüyor. (1) sayesinde, bu kontrole gelen
+     ikinci çağrı, ilkinin yazdıklarını zaten COMMIT edilmiş olarak
+     görüyor — hangi iş gerçekten en son başladıysa, hangisi önce
+     BİTERSE bitsin, son sözü o söylüyor.
+  3. UPSERT + trim, tek transaction içinde.
+- **`SupabaseRestRepository.replace_chunks()`**: artık `job_id` alıyor,
+  eski iki-istekli (POST+DELETE) kodun yerine tek bir RPC POST'u var.
+  `processing_pipeline.py`'daki tek çağrı yeri `job_id`'yi geçiriyor
+  (zaten `create_job()`'dan elde ediyordu).
+- **Gerçek bir canlı Postgres'e karşı doğrulandı** (bu sınıftaki
+  değişiklikler için alışılmışın dışında bir titizlik — genelde SQL
+  migration'ları yalnızca kod incelemesiyle doğrulanıyordu): projenin
+  kendi `docker-compose.yml`'ındaki `pgvector/pgvector:pg16`
+  container'ı ayağa kaldırılıp (`auth.users`'a bağımlı olmayan,
+  yalnızca `items`/`chunks`/`processing_jobs`'ı taklit eden minimal bir
+  şema ile) fonksiyonun kendisi gerçekten çalıştırıldı: (1) tam bu
+  raporun tarif ettiği yarış senaryosu (eski iş [job A, 1 chunk] yeni
+  işten [job B, 3 chunk] SONRA çağrılıyor — gerçek zamanlamayı taklit
+  ediyor) — sonuç doğru şekilde yalnızca B'nin 3 chunk'ı, A'nın çağrısı
+  sessizce no-op; (2) normal yeniden-işleme (aynı job daha az chunk'la
+  tekrar çağrılıyor) — doğru şekilde güncelliyor + fazlasını kırpıyor;
+  (3) hiç `processing_jobs` satırı olmayan bir item (olması gerekmeyen
+  ama savunmacı bir uç durum) — `null` kontrolü doğru çalışıp işlemi
+  engellemedi. Test container'ı ve script'leri işlem bitince silindi.
+- **Doğrulanmayan**: gerçek eşzamanlı (concurrent, aynı anda) iki HTTP
+  isteğiyle canlı bir yarış — yukarıdaki doğrulama sıralı (sequential)
+  SQL çağrılarıyla "B sonra A" senaryosunu taklit ediyor, gerçek
+  paralel bir yük altında `pg_advisory_xact_lock`'ın kilitlenme/bekleme
+  davranışı ayrıca gözlemlenmedi (Postgres'in kendi belgelenmiş
+  garantisine güveniliyor).
+
+Backend: `ruff check` temiz (Docker'da), testler 179 (değişmedi — 2 eski
+`replace_chunks` testi [POST+DELETE şeklini doğrulayan] artık geçersiz
+olduğu için yeni tek-RPC şeklini doğrulayan 2 yeni testle değiştirildi;
+`test_processing_pipeline.py`'nin `FakeRepo.replace_chunks`'ı yeni
+`job_id` parametresini kabul edecek şekilde güncellendi).

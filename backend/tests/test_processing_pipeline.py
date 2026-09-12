@@ -115,7 +115,7 @@ class FakeRepo:
     async def download_file(self, storage_path):
         return self.image_bytes
 
-    async def replace_chunks(self, item_id, chunks):
+    async def replace_chunks(self, item_id, job_id, chunks):
         self.inserted_chunks = chunks
 
     async def update_item_metadata(

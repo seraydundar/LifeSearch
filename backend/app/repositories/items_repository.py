@@ -81,41 +81,38 @@ class SupabaseRestRepository:
         response.raise_for_status()
         return response.content
 
-    async def replace_chunks(self, item_id: str, chunks: list[dict[str, Any]]) -> None:
-        """Idempotent by design (requirements doc, rule 17) — but not via
-        an independent DELETE followed by an independent INSERT anymore.
-        That used to be two separate HTTP requests, not one transaction:
-        two concurrent reprocessing runs for the same item (e.g. the user
-        hits "Tekrar Dene" while an earlier attempt is still in flight)
-        could each run their DELETE before either ran its INSERT, then
-        both INSERTs land — doubling every chunk.
+    async def replace_chunks(self, item_id: str, job_id: str, chunks: list[dict[str, Any]]) -> None:
+        """Idempotent by design (requirements doc, rule 17) — and, since
+        Faz 12 madde 7 (denetim düzeltmesi, see docs/roadmap.md), safe
+        against two concurrent reprocessing runs for the same item (e.g.
+        the user hits "Tekrar Dene" while an earlier attempt is still in
+        flight) in a way the previous version wasn't quite:
 
         `chunks_item_id_chunk_index_key` (see
-        infra/supabase/migrations/0013_chunks_unique.sql) makes an UPSERT
-        possible instead: two racing runs converge on "last writer per
-        chunk_index wins", never "both writers' rows exist at once". The
-        trailing DELETE only trims indices *past* the new chunk count —
-        safe to run any number of times, or concurrently with another
-        run's, since it only ever removes rows, never creates any.
-        """
-        if chunks:
-            upsert_response = await self._client.post(
-                f"{self._base_url}/rest/v1/chunks",
-                params={"on_conflict": "item_id,chunk_index"},
-                headers={
-                    "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates,return=minimal",
-                },
-                json=chunks,
-                timeout=30.0,  # a full item's worth of chunks in one request
-            )
-            upsert_response.raise_for_status()
+        infra/supabase/migrations/0013_chunks_unique.sql) turned this from
+        an independent DELETE+INSERT into an UPSERT — that stopped two
+        racing runs from *duplicating* chunks, but as two separate HTTP
+        requests (an UPSERT, then a DELETE trimming indices past the new
+        count), an *older*, slower run's delayed DELETE could still land
+        after a *newer* run had already finished, wiping out chunks the
+        newer run had just written (its own trim only knows its own,
+        smaller chunk count from *before* the newer run added more).
 
-        trim_response = await self._client.delete(
-            f"{self._base_url}/rest/v1/chunks",
-            params={"item_id": f"eq.{item_id}", "chunk_index": f"gte.{len(chunks)}"},
+        `replace_chunks_for_job()` (infra/supabase/migrations/
+        0015_replace_chunks_atomic.sql) closes that: one atomic RPC call
+        that upserts *and* trims within a single transaction, serialized
+        per item via an advisory lock, and a no-op if `job_id` is no
+        longer the most recent `processing_jobs` row for this item — a
+        stale call from an older job can't clobber a newer one's output
+        no matter how the two races interleave.
+        """
+        response = await self._client.post(
+            f"{self._base_url}/rest/v1/rpc/replace_chunks_for_job",
+            headers={"Content-Type": "application/json"},
+            json={"p_item_id": item_id, "p_job_id": job_id, "p_chunks": chunks},
+            timeout=30.0,  # a full item's worth of chunks in one request
         )
-        trim_response.raise_for_status()
+        response.raise_for_status()
 
     async def update_item_metadata(
         self,

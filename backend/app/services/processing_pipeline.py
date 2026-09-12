@@ -189,7 +189,7 @@ async def process_item(
             }
             for index, (piece, embedding) in enumerate(zip(pieces, embeddings, strict=True))
         ]
-        await repo.replace_chunks(item_id, chunk_rows)
+        await repo.replace_chunks(item_id, job_id, chunk_rows)
 
         if get_search_repo is not None:
             await _check_for_duplicate(item_id, repo, get_search_repo)
