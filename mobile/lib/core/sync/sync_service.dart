@@ -78,6 +78,10 @@ class SyncService {
   bool _syncAgain = false;
   Timer? _pollTimer;
   int _pollAttemptsLeft;
+  // Which items were pending/processing as of the last poll check — Faz
+  // 12, madde 6 (see docs/roadmap.md): lets `_scheduleNextPollIfNeeded`
+  // tell "the same stuck job" apart from "a brand new one", see there.
+  Set<String> _pollingItemIds = {};
 
   /// Fire-and-forget: call after any local mutation or connectivity/auth
   /// change. Coalesces overlapping calls into a single extra run instead of
@@ -133,14 +137,34 @@ class SyncService {
   /// one `syncNow()` will never resolve on its own anyway (an orphaned job
   /// from a backend restart — see `job_recovery.py` on the backend side) —
   /// polling it forever wouldn't help either case, only drain battery.
+  ///
+  /// That budget is **per pending stretch, not per `SyncService`
+  /// lifetime** (Faz 12, madde 6, denetim düzeltmesi — see
+  /// docs/roadmap.md): checking `_pollAttemptsLeft <= 0` before ever
+  /// looking at whether anything is still pending used to mean that once
+  /// one job exhausted the budget, this stopped polling *forever* for
+  /// this `SyncService` instance — including a completely different item
+  /// uploaded long afterward. Tracking which ids are actually pending
+  /// (not just whether *something* is) fixes that: a newly-appeared id
+  /// resets the budget, so a fresh job always gets its own fair ~1
+  /// minute, even if an old, permanently-stuck one is still lingering
+  /// alongside it and would otherwise have used it all up.
   Future<void> _scheduleNextPollIfNeeded(String userId) async {
     _pollTimer?.cancel();
     _pollTimer = null;
-    if (_pollAttemptsLeft <= 0) return;
-    if (!await _local.hasUnfinishedProcessing(userId)) {
+
+    final pendingIds = await _local.unfinishedProcessingIds(userId);
+    if (pendingIds.isEmpty) {
       _pollAttemptsLeft = _maxPollAttempts; // idle again — reset for next time
+      _pollingItemIds = {};
       return;
     }
+    if (!pendingIds.every(_pollingItemIds.contains)) {
+      _pollAttemptsLeft = _maxPollAttempts; // at least one id is new since last check
+    }
+    _pollingItemIds = pendingIds;
+
+    if (_pollAttemptsLeft <= 0) return; // this stretch already had its fair shot
     _pollAttemptsLeft--;
     _pollTimer = Timer(_pollInterval, syncSoon);
   }

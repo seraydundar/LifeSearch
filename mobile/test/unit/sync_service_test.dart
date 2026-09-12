@@ -637,6 +637,62 @@ void main() {
 
       pollingSync.dispose();
     });
+
+    test(
+        'a permanently-stuck item exhausting the budget does not block polling for a '
+        'brand new item that starts processing afterward (Faz 12, madde 6 — see '
+        'docs/roadmap.md)', () async {
+      var item2IsPending = false;
+      var fetchCount = 0;
+      when(() => remote.fetchAllRows()).thenAnswer((_) async {
+        fetchCount++;
+        return [
+          pendingRow('pending'), // item-1 — never resolves, exhausts the budget alone
+          if (item2IsPending)
+            {
+              'id': 'item-2',
+              'type': 'note',
+              'title': 'y',
+              'description': null,
+              'original_filename': null,
+              'mime_type': null,
+              'storage_path': null,
+              'processing_status': 'pending',
+              'favorite': false,
+              'created_at': DateTime(2026, 1, 1).toIso8601String(),
+            },
+        ];
+      });
+      when(() => remote.fetchNoteContent(any())).thenAnswer((_) async => 'body');
+      final pollingSync = SyncService(
+        local: local,
+        remote: remote,
+        localCollections: localCollections,
+        remoteCollections: remoteCollections,
+        queue: queue,
+        aiTrigger: AiProcessingTrigger(null),
+        pollInterval: const Duration(milliseconds: 10),
+        maxPollAttempts: 3,
+      );
+
+      await pollingSync.syncNow();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final plateaued = fetchCount;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(fetchCount, plateaued); // confirmed exhausted, same as the test above
+
+      // A brand new item starts processing (e.g. the user uploads
+      // something) — polling should resume for *it*, not stay disabled
+      // forever just because item-1 already burned through the budget.
+      item2IsPending = true;
+      pollingSync.syncSoon(); // whatever triggered the new upload would call this
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      // More than just the one syncSoon() call above — the budget reset
+      // and it actually kept polling afterward.
+      expect(fetchCount, greaterThan(plateaued + 1));
+
+      pollingSync.dispose();
+    });
   });
 
   group('collections', () {

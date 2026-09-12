@@ -33,19 +33,25 @@ class ItemLocalDataSource {
         .getSingleOrNull();
   }
 
-  /// Whether `userId` has any item still waiting on the AI pipeline —
-  /// `SyncService` polls (see `_scheduleNextPollIfNeeded`) for exactly as
-  /// long as this is true, so `processing`/`completed`/`failed` shows up
-  /// without the user having to background/reopen the app or make an
-  /// edit to trigger another sync.
-  Future<bool> hasUnfinishedProcessing(String userId) async {
-    final row = await (_db.selectOnly(_db.localItems)
+  /// Ids of every one of [userId]'s items still waiting on the AI
+  /// pipeline — `SyncService` polls (see `_scheduleNextPollIfNeeded`) for
+  /// as long as this is non-empty, so `processing`/`completed`/`failed`
+  /// shows up without the user having to background/reopen the app or
+  /// make an edit to trigger another sync.
+  ///
+  /// Returns the actual **ids**, not just whether any exist (Faz 12,
+  /// madde 6, denetim düzeltmesi — see docs/roadmap.md): `SyncService`
+  /// needs to tell "the same stuck job it's already been polling" apart
+  /// from "a brand new item just started processing", so a long-stuck
+  /// job can't permanently disable polling for everything that starts
+  /// afterwards.
+  Future<Set<String>> unfinishedProcessingIds(String userId) async {
+    final rows = await (_db.selectOnly(_db.localItems)
           ..addColumns([_db.localItems.id])
           ..where(_db.localItems.userId.equals(userId) &
-              _db.localItems.processingStatus.isIn(const ['pending', 'processing']))
-          ..limit(1))
-        .getSingleOrNull();
-    return row != null;
+              _db.localItems.processingStatus.isIn(const ['pending', 'processing'])))
+        .get();
+    return rows.map((r) => r.read(_db.localItems.id)!).toSet();
   }
 
   Future<List<String>> allIds(String userId) async {

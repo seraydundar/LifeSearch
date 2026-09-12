@@ -2144,7 +2144,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
    bkz. aşağıdaki alt bölüm.
 5. ~~Private: arama hata verince tüm sonuçları gösteriyor + reveal
    kapanınca eski sonuçlar temizlenmiyor~~ ✅ — bkz. aşağıdaki alt bölüm.
-6. Polling bütçesi tükenince bir daha hiç çalışmıyor (yeni işler dahil).
+6. ~~Polling bütçesi tükenince bir daha hiç çalışmıyor (yeni işler
+   dahil)~~ ✅ — bkz. aşağıdaki alt bölüm.
 7. `replace_chunks`: eski iş yeni işin chunk'ını silebiliyor.
 8. Item detail ekranı işlem tamamlanınca güncellenmiyor.
 9. Büyük arşivde sync, gelmeyen kayıtları "silinmiş" sanıp local'den siliyor.
@@ -2374,3 +2375,41 @@ testi daha önce hiç yoktu).
 
 Mobile: `flutter analyze` temiz, testler 197 → **199** (+2, yukarıdaki
 yeni test dosyası — `search_providers.dart`'ın kendi ilk dedike testi).
+
+#### Faz 12, madde 6: polling bütçesi tükenince bir daha hiç çalışmıyor ✅
+
+`_scheduleNextPollIfNeeded`'de `if (_pollAttemptsLeft <= 0) return;`
+kontrolü, bütçeyi işler bitince sıfırlayan kontrolden ÖNCE
+çalışıyordu. Bütçe bir kez 0'a inince (12 deneme × 5sn ≈ 1dk), bu
+`SyncService` örneği bir daha **hiçbir zaman** — cihaz uygulama içinde
+kaldığı sürece, tamamen farklı, çok sonra yüklenen bir item için bile
+— timer kurmuyordu; idle kontrolüne hiç ulaşmadığı için bütçe asla
+sıfırlanamıyordu. Faz 10b madde 2'nin asıl amacını (işlem sonucunun
+otomatik yansıması) fiilen devre dışı bırakan bir regresyondu.
+
+- **`ItemLocalDataSource.unfinishedProcessingIds(userId)`** (yeni —
+  eski `hasUnfinishedProcessing`'in yerine): artık yalnızca `bool`
+  değil, **hangi item id'lerinin** bekliyor olduğunun kendisini
+  döndürüyor.
+- **`SyncService._pollingItemIds`** (yeni alan): her poll kontrolünde
+  güncellenen, "en son hangi id'ler bekliyordu" kümesi.
+- **`_scheduleNextPollIfNeeded`**: artık ÖNCE bekleyen id'leri okuyor;
+  hiç yoksa (idle) bütçeyi sıfırlıyor. Doluysa, önceki kümede
+  OLMAYAN yeni bir id varsa bütçeyi yine sıfırlıyor — böylece kalıcı
+  olarak takılı kalmış eski bir iş, ondan SONRA başlayan yepyeni bir
+  işin kendi bütçesini almasını engellemiyor. Yalnızca kümedeki id'ler
+  hiç değişmiyorsa (aynı takılı iş, başka hiçbir şey yok) orijinal
+  niyet korunuyor: ~1 dakika sonra pes edip pilden tasarruf ediyor.
+- **Regresyon testi, düzeltmeden önce gerçekten kırmızı çıktığı
+  doğrulanarak yazıldı**: `sync_service_test.dart`'a yeni bir test —
+  kalıcı takılı bir item (item-1) `maxPollAttempts: 3` bütçesini tek
+  başına tüketiyor (`fetchCount` platoya ulaşıyor, doğrulanıyor); sonra
+  yepyeni bir item (item-2) `pending` olarak beliriyor —
+  `pollingSync.syncSoon()` çağrılıyor (gerçek bir yeni yükleme
+  tetiklerdi) ve polling'in GERÇEKTEN devam ettiği (`fetchCount`
+  büyümeye devam ediyor) doğrulanıyor. Fix geçici eski sıralamaya geri
+  alınınca test gerçekten kırmızı çıktı (`fetchCount` platoda takılı
+  kaldı, item-2'ye rağmen), geri konunca yeşile döndü.
+
+Mobile: `flutter analyze` temiz, testler 199 → **200** (+1, yukarıdaki
+regresyon testi).
