@@ -2124,3 +2124,86 @@ hem web'de hem macOS'ta desteklenmediğini ama başka bir native
 platformda desteklendiğini, web ve macOS için gösterilen gerekçelerin
 birbirinden farklı olduğunu, gerçekten desteklenen bir platformda hiç
 gerekçe gösterilmediğini doğruluyor).
+
+## Faz 12 — bağımsız yeniden denetim (11 Eylül 2026, HEAD `106264f`)
+
+Codex tabanlı ikinci bir bağımsız denetim, Faz 10/11'in "tamamlandı"
+işaretlerinin bir kısmının mevcut davranıştan ileri gittiğini buldu —
+özellikle hesap izolasyonu ve item-bazlı Privacy Mode gerçekten
+kapanmamıştı. Raporun her maddesi kodda tek tek doğrulandı (bazıları
+zaten dokümante edilmiş bilinçli sınırlarla çakışıyordu, çelişki değil;
+aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
+
+1. ~~Hesap değişince eski hesabın listesi ekranda kalıyor~~ ✅ — bkz.
+   aşağıdaki alt bölüm.
+2. Sync sırasında hesap değişirse A'nın yazması B'nin hesabına düşebiliyor.
+3. `findById`/`fetchNoteContent` kullanıcı filtresiz.
+4. B'nin sync'i A'nın yerel koleksiyon üyeliğini silebiliyor.
+5. Private: arama hata verince tüm sonuçları gösteriyor + reveal
+   kapanınca eski sonuçlar temizlenmiyor.
+6. Polling bütçesi tükenince bir daha hiç çalışmıyor (yeni işler dahil).
+7. `replace_chunks`: eski iş yeni işin chunk'ını silebiliyor.
+8. Item detail ekranı işlem tamamlanınca güncellenmiyor.
+9. Büyük arşivde sync, gelmeyen kayıtları "silinmiş" sanıp local'den siliyor.
+10. Gemini varsayılan modelleri (`text-embedding-004`, `gemini-2.0-flash`)
+    gerçekten kapatılmış (Google'ın changelog'undan doğrulandı).
+11. Web'de Google sign-in kod seviyesinde çalışamaz (`google_sign_in_web`
+    `authenticate()`'i `UnimplementedError` fırlatıyor).
+12. Not ekranında sil/favori/private/retry yok.
+13. Arama yarışı — hızlı ardışık aramada eski/yavaş yanıt yeni sonucun
+    üstüne yazabiliyor.
+
+#### Faz 12, madde 1: hesap değişince eski hesabın listesi ekranda kalıyor ✅
+
+`itemRepositoryProvider`/`itemsProvider`/`collectionRepositoryProvider`/
+`pendingSyncCountProvider`/`recentSearchesProvider` düz `Provider`/
+`StreamProvider`'dı — hiçbiri `authStateChangesProvider`'ı izlemiyordu,
+hiçbir yerde `ref.invalidate` edilmiyordu. `OfflineItemRepository.
+watchItems()` çağrıldığı anda `_userId`'yi (bir getter, ama STREAM'in
+kendisi ilk kurulduğunda bir kere değerlendiriliyor) Drift sorgusuna
+gömüyor. Sonuç: aynı oturumda A'dan çıkıp B'ye girince, Home/Library B'ye
+geçene kadar A'nın item'larını göstermeye devam ediyordu — köşe durum
+değil, hemen her hesap değişiminde tetiklenen bir bug.
+
+- **`currentUserIdProvider`** (yeni, `auth_providers.dart`):
+  `authStateChangesProvider`'dan türeyen, savunmacı (Supabase hiç
+  initialize edilmemişse `null` — mevcut `_currentUserIdOrNull`
+  desenleriyle aynı) tek bir kaynak. Her "kullanıcıya özel" provider bunu
+  `ref.watch` ediyor (doğrudan ya da `itemRepositoryProvider`/
+  `collectionRepositoryProvider` üzerinden dolaylı) — böylece hesap
+  değişince Riverpod bunları GERÇEKTEN yeniden kuruyor, altlarındaki
+  Drift stream'lerini de yeni hesaba bağlıyor.
+- **`itemRepositoryProvider`**, **`collectionRepositoryProvider`**: en
+  başta `ref.watch(currentUserIdProvider)` — değerin kendisi
+  kullanılmıyor, yalnızca yeniden kurulma bağımlılığı için. Bu ikisinin
+  yeniden kurulması `itemsProvider`/`allItemsIncludingPrivateProvider`/
+  `collectionsProvider`/`collectionItemsProvider`'ı da otomatik
+  tetikliyor (Riverpod: bir `Provider`'ın çıktısı değişince onu
+  `ref.watch` eden her şey de yeniden kurulur).
+- **`pendingSyncCountProvider`**, **`recentSearchesProvider`**: aynı hatayı
+  ayrı ayrı taşıyorlardı (ilk kurulduklarında hangi hesap aktifse ona
+  sonsuza kadar bağlı kalıyorlardı) — ikisi de `currentUserIdProvider`'a
+  geçirildi.
+- **Regresyon testi, düzeltmeden önce gerçekten kırmızı olduğu
+  doğrulanarak yazıldı**: `item_providers_account_switch_test.dart` —
+  gerçek bir in-memory Drift DB'de iki hesabın item'ları, gerçek
+  `itemRepositoryProvider`/`itemsProvider` zinciri, yalnızca
+  `remoteItemDataSourceProvider`'ın "kim giriş yapmış" bilgisi sahte
+  (gerçek bir Supabase oturumu bu ortamda kurulamıyor). İlk yazımda test
+  yanlışlıkla sahte `RemoteItemDataSource`'un KENDİSİNİ hesap
+  değişince yeniden kuruyordu — bu, asıl düzeltmeyi (itemRepositoryProvider'ın
+  kendi `ref.watch`'ı) test etmeden de testi yeşil geçiriyordu (fix
+  satırı geçici olarak geri alınıp doğrulandı: test hâlâ yeşildi — yanlış
+  pozitif). Sahte veri kaynağı production'daki gibi TEK bir sabit
+  instance'a çevrilip yalnızca `userId` getter'ının okuduğu değer
+  değişecek şekilde düzeltildi; bu haliyle fix geri alınınca test gerçekten
+  kırmızı çıktı ("Actual: ['a-item']" beklenen ['b-item'] yerine), fix
+  geri konunca yeşile döndü.
+
+**Bilinçli sınır**: bu madde yalnızca OKUMA tarafını (listeler, sayımlar,
+son aramalar) düzeltiyor. Sync sırasında bir hesap değişirse A'nın
+BEKLEYEN bir YAZMASININ B'nin hesabına gitmesi ayrı bir hata — madde 2'de.
+
+Mobile: `flutter analyze` temiz, testler 189 → **190** (+1,
+yukarıdaki regresyon testi — hem gerçekten kırmızı çıktığı hem
+düzeltmeyle yeşile döndüğü doğrulanarak yazıldı).

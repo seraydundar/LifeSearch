@@ -35,6 +35,35 @@ final authStateChangesProvider = StreamProvider<AppUser?>((ref) {
   return ref.watch(authRepositoryProvider).authStateChanges();
 });
 
+/// The signed-in user's id, or `null` — derived from
+/// [authStateChangesProvider] rather than each per-user provider reading
+/// Supabase's `currentUser` directly at its own construction time.
+///
+/// **Faz 12 — denetim düzeltmesi (see docs/roadmap.md)**: `itemsProvider`/
+/// `itemRepositoryProvider` and friends used to read the signed-in
+/// user's id exactly once, when first built, then bind a Drift stream to
+/// that id forever — switching accounts within the same app session
+/// (sign out A, sign in B, no full app restart) left Home/Library
+/// showing **A's** items until something else happened to dispose and
+/// rebuild those providers, which nothing reliably did. Every provider
+/// that needs "the current user" should `ref.watch` this one instead
+/// (directly, or transitively through `itemRepositoryProvider`/
+/// `collectionRepositoryProvider`) so Riverpod actually rebuilds them —
+/// and their underlying Drift streams — the moment the session changes.
+///
+/// Defensive like `SyncService._currentUserIdOrNull()`/`search_providers
+/// .dart`'s `_currentUserIdOrNull()`: `Supabase.instance` asserts if
+/// `Supabase.initialize()` never ran, which a widget test that overrides
+/// a downstream provider (bypassing this one entirely) shouldn't need to
+/// know or care about.
+final currentUserIdProvider = Provider<String?>((ref) {
+  try {
+    return ref.watch(authStateChangesProvider).valueOrNull?.id;
+  } catch (_) {
+    return null;
+  }
+});
+
 final authControllerProvider = AsyncNotifierProvider<AuthController, AppUser?>(
   AuthController.new,
 );

@@ -4,6 +4,7 @@ import '../../../../core/database/database_provider.dart';
 import '../../../../core/network/api_client_provider.dart';
 import '../../../../core/network/supabase_client_provider.dart';
 import '../../../../core/sync/sync_providers.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../data/local/item_local_data_source.dart';
 import '../../data/local/sync_queue_data_source.dart';
 import '../../data/remote/ai_processing_trigger.dart';
@@ -30,6 +31,13 @@ final syncQueueDataSourceProvider = Provider<SyncQueueDataSource>((ref) {
 });
 
 final itemRepositoryProvider = Provider<ItemRepository>((ref) {
+  // Establishes the dependency that makes this — and everything built
+  // from it (`itemsProvider`, `allItemsIncludingPrivateProvider`) —
+  // rebuild across an account switch. See `currentUserIdProvider`'s
+  // docstring (Faz 12, see docs/roadmap.md); the value itself isn't
+  // needed here, `OfflineItemRepository` reads the live session on its
+  // own via `RemoteItemDataSource.userId`.
+  ref.watch(currentUserIdProvider);
   return OfflineItemRepository(
     local: ref.watch(itemLocalDataSourceProvider),
     remote: ref.watch(remoteItemDataSourceProvider),
@@ -79,16 +87,7 @@ final itemsProvider = StreamProvider<List<Item>>((ref) {
 /// count every account's pending writes on a shared device, not just
 /// the one currently signed in.
 final pendingSyncCountProvider = StreamProvider<int>((ref) {
-  // Guarded the same way SyncService._currentUserIdOrNull() is: harmless
-  // in the real app (main() always initializes Supabase first), but a
-  // widget test that never touches Supabase shouldn't need to know this
-  // provider reads it.
-  String? userId;
-  try {
-    userId = ref.watch(supabaseClientProvider).auth.currentUser?.id;
-  } catch (_) {
-    userId = null;
-  }
+  final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return Stream.value(0);
   return ref.watch(syncQueueDataSourceProvider).watchPendingCount(userId);
 });

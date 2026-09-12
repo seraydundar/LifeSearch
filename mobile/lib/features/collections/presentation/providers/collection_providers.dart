@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/database/database_provider.dart';
 import '../../../../core/network/supabase_client_provider.dart';
 import '../../../../core/sync/sync_providers.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../data/local/collection_local_data_source.dart';
@@ -20,6 +21,11 @@ final remoteCollectionDataSourceProvider = Provider<RemoteCollectionDataSource>(
 });
 
 final collectionRepositoryProvider = Provider<CollectionRepository>((ref) {
+  // See `currentUserIdProvider`'s docstring (Faz 12, docs/roadmap.md) —
+  // makes this, `collectionsProvider` and `collectionItemsProvider`
+  // rebuild across an account switch instead of staying bound to
+  // whichever account was signed in when first built.
+  ref.watch(currentUserIdProvider);
   return OfflineCollectionRepository(
     local: ref.watch(collectionLocalDataSourceProvider),
     remote: ref.watch(remoteCollectionDataSourceProvider),

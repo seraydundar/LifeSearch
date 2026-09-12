@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/database/database_provider.dart';
 import '../../../../core/network/api_client_provider.dart';
 import '../../../../core/network/supabase_client_provider.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../data/local/local_search_data_source.dart';
@@ -74,7 +75,12 @@ final recentSearchesDataSourceProvider = Provider<RecentSearchesDataSource>((ref
 });
 
 final recentSearchesProvider = StreamProvider<List<String>>((ref) {
-  final userId = _currentUserIdOrNull(ref);
+  // `ref.watch` (not the one-off `_currentUserIdOrNull` read below) so
+  // this rebuilds across an account switch — see `currentUserIdProvider`'s
+  // docstring (Faz 12, docs/roadmap.md). Previously bound to whichever
+  // account was signed in when this provider was first watched, the same
+  // bug `itemsProvider` had.
+  final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return Stream.value(const []);
   return ref.watch(recentSearchesDataSourceProvider).watchRecent(userId);
 });
