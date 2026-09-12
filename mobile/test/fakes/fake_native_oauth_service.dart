@@ -9,6 +9,7 @@ class FakeNativeOAuthService implements NativeOAuthService {
     this.googleIdToken = 'fake-google-id-token',
     this.appleIdToken = 'fake-apple-id-token',
     this.appleAvailable = true,
+    this.googleAvailable = true,
   });
 
   /// `null` simulates the user cancelling the native picker — see
@@ -17,6 +18,7 @@ class FakeNativeOAuthService implements NativeOAuthService {
   String? googleIdToken;
   String? appleIdToken;
   bool appleAvailable;
+  bool googleAvailable;
 
   /// Set to make the next `signInWithGoogle`/`signInWithApple` call
   /// throw this instead of returning a token.
@@ -27,6 +29,9 @@ class FakeNativeOAuthService implements NativeOAuthService {
 
   @override
   bool get isAppleAvailable => appleAvailable;
+
+  @override
+  bool get isGoogleAvailable => googleAvailable;
 
   @override
   Future<String?> signInWithGoogle() async {

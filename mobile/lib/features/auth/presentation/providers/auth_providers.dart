@@ -18,9 +18,15 @@ final nativeOAuthServiceProvider = Provider<NativeOAuthService>((ref) => NativeO
 /// `mobile/.env` has neither `GOOGLE_CLIENT_ID` nor
 /// `GOOGLE_SERVER_CLIENT_ID` set — same "missing config means the
 /// feature is off, not an error" contract `apiClientProvider` already
-/// uses for the AI backend.
+/// uses for the AI backend. Also hidden on any platform where
+/// `google_sign_in` itself can't do the imperative flow this app uses
+/// at all — web, today (Faz 12, madde 11, denetim düzeltmesi, see
+/// docs/roadmap.md: configuring the env vars alone used to be enough
+/// to show a button that would always throw the moment it was tapped
+/// on web) — see `NativeOAuthService.isGoogleAvailable`'s docstring.
 final googleSignInAvailableProvider = Provider<bool>((ref) {
-  return Env.googleClientId != null || Env.googleServerClientId != null;
+  final configured = Env.googleClientId != null || Env.googleServerClientId != null;
+  return configured && ref.watch(nativeOAuthServiceProvider).isGoogleAvailable;
 });
 
 /// Apple sign-in only on iOS/macOS — see `NativeOAuthService.

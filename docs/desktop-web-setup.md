@@ -50,16 +50,21 @@ share the JSON directly from bytes (`XFile.fromData`, see
 `export_providers.dart`), which works identically on every platform.
 Not a limitation, just a simpler design that happens to be portable.
 
-**Google/Apple sign-in** (Faz 11, madde 5) on web needs its own extra
-setup this repo doesn't add: `google_sign_in` on web renders its own
-button into the DOM rather than using an imperative popup flow, which
-typically needs a `<meta name="google-signin-client_id">` tag in
-`web/index.html` — not added here since Google sign-in wasn't
-configured or tested in this session at all (see
-`docs/google-apple-login-setup.md`). Apple sign-in on web needs a
-Services ID with a *web* redirect URI, separate from the iOS/macOS
-native flow. Both are pre-existing "kod var, kurulum kullanıcıda"
-territory, just with one more platform's worth of setup.
+**Google sign-in (Faz 11, madde 5) is hidden on web, not just
+unconfigured** (Faz 12, madde 11 — see docs/roadmap.md): `google_sign_in`
+on web can't do the imperative `authenticate()` flow this app uses at
+all — its web implementation renders its own Google-controlled button
+into the DOM instead, a fundamentally different flow this app doesn't
+implement. `NativeOAuthService.isGoogleAvailable` now checks the
+package's own advertised capability rather than assuming every platform
+supports it, so the button simply doesn't show on web (same "hide a
+broken control rather than show one" pattern as everywhere else) —
+implementing the DOM-button flow itself is future work, not done here.
+Apple sign-in on web needs a Services ID with a *web* redirect URI,
+separate from the iOS/macOS native flow, and stays pre-existing "kod
+var, kurulum kullanıcıda" territory (see
+`docs/google-apple-login-setup.md`), just with one more platform's
+worth of setup were it ever added.
 
 ## Local persistence on web: sqlite compiled to WASM
 

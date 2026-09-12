@@ -2155,8 +2155,8 @@ aşağıdakiler gerçekten yeni bulunan, düzeltilmesi gereken hatalar):
 10. ~~Gemini varsayılan modelleri (`text-embedding-004`,
     `gemini-2.0-flash`) gerçekten kapatılmış~~ ✅ — bkz. aşağıdaki alt
     bölüm.
-11. Web'de Google sign-in kod seviyesinde çalışamaz (`google_sign_in_web`
-    `authenticate()`'i `UnimplementedError` fırlatıyor).
+11. ~~Web'de Google sign-in kod seviyesinde çalışamaz~~ ✅ — bkz.
+    aşağıdaki alt bölüm.
 12. Not ekranında sil/favori/private/retry yok.
 13. Arama yarışı — hızlı ardışık aramada eski/yavaş yanıt yeni sonucun
     üstüne yazabiliyor.
@@ -2610,3 +2610,46 @@ varsayılan modellerin artık kapatılmış olanlar OLMADIĞINI, ve
 `generate_embeddings()`'in gerçekten `output_dimensionality=1536`
 geçtiğini doğrulayan yeni testler — ikincisi geçici olarak geri alınıp
 gerçekten kırmızı çıktığı doğrulanarak yazıldı).
+
+#### Faz 12, madde 11: web'de Google sign-in kod seviyesinde çalışamaz ✅
+
+`googleSignInAvailableProvider` yalnızca `GOOGLE_CLIENT_ID`/
+`GOOGLE_SERVER_CLIENT_ID` yapılandırılmış mı diye bakıyordu — platformun
+bu akışı GERÇEKTEN destekleyip desteklemediğine hiç bakmıyordu.
+`google_sign_in_web`'in kendi kaynağını okudum: `authenticate()`'i
+(`NativeOAuthService.signInWithGoogle()`'ın çağırdığı) web'de
+`UnimplementedError` fırlatıyor, `renderButton()` kullanmaya
+yönlendiriyor — DOM'a Google'ın kendi kontrol ettiği bir buton render
+etmeyi gerektiren, bu uygulamanın hiç uygulamadığı, temelden farklı bir
+akış. Web'de env değişkenlerini ayarlamak, dokunulduğunda HER ZAMAN
+fırlayan bir buton göstermeye yetiyordu.
+
+- **`NativeOAuthService.isGoogleAvailable`** (yeni getter): `!kIsWeb`
+  gibi sabit bir platform kontrolü yerine, paketin KENDİ belirttiği
+  yeteneği (`GoogleSignIn.instance.supportsAuthenticate()`) soruyor —
+  böylece paketin ileride destek eklediği/kaldırdığı herhangi bir
+  platformda da otomatik doğru kalıyor, burada eşleşen bir kod
+  değişikliği gerekmeden.
+- **`googleSignInAvailableProvider`**: artık `configured &&
+  isGoogleAvailable` — ikisi birden gerekiyor.
+- **Gerçek bir ek risk bulunup düzeltildi**: `isGoogleAvailable`'ı test
+  yazarken, `google_sign_in_platform_interface`'in hiçbir gerçek
+  implementasyon kayıt olmadığında düştüğü `_PlaceholderImplementation`'ın
+  `supportsAuthenticate()`'inin `UnimplementedError` (bir `Exception`
+  değil, bir `Error`) FIRLATTIĞI ortaya çıktı — bu, bu paketin hiç
+  platform implementasyonu olmayan bir platformda (bugün hedeflenmeyen
+  ama `google_sign_in`'in gerçekten desteklemediği Windows/Linux gibi)
+  GERÇEK bir çökme riski yaratırdı. `AppLockService.isDeviceSupported()`
+  ile aynı desende (`_local_auth` hatasını yutup `false` dönmek)
+  savunmacı bir `catch` eklendi — `on Exception` DEĞİL, bilinçli olarak
+  çıplak bir `catch`, çünkü `UnimplementedError` bir `Error`.
+- **Regresyon testleri, düzeltmeden önce gerçekten kırmızı çıktığı
+  doğrulanarak yazıldı**: yeni `native_oauth_service_test.dart` — ilk
+  yazımda düz `expect(service.isGoogleAvailable, isA<bool>())` gerçekten
+  `UnimplementedError` ile patladı (varsayılmadı, gerçek çalıştırmayla
+  bulundu), bu da savunmacı `catch`'in eklenmesine yol açtı. Fix geçici
+  geri alınınca test gerçekten aynı hatayla kırmızı çıktı, geri konunca
+  yeşile döndü.
+
+Mobile: `flutter analyze` temiz, testler 205 → **206** (+1, yukarıdaki
+yeni test dosyası).
