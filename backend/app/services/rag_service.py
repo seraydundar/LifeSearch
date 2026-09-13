@@ -29,6 +29,22 @@ _SYSTEM_PROMPT = (
 
 _NO_SOURCES_ANSWER = "Arşivinde bu soruyla ilgili bir şey bulamadım."
 
+# Bounds how much of the conversation gets replayed into the prompt on
+# every turn (P2-03, docs/requirements-audit-2026-09-13.md) — a long-
+# running chat shouldn't make every subsequent question cost more tokens
+# than the last few turns' worth of context is actually likely to help
+# with. Enforced here, not trusted to whatever the client sends.
+_MAX_HISTORY_TURNS = 10
+
+
+def _format_history(history: list[dict[str, str]]) -> str:
+    speaker_labels = {"user": "Kullanıcı", "assistant": "Asistan"}
+    lines = [
+        f"{speaker_labels.get(turn['role'], turn['role'])}: {turn['text']}"
+        for turn in history[-_MAX_HISTORY_TURNS:]
+    ]
+    return "\n".join(lines)
+
 
 async def answer_question(
     question: str,
@@ -36,7 +52,16 @@ async def answer_question(
     provider: AIProvider,
     *,
     limit: int = 8,
+    history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
+    """`history` is the conversation so far (P2-03, docs/requirements-
+    audit-2026-09-13.md), oldest first, each entry `{"role": "user" |
+    "assistant", "text": ...}` — **not** included in the query embedded
+    for retrieval (a follow-up like "peki onun boyu?" still only
+    searches on those few words), only replayed into the prompt so the
+    model itself can resolve what "onun" refers to. A question used to
+    be answered with zero awareness that any previous turn existed.
+    """
     # No `include_private` here, deliberately — chat has no device-level
     # private reveal concept the way Search does (Faz 13/14, P1-02, see
     # docs/requirements-audit-2026-09-13.md). A private item should never
@@ -53,7 +78,8 @@ async def answer_question(
         f"{match.get('item_title') or 'Untitled'}):\n{match['content']}"
         for i, match in enumerate(matches)
     )
-    prompt = f"Kaynaklar:\n\n{context}\n\nSoru: {question}"
+    history_section = f"Önceki konuşma:\n{_format_history(history)}\n\n" if history else ""
+    prompt = f"{history_section}Kaynaklar:\n\n{context}\n\nSoru: {question}"
 
     answer = await provider.generate_text(prompt, system=_SYSTEM_PROMPT)
     return {"answer": answer, "sources": matches}

@@ -40,23 +40,30 @@ class ChatController extends AsyncNotifier<List<ChatMessage>> {
     final trimmed = question.trim();
     if (trimmed.isEmpty) return;
 
-    final history = <ChatMessage>[
-      ...state.valueOrNull ?? const <ChatMessage>[],
+    // The conversation *before* this question — what P2-03 (docs/
+    // requirements-audit-2026-09-13.md) sends the backend as context, so
+    // a follow-up ("peki onun boyu?") makes sense to it the way it
+    // already does to whoever's reading this screen.
+    final priorMessages = state.valueOrNull ?? const <ChatMessage>[];
+    final conversation = <ChatMessage>[
+      ...priorMessages,
       ChatMessage(role: ChatRole.user, text: trimmed),
     ];
-    state = AsyncData(history);
+    state = AsyncData(conversation);
 
     ref.read(isAskingProvider.notifier).state = true;
     try {
-      final result = await ref.read(aiChatRepositoryProvider).ask(trimmed);
+      final result = await ref
+          .read(aiChatRepositoryProvider)
+          .ask(trimmed, history: priorMessages);
       state = AsyncData([
-        ...history,
+        ...conversation,
         ChatMessage(role: ChatRole.assistant, text: result.answer, sources: result.sources),
       ]);
     } catch (e) {
       final message = e is Failure ? e.message : 'Bir hata oluştu.';
       state = AsyncData([
-        ...history,
+        ...conversation,
         ChatMessage(role: ChatRole.assistant, text: message, isError: true),
       ]);
     } finally {

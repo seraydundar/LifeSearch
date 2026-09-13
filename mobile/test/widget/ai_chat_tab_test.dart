@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lifesearch/core/error/failure.dart';
+import 'package:lifesearch/features/ai_chat/domain/entities/chat_message.dart';
 import 'package:lifesearch/features/ai_chat/domain/entities/rag_answer.dart';
 import 'package:lifesearch/features/ai_chat/presentation/providers/ai_chat_providers.dart';
 import 'package:lifesearch/features/ai_chat/presentation/screens/ai_chat_tab.dart';
@@ -51,6 +52,34 @@ void main() {
     expect(find.text('Docker compose nedir?'), findsOneWidget);
     expect(find.textContaining('birden fazla'), findsOneWidget);
     expect(find.text('Docker Notes'), findsOneWidget); // the source chip
+  });
+
+  // P2-03 (docs/requirements-audit-2026-09-13.md): a follow-up question
+  // used to be answered as if it were the first one asked — no prior
+  // question or answer ever reached the backend.
+  testWidgets('a follow-up question sends the prior turn as history', (tester) async {
+    final repo = FakeAiChatRepository(
+      answerToReturn: const RagAnswer(answer: 'İlk cevap.', sources: []),
+    );
+    await tester.pumpWidget(wrap(repo));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'Docker compose nedir?');
+    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.pumpAndSettle();
+
+    expect(repo.lastHistory, isEmpty); // nothing before the first question
+
+    repo.answerToReturn = const RagAnswer(answer: 'İkinci cevap.', sources: []);
+    await tester.enterText(find.byType(TextField), 'Peki onun alternatifi ne?');
+    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.pumpAndSettle();
+
+    expect(repo.lastQuestion, 'Peki onun alternatifi ne?');
+    expect(repo.lastHistory, [
+      ChatMessage(role: ChatRole.user, text: 'Docker compose nedir?'),
+      ChatMessage(role: ChatRole.assistant, text: 'İlk cevap.'),
+    ]);
   });
 
   testWidgets('a failed question shows an error bubble, not a crash', (tester) async {

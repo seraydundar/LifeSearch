@@ -81,7 +81,10 @@ async def ask_endpoint(
         ) from error
 
     repo = SearchRepository(user.access_token)
-    result = await answer_question(body.question, repo, provider, limit=body.limit)
+    history = [{"role": turn.role, "text": turn.text} for turn in body.history]
+    result = await answer_question(
+        body.question, repo, provider, limit=body.limit, history=history
+    )
 
     return AskResponse(
         question=body.question,

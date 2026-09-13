@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../../../../core/error/failure.dart';
 import '../../../item/domain/entities/item.dart';
 import '../../../search/domain/entities/search_result.dart';
+import '../../domain/entities/chat_message.dart';
 import '../../domain/entities/rag_answer.dart';
 import '../../domain/repositories/ai_chat_repository.dart';
 
@@ -12,7 +13,7 @@ class ApiAiChatRepository implements AiChatRepository {
   final Dio? _dio;
 
   @override
-  Future<RagAnswer> ask(String question) async {
+  Future<RagAnswer> ask(String question, {List<ChatMessage> history = const []}) async {
     final dio = _dio;
     if (dio == null) {
       throw const UnexpectedFailure(
@@ -21,7 +22,18 @@ class ApiAiChatRepository implements AiChatRepository {
     }
 
     try {
-      final response = await dio.post('/ai/ask', data: {'question': question});
+      final response = await dio.post('/ai/ask', data: {
+        'question': question,
+        // Error bubbles ("Bir hata oluştu") never came from the model —
+        // they're this app's own fallback text — so they're excluded
+        // rather than fed back in as if the assistant had actually said
+        // them.
+        'history': [
+          for (final message in history)
+            if (!message.isError)
+              {'role': message.role.name, 'text': message.text},
+        ],
+      });
       final data = response.data as Map<String, dynamic>;
       final sources = (data['sources'] as List).map((row) {
         final map = row as Map<String, dynamic>;
