@@ -2787,6 +2787,8 @@ kodun geri kalanında sistematik olarak arandı.
 
 1. ~~Item detail/not ekranı açıkken işlem tamamlanınca tag/entity'ler
    yenilenmiyor~~ ✅ — bkz. aşağıdaki alt bölüm.
+2. ~~`attach_tags`/`attach_entities`'te eski iş yeni işin tag/entity'sini
+   silebiliyor~~ ✅ — bkz. aşağıdaki alt bölüm.
 
 #### Faz 13, madde 1: işlem tamamlanınca tag/entity'ler yenilenmiyor ✅
 
@@ -2822,3 +2824,60 @@ güncellenmiyor" hatasının bir görünmeyen kuzeni.
 
 Mobile: `flutter analyze` temiz, testler 215 → **217** (+2, yukarıdaki
 yeni testler), tüm suite (217 test) yeşil.
+
+#### Faz 13, madde 2: `attach_tags`/`attach_entities`'te eski iş yeni işin tag/entity'sini silebiliyor ✅
+
+Aynı taramada, Faz 12 madde 7'nin `replace_chunks` için kapattığı hatanın
+birebir aynısının `attach_tags`/`attach_entities`'te hâlâ durduğu
+bulundu — ikisi de `replace_chunks`'ın eski (0013'teki) hâliyle aynı
+şekle sahipti: `tags`/`entities` tablosuna bir UPSERT, ardından
+`item_tags`/`item_entities` junction tablosunda bağımsız bir
+DELETE+INSERT — üç ayrı HTTP isteği. Aynı item için iki eşzamanlı
+reprocessing çalışması (kullanıcı "Tekrar Dene"ye basarken önceki
+deneme hâlâ sürüyorsa, ya da backend restart-kurtarma zaten süren bir
+işi tekrar tetiklerse — `replace_chunks`'ın orijinal hata gerekçesiyle
+birebir aynı senaryo) varsa, eski/yavaş işin gecikmiş DELETE'i, yeni işin
+az önce yazdığı tag/entity'leri silip kendi (muhtemelen bayat) setiyle
+değiştirebiliyordu.
+
+- **`replace_item_tags_for_job`/`replace_item_entities_for_job`**
+  (infra/supabase/migrations/0016_replace_tags_entities_atomic.sql):
+  `replace_chunks_for_job` ile birebir aynı üç parçalı çözüm — item
+  başına aynı advisory lock (`hashtext(item_id::text)`, chunk'larla aynı
+  kilit — aynı item'ın aynı işlem koşusu korunuyor), çağıranın job'ı hâlâ
+  o item'ın en yeni `processing_jobs` satırı değilse no-op, ve tek bir
+  atomik transaction (tek RPC çağrısı). İki ayrı RPC — tek bir birleşik
+  çağrı değil — çünkü pipeline'da tag ve entity ekleme birbirinden
+  bağımsız best-effort adımlar (`_attach_tags`/`_attach_entities`, biri
+  başarısız olursa diğerini durdurmuyor); birleştirmek birinin hatasını
+  diğerinin zaten commit olmuş yazmasını geri alır hâle getirirdi.
+- **`SupabaseRestRepository.attach_tags`/`attach_entities`**: artık
+  `job_id` alıyor ve tek bir RPC POST'u yapıyor; `processing_pipeline
+  .py`'daki çağrı yerleri (`_attach_tags`/`_attach_entities`) zaten
+  scope'ta olan `job_id`'yi geçiriyor.
+- **Gerçek Postgres üzerinde doğrulandı** (yalnızca HTTP-mock testleriyle
+  değil): pgvector/Postgres container'ında minimal bir şema (auth.users
+  stub'ı + items/processing_jobs/tags/item_tags/entities/item_entities)
+  kurulup 0016 migration'ı yüklendi, sonra gerçek bir SQL script'i job
+  A (eski, `created_at` 10 saniye önce) ve job B'yi (yeni) aynı item için
+  oluşturup B'yi önce, A'yı sonra çağırdı — B'nin tag/entity'leri (
+  `{correct, fresh}` / `{"Fresh Corp"}`) A'nın gecikmiş çağrısından
+  sağlam çıktı, A'nın kendi (bayat) seti hiçbir şeyin üstüne yazmadı.
+  (İlk deneme aynı transaction içinde iki `processing_jobs` satırı
+  ekleyip yanlışlıkla kırmızı çıktı — Postgres bir transaction boyunca
+  `now()`'ı sabitliyor, iki INSERT aynı `created_at`'i aldı; gerçek iki
+  ayrı istekteki doğal zaman farkını taklit etmek için açık, farklı
+  `created_at` değerleriyle düzeltildi.)
+- **Regresyon testleri, HTTP seviyesinde de gerçekten kırmızıya
+  düşürülerek doğrulandı**: `test_items_repository_idempotency.py`'a
+  4 yeni test eklendi (`replace_chunks` testleriyle aynı desende, gerçek
+  bir `SupabaseRestRepository` + `httpx.MockTransport`) — düzeltme
+  geçici geri alınınca 4'ü de kırmızıya düştü (biri gerçek bir
+  `JSONDecodeError` ile, boş mock yanıtı eski kodun `.json()` çağırdığı
+  bir yerde patladığı için), geri konunca yeşile döndü.
+  `test_processing_pipeline.py`'daki 4 mevcut test de yeni `job_id`
+  alanını bekleyecek şekilde güncellendi.
+
+Backend: `ruff check` temiz (`.venv/bin/ruff`), testler 181 → **185**
+(+4, yukarıdaki yeni testler) — CI'yı taklit eden temiz bir Docker
+kopyasında (`.env`'siz) doğrulandı.

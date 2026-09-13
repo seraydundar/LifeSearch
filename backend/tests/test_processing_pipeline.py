@@ -150,15 +150,19 @@ class FakeRepo:
             "similarity": similarity,
         })
 
-    async def attach_tags(self, item_id, user_id, tag_names):
+    async def attach_tags(self, item_id, job_id, user_id, tag_names):
         if self.tag_error is not None:
             raise self.tag_error
-        self.tag_calls.append({"item_id": item_id, "user_id": user_id, "tag_names": tag_names})
+        self.tag_calls.append(
+            {"item_id": item_id, "job_id": job_id, "user_id": user_id, "tag_names": tag_names}
+        )
 
-    async def attach_entities(self, item_id, user_id, entities):
+    async def attach_entities(self, item_id, job_id, user_id, entities):
         if self.entity_error is not None:
             raise self.entity_error
-        self.entity_calls.append({"item_id": item_id, "user_id": user_id, "entities": entities})
+        self.entity_calls.append(
+            {"item_id": item_id, "job_id": job_id, "user_id": user_id, "entities": entities}
+        )
 
 
 class FakeSearchRepo:
@@ -511,7 +515,12 @@ async def test_image_tags_come_from_the_vision_analysis_no_extra_call():
     await process_item("item-14", repo, lambda: FakeProvider(), user_id="user-1")
 
     assert repo.tag_calls == [
-        {"item_id": "item-14", "user_id": "user-1", "tag_names": ["dell", "monitor", "gaming"]}
+        {
+            "item_id": "item-14",
+            "job_id": "job-1",
+            "user_id": "user-1",
+            "tag_names": ["dell", "monitor", "gaming"],
+        }
     ]
 
 
@@ -524,7 +533,7 @@ async def test_note_tags_come_from_a_text_completion_call():
     # FakeProvider.generate_text always returns "fake answer" regardless
     # of the prompt — this only checks the wiring, not real tag quality.
     assert repo.tag_calls == [
-        {"item_id": "item-15", "user_id": "user-1", "tag_names": ["fake answer"]}
+        {"item_id": "item-15", "job_id": "job-1", "user_id": "user-1", "tag_names": ["fake answer"]}
     ]
 
 
@@ -568,6 +577,7 @@ async def test_entities_come_from_a_text_completion_call():
     assert repo.entity_calls == [
         {
             "item_id": "item-19",
+            "job_id": "job-1",
             "user_id": "user-1",
             "entities": [
                 {"name": "Ahmet", "type": "person"},
@@ -600,6 +610,7 @@ async def test_images_also_get_entity_extraction_unlike_the_free_vision_tags():
     assert repo.entity_calls == [
         {
             "item_id": "item-20",
+            "job_id": "job-1",
             "user_id": "user-1",
             "entities": [{"name": "Dell", "type": "organization"}],
         }

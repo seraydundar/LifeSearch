@@ -16,6 +16,15 @@ already-written chunks. It's now a single atomic RPC call
 0015_replace_chunks_atomic.sql) — the tests below check the HTTP shape
 of that call; the actual per-item locking/staleness logic lives in SQL
 and isn't exercised by these HTTP-level tests at all.
+
+`attach_tags`/`attach_entities` had the exact same residual gap
+(discovered independently in Faz 13, madde 2 — a third self-initiated
+audit pass, see docs/roadmap.md): an UPSERT-into-`tags`/`entities`
+followed by an independent DELETE+INSERT on the `item_tags`/
+`item_entities` junction table — three separate HTTP requests an older,
+slower job's delayed DELETE could land in between. Same fix, same
+shape: `replace_item_tags_for_job`/`replace_item_entities_for_job`
+(infra/supabase/migrations/0016_replace_tags_entities_atomic.sql).
 """
 
 import json
@@ -124,3 +133,103 @@ async def test_replace_item_content_is_a_single_upsert_not_delete_then_insert():
     upsert = requests[0]
     assert upsert.url.params["on_conflict"] == "item_id"
     assert upsert.headers["prefer"] == "resolution=merge-duplicates,return=minimal"
+
+
+@pytest.mark.asyncio
+async def test_attach_tags_calls_the_atomic_rpc_once_not_an_upsert_and_a_separate_delete_insert():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    repo = _repo_with_transport(handler)
+    try:
+        await repo.attach_tags("item-1", "job-1", "user-1", ["Docker", "docker", " Postgres "])
+    finally:
+        await repo.aclose()
+
+    # One RPC call — not an UPSERT into `tags` followed by a separate
+    # DELETE+INSERT on `item_tags` (Faz 13, madde 2 — see docs/roadmap.md).
+    assert [r.method for r in requests] == ["POST"]
+    call = requests[0]
+    assert call.url.path.endswith("/rest/v1/rpc/replace_item_tags_for_job")
+    body = json.loads(call.content)
+    assert body["p_item_id"] == "item-1"
+    assert body["p_job_id"] == "job-1"
+    assert body["p_user_id"] == "user-1"
+    # Lowercased and deduped client-side, same as before this fix.
+    assert body["p_tag_names"] == ["docker", "postgres"]
+
+
+@pytest.mark.asyncio
+async def test_attach_tags_with_no_names_still_calls_the_rpc():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    repo = _repo_with_transport(handler)
+    try:
+        await repo.attach_tags("item-1", "job-1", "user-1", [])
+    finally:
+        await repo.aclose()
+
+    # No tags to attach, but the call still has to happen — the SQL
+    # function is what clears item_tags in that case, not this method.
+    assert [r.method for r in requests] == ["POST"]
+    assert json.loads(requests[0].content)["p_tag_names"] == []
+
+
+@pytest.mark.asyncio
+async def test_attach_entities_calls_the_atomic_rpc_once_not_an_upsert_and_a_separate_delete_insert():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    repo = _repo_with_transport(handler)
+    try:
+        await repo.attach_entities(
+            "item-1",
+            "job-1",
+            "user-1",
+            [{"name": "Ahmet", "type": "person"}, {"name": "İstanbul", "type": "place"}],
+        )
+    finally:
+        await repo.aclose()
+
+    # One RPC call — not an UPSERT into `entities` followed by a separate
+    # DELETE+INSERT on `item_entities` (Faz 13, madde 2 — see
+    # docs/roadmap.md).
+    assert [r.method for r in requests] == ["POST"]
+    call = requests[0]
+    assert call.url.path.endswith("/rest/v1/rpc/replace_item_entities_for_job")
+    body = json.loads(call.content)
+    assert body["p_item_id"] == "item-1"
+    assert body["p_job_id"] == "job-1"
+    assert body["p_user_id"] == "user-1"
+    assert body["p_entities"] == [
+        {"name": "Ahmet", "type": "person"},
+        {"name": "İstanbul", "type": "place"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_attach_entities_with_no_entities_still_calls_the_rpc():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    repo = _repo_with_transport(handler)
+    try:
+        await repo.attach_entities("item-1", "job-1", "user-1", [])
+    finally:
+        await repo.aclose()
+
+    assert [r.method for r in requests] == ["POST"]
+    assert json.loads(requests[0].content)["p_entities"] == []

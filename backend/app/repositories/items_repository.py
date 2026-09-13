@@ -183,53 +183,43 @@ class SupabaseRestRepository:
         )
         response.raise_for_status()
 
-    async def attach_tags(self, item_id: str, user_id: str, tag_names: list[str]) -> None:
-        """Idempotent by design, same replace pattern as `replace_chunks` —
-        reprocessing an item replaces its tag set rather than accumulating
-        duplicates from every run.
+    async def attach_tags(
+        self, item_id: str, job_id: str, user_id: str, tag_names: list[str]
+    ) -> None:
+        """Idempotent by design (requirements doc, rule 17) — and, since
+        Faz 13 madde 2 (üçüncü bağımsız tarama, denetim düzeltmesi, see
+        docs/roadmap.md), safe against two concurrent reprocessing runs
+        for the same item the same way `replace_chunks` already was
+        (Faz 12 madde 7): this used to be an UPSERT (into `tags`) followed
+        by an independent DELETE+INSERT (on `item_tags`) — three separate
+        HTTP requests an *older*, slower run's delayed DELETE could still
+        land in between, after a *newer* run had already finished writing
+        its own tags, wiping them back out to whatever (possibly nothing)
+        the older run found.
+
+        `replace_item_tags_for_job()` (infra/supabase/migrations/
+        0016_replace_tags_entities_atomic.sql) closes that: one atomic RPC
+        call, serialized per item via the same advisory lock
+        `replace_chunks_for_job` uses, and a no-op if `job_id` is no
+        longer the most recent `processing_jobs` row for this item.
         """
         names = [n for n in dict.fromkeys(t.strip().lower() for t in tag_names) if n]
-
-        if names:
-            # Upsert-by-name so re-tagging with an already-existing tag
-            # reuses its row instead of violating the (user_id, name)
-            # unique constraint.
-            upsert_response = await self._client.post(
-                f"{self._base_url}/rest/v1/tags",
-                params={"on_conflict": "user_id,name"},
-                headers={
-                    "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates,return=representation",
-                },
-                json=[{"user_id": user_id, "name": name} for name in names],
-            )
-            upsert_response.raise_for_status()
-            tag_ids = [row["id"] for row in upsert_response.json()]
-        else:
-            tag_ids = []
-
-        delete_response = await self._client.delete(
-            f"{self._base_url}/rest/v1/item_tags",
-            params={"item_id": f"eq.{item_id}"},
+        response = await self._client.post(
+            f"{self._base_url}/rest/v1/rpc/replace_item_tags_for_job",
+            headers={"Content-Type": "application/json"},
+            json={
+                "p_item_id": item_id,
+                "p_job_id": job_id,
+                "p_user_id": user_id,
+                "p_tag_names": names,
+            },
         )
-        delete_response.raise_for_status()
-
-        if not tag_ids:
-            return
-        insert_response = await self._client.post(
-            f"{self._base_url}/rest/v1/item_tags",
-            headers={"Content-Type": "application/json", "Prefer": "return=minimal"},
-            json=[{"item_id": item_id, "tag_id": tag_id} for tag_id in tag_ids],
-        )
-        insert_response.raise_for_status()
+        response.raise_for_status()
 
     async def attach_entities(
-        self, item_id: str, user_id: str, entities: list[dict[str, str]]
+        self, item_id: str, job_id: str, user_id: str, entities: list[dict[str, str]]
     ) -> None:
-        """Idempotent, same replace pattern as `attach_tags` — reprocessing
-        an item replaces its entity set rather than accumulating
-        duplicates from every run.
-        """
+        """Same fix, same reasoning as `attach_tags` — see its docstring."""
         deduped: dict[tuple[str, str], str] = {}
         for entity in entities:
             name = str(entity.get("name", "")).strip()
@@ -239,38 +229,17 @@ class SupabaseRestRepository:
             deduped.setdefault((name.lower(), entity_type), name)
         rows = [{"name": name, "type": t} for (_, t), name in deduped.items()]
 
-        if rows:
-            # Upsert-by-(name, type) so re-extracting an already-known
-            # entity reuses its row instead of violating the
-            # (user_id, name, type) unique constraint.
-            upsert_response = await self._client.post(
-                f"{self._base_url}/rest/v1/entities",
-                params={"on_conflict": "user_id,name,type"},
-                headers={
-                    "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates,return=representation",
-                },
-                json=[{"user_id": user_id, **row} for row in rows],
-            )
-            upsert_response.raise_for_status()
-            entity_ids = [row["id"] for row in upsert_response.json()]
-        else:
-            entity_ids = []
-
-        delete_response = await self._client.delete(
-            f"{self._base_url}/rest/v1/item_entities",
-            params={"item_id": f"eq.{item_id}"},
+        response = await self._client.post(
+            f"{self._base_url}/rest/v1/rpc/replace_item_entities_for_job",
+            headers={"Content-Type": "application/json"},
+            json={
+                "p_item_id": item_id,
+                "p_job_id": job_id,
+                "p_user_id": user_id,
+                "p_entities": rows,
+            },
         )
-        delete_response.raise_for_status()
-
-        if not entity_ids:
-            return
-        insert_response = await self._client.post(
-            f"{self._base_url}/rest/v1/item_entities",
-            headers={"Content-Type": "application/json", "Prefer": "return=minimal"},
-            json=[{"item_id": item_id, "entity_id": eid} for eid in entity_ids],
-        )
-        insert_response.raise_for_status()
+        response.raise_for_status()
 
     async def mark_duplicate(
         self, item_id: str, duplicate_of_item_id: str, similarity: float

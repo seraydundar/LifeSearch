@@ -200,9 +200,9 @@ async def process_item(
                 if item_type in {"image", "screenshot"}
                 else await generate_tags(text, provider)
             )
-            await _attach_tags(item_id, user_id, tag_names, repo)
+            await _attach_tags(item_id, job_id, user_id, tag_names, repo)
             entities = await extract_entities(text, provider)
-            await _attach_entities(item_id, user_id, entities, repo)
+            await _attach_entities(item_id, job_id, user_id, entities, repo)
 
         await repo.update_item_status(item_id, "completed")
         await repo.mark_job_completed(job_id)
@@ -279,6 +279,7 @@ async def _check_for_duplicate(
 
 async def _attach_tags(
     item_id: str,
+    job_id: str,
     user_id: str,
     tag_names: list[str],
     repo: SupabaseRestRepository,
@@ -287,19 +288,20 @@ async def _attach_tags(
     nice-to-have on top of a working item, never a reason to fail one.
     """
     try:
-        await repo.attach_tags(item_id, user_id, tag_names)
+        await repo.attach_tags(item_id, job_id, user_id, tag_names)
     except Exception as error:
         logger.warning("tagging failed", extra={"item_id": item_id, "error": str(error)})
 
 
 async def _attach_entities(
     item_id: str,
+    job_id: str,
     user_id: str,
     entities: list[dict[str, str]],
     repo: SupabaseRestRepository,
 ) -> None:
     """Best-effort, same contract as `_attach_tags`."""
     try:
-        await repo.attach_entities(item_id, user_id, entities)
+        await repo.attach_entities(item_id, job_id, user_id, entities)
     except Exception as error:
         logger.warning("entity attach failed", extra={"item_id": item_id, "error": str(error)})
