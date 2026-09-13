@@ -173,5 +173,26 @@ void main() {
 
       expect(find.text('İşlenmeyi bekliyor'), findsNothing);
     });
+
+    testWidgets(
+        'processing finishing while the screen is open also refreshes tags/entities '
+        '(denetim düzeltmesi — see docs/roadmap.md)', (tester) async {
+      final pending = note(processingStatus: 'pending');
+      final repo = FakeItemRepository(initialItems: [pending]);
+
+      await tester.pumpWidget(wrap(pending, repo: repo));
+      await tester.pumpAndSettle();
+
+      expect(find.text('docker'), findsNothing);
+
+      // Same AI pipeline run that finishes processing also produces
+      // tags — itemTagsProvider fetched (and cached) "no tags" back
+      // when this screen first opened.
+      repo.tagsByItemId['note-1'] = ['docker'];
+      repo.updateItem(pending.copyWith(processingStatus: 'completed'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('docker'), findsOneWidget);
+    });
   });
 }

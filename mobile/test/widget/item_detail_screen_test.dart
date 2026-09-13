@@ -196,6 +196,36 @@ void main() {
     expect(find.text('Dosyayı Aç'), findsOneWidget);
   });
 
+  testWidgets(
+      'processing finishing while the screen is open also refreshes tags/entities, not just '
+      'the processing chip (denetim düzeltmesi — see docs/roadmap.md)', (tester) async {
+    final pending = Item(
+      id: 'item-1',
+      type: ItemType.pdf,
+      title: 'Still processing',
+      processingStatus: 'pending',
+      favorite: false,
+      createdAt: DateTime(2026, 1, 1),
+    );
+    final repo = FakeItemRepository(initialItems: [pending]);
+    // Nothing yet — the AI pipeline hasn't reached the tagging step.
+
+    await tester.pumpWidget(wrap(pending, repo: repo));
+    await tester.pumpAndSettle();
+
+    expect(find.text('docker'), findsNothing);
+
+    // The backend finishes processing AND produces tags in the same
+    // run — itemTagsProvider/itemEntitiesProvider fetched (and cached)
+    // "no tags" back when this screen first opened; without invalidating
+    // them on this transition they'd keep showing nothing indefinitely.
+    repo.tagsByItemId['item-1'] = ['docker'];
+    repo.updateItem(pending.copyWith(processingStatus: 'completed'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('docker'), findsOneWidget);
+  });
+
   testWidgets('a stand-in for an item not yet synced to this device degrades gracefully, no crash',
       (tester) async {
     // Nothing in the local cache for this id — e.g. an item search just

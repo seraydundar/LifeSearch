@@ -2776,3 +2776,49 @@ Mobile: `flutter analyze` temiz, testler 213 → **215** (+2, yukarıdaki
 yeni testler), tüm suite (215 test) yeşil.
 
 Faz 12'nin 13 maddesinin tamamı tamamlandı.
+
+## Faz 13 — üçüncü bağımsız tarama (13 Eylül 2026)
+
+Faz 12'nin 13 maddesi bitince, dış bir rapor beklemeden aynı disiplinle
+kod tabanı bir kez daha tarandı: önceki iki denetimin bulduğu hata
+*kalıpları* (reaktivite/staleness, kullanıcı filtresi eksikliği, yarış
+koşulu, fail-open/fail-closed, atomik olmayan çok adımlı işlemler)
+kodun geri kalanında sistematik olarak arandı.
+
+1. ~~Item detail/not ekranı açıkken işlem tamamlanınca tag/entity'ler
+   yenilenmiyor~~ ✅ — bkz. aşağıdaki alt bölüm.
+
+#### Faz 13, madde 1: işlem tamamlanınca tag/entity'ler yenilenmiyor ✅
+
+Faz 12 madde 8 ve 12, `ItemDetailScreen`/`NoteEditorScreen`'i arka
+planda işlem tamamlandığında (`processingStatus` → `completed`) canlı
+güncellenir hâle getirmişti — ama yalnızca `Item`'ın kendi alanları
+için. `TagsRow`/`EntitiesRow`'un arkasındaki `itemTagsProvider`/
+`itemEntitiesProvider`, item id'sine göre anahtarlanan tek seferlik
+(`FutureProvider.autoDispose.family`) provider'lar: ekran ilk açıldığında
+(item hâlâ pending/processing iken, genelde "tag yok") bir kere
+çekiliyor ve sonucu önbelleğe alıyorlardı; onları yeniden çekmeye
+zorlayan hiçbir yer (bir `ref.invalidate` çağrısı) yoktu. Sonuç:
+kullanıcı ekranı açık tutarken AI pipeline tag/entity üretimini
+tamamlasa bile, ekrandan çıkıp geri girmeden bunlar hiç görünmüyordu —
+tam olarak Faz 12 madde 8/12'nin düzelttiği "işlem durumu chip'i
+güncellenmiyor" hatasının bir görünmeyen kuzeni.
+
+- **`ItemDetailScreen._applyFreshItem`** ve **`NoteEditorScreen`**'in
+  `ref.listen(watchItemByIdProvider(...))` callback'i artık `previous`
+  parametresini de kullanıyor: `previous.processingStatus != 'completed'
+  && fresh.processingStatus == 'completed'` geçişini yakalayınca
+  `itemTagsProvider(id)`/`itemEntitiesProvider(id)`'ı `ref.invalidate`
+  ediyor, böylece `TagsRow`/`EntitiesRow` yeniden çekip gerçek sonucu
+  gösteriyor. `previous == null` (bu ekranın gördüğü ilk emisyon) hariç
+  tutuldu — o bir geçiş değil, ve `initState()`'in kendi düzeltmesi zaten
+  `TagsRow`/`EntitiesRow`'un ilk çekişini bedavaya getiriyor.
+- **Regresyon testleri, gerçekten kırmızıya düşürülerek doğrulandı**:
+  her iki ekranın test dosyasına birer test eklendi — `FakeItemRepository
+  .tagsByItemId` işlem tamamlanmadan hemen önce dolduruluyor, sonra
+  `repo.updateItem(...completed)` çağrılıyor; düzeltme geçici geri
+  alınınca iki test de somut "docker" bulunamadı hatasıyla kırmızıya
+  düştü, geri konunca yeşile döndü.
+
+Mobile: `flutter analyze` temiz, testler 215 → **217** (+2, yukarıdaki
+yeni testler), tüm suite (217 test) yeşil.

@@ -172,7 +172,22 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       // is open should show up here too, not just after leaving and
       // coming back.
       ref.listen(watchItemByIdProvider(widget.item!.id), (previous, next) {
-        if (next != null) setState(() => _item = next);
+        if (next == null) return;
+        setState(() => _item = next);
+        // Same gap `ItemDetailScreen._applyFreshItem` had (denetim
+        // düzeltmesi — see docs/roadmap.md): tags/entities are produced
+        // by the same AI pipeline run that just finished, but
+        // `itemTagsProvider`/`itemEntitiesProvider` are one-shot
+        // `FutureProvider`s that fetched (and cached) nothing back when
+        // the note was still pending/processing — without this,
+        // `TagsRow`/`EntitiesRow` would keep showing no tags/entities
+        // until the user left this screen and came back.
+        if (previous != null &&
+            previous.processingStatus != 'completed' &&
+            next.processingStatus == 'completed') {
+          ref.invalidate(itemTagsProvider(next.id));
+          ref.invalidate(itemEntitiesProvider(next.id));
+        }
       });
     }
     final isSaving = ref.watch(noteEditorControllerProvider).isLoading;

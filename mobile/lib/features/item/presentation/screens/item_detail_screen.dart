@@ -70,7 +70,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   /// the network — so a `null` emission is ignored, silently keeping
   /// whatever we were already given rather than replacing a real (if
   /// incomplete) item with a "not found" wall.
-  void _applyFreshItem(Item fresh) {
+  void _applyFreshItem(Item fresh, Item? previous) {
     final hadStoragePath = _item.storagePath;
     final hadDuplicateOfItemId = _item.duplicateOfItemId;
     setState(() => _item = fresh);
@@ -79,6 +79,26 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     }
     if (fresh.duplicateOfItemId != null && fresh.duplicateOfItemId != hadDuplicateOfItemId) {
       _loadDuplicateTarget(); // ditto
+    }
+    // Faz 12'nin bulduğu bir sonraki hata (denetim düzeltmesi — see
+    // docs/roadmap.md, "arama yarışı"nın hemen ardından): tags/entities
+    // are produced by the same AI pipeline run that just finished, but
+    // `itemTagsProvider`/`itemEntitiesProvider` are one-shot
+    // `FutureProvider`s keyed by item id — they fetched (and cached)
+    // their result back when the item was still pending/processing
+    // (usually nothing), and nothing here ever told them to try again.
+    // `TagsRow`/`EntitiesRow` would silently keep showing "no tags yet"
+    // until the user left this screen and came back, even though
+    // `_item.processingStatus` itself updated live right above.
+    // `previous == null` (the very first emission this screen ever
+    // sees) is excluded — that's not a transition, and `initState()`'s
+    // own correction already gets `TagsRow`/`EntitiesRow`'s first fetch
+    // for free since it runs before their first build.
+    if (previous != null &&
+        previous.processingStatus != 'completed' &&
+        fresh.processingStatus == 'completed') {
+      ref.invalidate(itemTagsProvider(fresh.id));
+      ref.invalidate(itemEntitiesProvider(fresh.id));
     }
   }
 
@@ -216,7 +236,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   @override
   Widget build(BuildContext context) {
     ref.listen(watchItemByIdProvider(widget.item.id), (previous, next) {
-      if (next != null) _applyFreshItem(next);
+      if (next != null) _applyFreshItem(next, previous);
     });
     final isImage = _item.type == ItemType.image || _item.type == ItemType.screenshot;
 
