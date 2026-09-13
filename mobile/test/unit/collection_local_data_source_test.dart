@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lifesearch/core/database/app_database.dart';
 import 'package:lifesearch/features/collections/data/local/collection_local_data_source.dart';
+import 'package:lifesearch/features/item/data/local/sync_queue_data_source.dart';
 
 void main() {
   late AppDatabase db;
@@ -119,4 +120,42 @@ void main() {
       expect(items.map((i) => i.id), ['secret']);
     });
   });
+
+  group('transaction (P1-03, docs/requirements-audit-2026-09-13.md)', () {
+    test('a failure partway through rolls back every write made so far', () async {
+      final queue = _ThrowingSyncQueueDataSource(db);
+
+      await expectLater(
+        dataSource.transaction(() async {
+          await insertCollection(id: 'coll-1', userId: 'user-a');
+          await queue.enqueue(
+            userId: 'user-a',
+            operationType: 'create_collection',
+            itemId: 'coll-1',
+            payload: const {'name': 'x'},
+          );
+        }),
+        throwsA(isA<Exception>()),
+      );
+
+      expect(await dataSource.allIds('user-a'), isEmpty);
+      expect(await queue.pendingEntries('user-a'), isEmpty);
+    });
+  });
+}
+
+/// Stands in for a crash/error between the local write and the enqueue
+/// call — `enqueue()` never actually reaches the database.
+class _ThrowingSyncQueueDataSource extends SyncQueueDataSource {
+  _ThrowingSyncQueueDataSource(super.db);
+
+  @override
+  Future<void> enqueue({
+    required String userId,
+    required String operationType,
+    required String itemId,
+    required Map<String, dynamic> payload,
+  }) {
+    throw Exception('simulated failure enqueuing');
+  }
 }

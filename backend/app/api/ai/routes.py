@@ -30,12 +30,32 @@ async def process_item_endpoint(
     user: CurrentUser = Depends(require_ai_rate_limit),
 ) -> ProcessItemResponse:
     repo = SupabaseRestRepository(user.access_token)
+    # Created *before* "202 accepted" is returned, not as this task's own
+    # first line (P1-05, docs/requirements-audit-2026-09-13.md):
+    # `BackgroundTasks` only start running after the response is already
+    # on the wire, so a process death in that gap used to leave no trace
+    # at all — no row for `job_recovery.py`'s startup sweep to find, and
+    # a `create_job` failure itself never reached the normal failed/
+    # status flow (it was outside `process_item`'s own try/except).
+    # Raising here instead surfaces it as a normal failed request, which
+    # the mobile client already retries (see `SyncService._triggerAi`'s
+    # queued `trigger_ai` retry).
+    try:
+        job_id = await repo.create_job(body.item_id, job_type="chunk_and_embed")
+    except Exception as error:
+        await repo.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not start processing: {error}",
+        ) from error
+
     # Returns immediately; the item's `processing_status` (and the
     # matching `processing_jobs` row) is what actually reports progress —
     # including a bad AI_PROVIDER config, resolved lazily inside the task.
     background_tasks.add_task(
         process_item,
         body.item_id,
+        job_id,
         repo,
         lambda: get_ai_provider(get_settings()),
         lambda: SearchRepository(user.access_token),

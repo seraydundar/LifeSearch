@@ -169,7 +169,16 @@ class RemoteItemDataSource {
     required ItemType type,
     int? fileSizeBytes,
   }) async {
-    final storagePath = '$userId/$id/$originalFilename';
+    // Pinned once — not re-read after the storage upload's `await` below
+    // (P1-03, docs/requirements-audit-2026-09-13.md): the storage path
+    // and the item row's `user_id` must agree even if the live session
+    // actually changes mid-upload, otherwise the file ends up stored
+    // under one account while the row that points at it claims another.
+    // If the session really did change, RLS's `auth.uid() = user_id`
+    // rejects the upsert below outright — a clean failure (caught same
+    // as any other) instead of a silent cross-account write.
+    final ownerId = userId;
+    final storagePath = '$ownerId/$id/$originalFilename';
 
     try {
       await _client.storage.from(_bucket).upload(
@@ -184,7 +193,7 @@ class RemoteItemDataSource {
     try {
       await _client.from('items').upsert({
         'id': id,
-        'user_id': userId,
+        'user_id': ownerId,
         'type': type.dbValue,
         'title': originalFilename,
         'original_filename': originalFilename,

@@ -113,26 +113,29 @@ async def test_replace_chunks_with_no_chunks_still_calls_the_rpc():
 
 
 @pytest.mark.asyncio
-async def test_replace_item_content_is_a_single_upsert_not_delete_then_insert():
+async def test_replace_item_content_calls_the_atomic_job_gated_rpc():
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(201)
+        return httpx.Response(200)
 
     repo = _repo_with_transport(handler)
     try:
-        await repo.replace_item_content("item-1", raw_text="hello")
+        await repo.replace_item_content("item-1", "job-1", raw_text="hello")
     finally:
         await repo.aclose()
 
-    # A single atomic UPSERT — no DELETE at all, so there's no window
-    # where a concurrent reprocessing run's own UPSERT could land
-    # between this one's DELETE and INSERT.
+    # One RPC call — not a plain UPSERT with no job-ownership check
+    # (P1-04, docs/requirements-audit-2026-09-13.md): an older, slower
+    # reprocessing run's content must never overwrite a newer run's.
     assert [r.method for r in requests] == ["POST"]
-    upsert = requests[0]
-    assert upsert.url.params["on_conflict"] == "item_id"
-    assert upsert.headers["prefer"] == "resolution=merge-duplicates,return=minimal"
+    call = requests[0]
+    assert call.url.path.endswith("/rest/v1/rpc/replace_item_content_for_job")
+    body = json.loads(call.content)
+    assert body["p_item_id"] == "item-1"
+    assert body["p_job_id"] == "job-1"
+    assert body["p_raw_text"] == "hello"
 
 
 @pytest.mark.asyncio
@@ -233,3 +236,100 @@ async def test_attach_entities_with_no_entities_still_calls_the_rpc():
 
     assert [r.method for r in requests] == ["POST"]
     assert json.loads(requests[0].content)["p_entities"] == []
+
+
+# P1-04 (docs/requirements-audit-2026-09-13.md): `update_item_status`,
+# `update_item_metadata` and `mark_duplicate` had the exact same gap
+# `replace_chunks`/`attach_tags` did before Faz 12/13 — plain, ungated
+# writes an older, slower reprocessing run could still land after a
+# newer run's own. Same fix, same shape: job-gated atomic RPCs (see
+# infra/supabase/migrations/0018_job_gated_item_writes.sql).
+@pytest.mark.asyncio
+async def test_update_item_status_calls_the_job_gated_rpc():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    repo = _repo_with_transport(handler)
+    try:
+        await repo.update_item_status("item-1", "job-1", "completed")
+    finally:
+        await repo.aclose()
+
+    assert [r.method for r in requests] == ["POST"]
+    call = requests[0]
+    assert call.url.path.endswith("/rest/v1/rpc/update_item_status_for_job")
+    body = json.loads(call.content)
+    assert body == {"p_item_id": "item-1", "p_job_id": "job-1", "p_status": "completed"}
+
+
+@pytest.mark.asyncio
+async def test_update_item_metadata_calls_the_job_gated_rpc_with_only_the_given_fields():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    repo = _repo_with_transport(handler)
+    try:
+        await repo.update_item_metadata("item-1", "job-1", title="New Title")
+    finally:
+        await repo.aclose()
+
+    assert [r.method for r in requests] == ["POST"]
+    call = requests[0]
+    assert call.url.path.endswith("/rest/v1/rpc/update_item_fields_for_job")
+    body = json.loads(call.content)
+    assert body["p_item_id"] == "item-1"
+    assert body["p_job_id"] == "job-1"
+    # Only the field actually given — no description/latitude/longitude/
+    # captured_at key at all, not even `null`, so the SQL side's
+    # `coalesce(p_fields->>'x', x)` correctly leaves everything else
+    # untouched rather than reading an explicit `null` as "clear it".
+    assert body["p_fields"] == {"title": "New Title"}
+
+
+@pytest.mark.asyncio
+async def test_update_item_metadata_with_no_fields_never_calls_the_rpc():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    repo = _repo_with_transport(handler)
+    try:
+        await repo.update_item_metadata("item-1", "job-1")
+    finally:
+        await repo.aclose()
+
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_mark_duplicate_calls_the_job_gated_rpc():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    repo = _repo_with_transport(handler)
+    try:
+        await repo.mark_duplicate("item-1", "job-1", "item-2", 0.97)
+    finally:
+        await repo.aclose()
+
+    assert [r.method for r in requests] == ["POST"]
+    call = requests[0]
+    assert call.url.path.endswith("/rest/v1/rpc/mark_duplicate_for_job")
+    body = json.loads(call.content)
+    assert body == {
+        "p_item_id": "item-1",
+        "p_job_id": "job-1",
+        "p_duplicate_of_item_id": "item-2",
+        "p_similarity": 0.97,
+    }

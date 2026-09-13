@@ -12,10 +12,19 @@ ever finish that job: the item would show "İşleniyor..." forever, with no
 way for the user to retry (the mobile "Tekrar Dene" button only appears
 once `processing_status` is 'failed' — see `ItemDetailScreen`).
 
+Also sweeps `pending` jobs, not just `processing` (P1-05, docs/
+requirements-audit-2026-09-13.md): `api/ai/routes.py`'s `/process-item`
+now creates the `processing_jobs` row (at `pending`) *before* returning
+"202 accepted", specifically so a process death in the gap between that
+response and `BackgroundTasks` actually starting the job leaves a
+recoverable row instead of nothing at all. Without also sweeping
+`pending` here, that row would sit forever, `mark_job_started()` never
+having run (the exact original gap this fix closes).
+
 Call `recover_orphaned_jobs()` once at startup, before any request is
 served — that timing is what makes every `processing_jobs` row already
-at 'processing' at that moment provably orphaned, since a fresh process
-couldn't have started one yet.
+at `pending`/`processing` at that moment provably orphaned, since a
+fresh process couldn't have created or started one yet.
 
 **Single-instance assumption**: this treats "processing at my own
 startup" as proof of "orphaned", which only holds when there's exactly
@@ -34,9 +43,9 @@ _ORPHANED_ERROR = "Sunucu yeniden başlatıldığı sırada kesildi."
 
 
 class _JobRecoveryRepo(Protocol):
-    async def find_jobs_by_status(self, status: str) -> list[dict[str, Any]]: ...
+    async def find_jobs_by_status(self, statuses: list[str]) -> list[dict[str, Any]]: ...
     async def mark_job_failed(self, job_id: str, error: str) -> None: ...
-    async def update_item_status(self, item_id: str, status: str) -> None: ...
+    async def update_item_status(self, item_id: str, job_id: str, status: str) -> None: ...
 
 
 async def recover_orphaned_jobs(repo: _JobRecoveryRepo) -> int:
@@ -45,10 +54,15 @@ async def recover_orphaned_jobs(repo: _JobRecoveryRepo) -> int:
     the jobs being swept belong to arbitrary users, not whoever restarted
     the server.
     """
-    stuck_jobs = await repo.find_jobs_by_status("processing")
+    stuck_jobs = await repo.find_jobs_by_status(["pending", "processing"])
     for job in stuck_jobs:
+        # `update_item_status` is job-gated (P1-04, docs/requirements-audit-
+        # 2026-09-13.md) — passing this job's own id keeps that working:
+        # a job stuck at 'processing' is, by this sweep's own single-
+        # instance assumption (see module docstring), still the item's
+        # latest job, so this always applies rather than silently no-op'ing.
         await repo.mark_job_failed(job["id"], _ORPHANED_ERROR)
-        await repo.update_item_status(job["item_id"], "failed")
+        await repo.update_item_status(job["item_id"], job["id"], "failed")
 
     if stuck_jobs:
         logger.warning("recovered orphaned AI jobs at startup", extra={"count": len(stuck_jobs)})

@@ -50,6 +50,7 @@ class UnsupportedItemType(Exception):
 
 async def process_item(
     item_id: str,
+    job_id: str,
     repo: SupabaseRestRepository,
     get_provider: Callable[[], AIProvider],
     get_search_repo: Callable[[], SearchRepository] | None = None,
@@ -68,13 +69,24 @@ async def process_item(
     `entities`/`item_entities` need an explicit owner (requirements doc,
     section 8-12, 44-48), unlike every other table this pipeline writes
     to, which infers ownership from the item itself.
+
+    `job_id` is created by the caller (see `api/ai/routes.py`), not here
+    (P1-05, docs/requirements-audit-2026-09-13.md) — it used to be
+    created as this function's first line, but this function only ever
+    runs as a `BackgroundTasks` callback, which FastAPI starts *after*
+    the "202 accepted" response is already on the wire. A process death
+    in that gap (a deploy, an OOM kill) used to leave nothing behind at
+    all: no `processing_jobs` row for `job_recovery.py`'s startup sweep
+    to find, no way to tell the accepted-but-never-actually-started
+    request apart from one silently lost. Creating the job before the
+    response is sent means a request that got "202 accepted" always has
+    a durable, recoverable row from that moment on.
     """
-    job_id = await repo.create_job(item_id, job_type="chunk_and_embed")
     started = time.monotonic()
 
     try:
         await repo.mark_job_started(job_id)
-        await repo.update_item_status(item_id, "processing")
+        await repo.update_item_status(item_id, job_id, "processing")
 
         provider = get_provider()
         item = await repo.get_item(item_id)
@@ -132,6 +144,7 @@ async def process_item(
             # that's fine — it's optional metadata, not a failure.
             await repo.update_item_metadata(
                 item_id,
+                job_id,
                 title=analysis["title"],
                 description=description,
                 latitude=exif_data["latitude"],
@@ -139,7 +152,11 @@ async def process_item(
                 captured_at=exif_data["captured_at"],
             )
             await repo.replace_item_content(
-                item_id, raw_text=description, ocr_text=ocr_text, ai_description=description
+                item_id,
+                job_id,
+                raw_text=description,
+                ocr_text=ocr_text,
+                ai_description=description,
             )
             raw_text = f"{description}\n\n{ocr_text}".strip()
         elif item_type == "audio":
@@ -157,8 +174,8 @@ async def process_item(
                     "Summarize this voice note transcript as a title under 8 "
                     f"words, in Turkish:\n\n{transcript}"
                 )
-                await repo.update_item_metadata(item_id, title=title.strip())
-            await repo.replace_item_content(item_id, raw_text=transcript)
+                await repo.update_item_metadata(item_id, job_id, title=title.strip())
+            await repo.replace_item_content(item_id, job_id, raw_text=transcript)
             raw_text = transcript
         else:  # url
             source_url = item.get("source_url")
@@ -167,9 +184,9 @@ async def process_item(
             extracted = await fetch_and_extract(source_url)
 
             await repo.update_item_metadata(
-                item_id, title=extracted["title"], description=extracted["description"]
+                item_id, job_id, title=extracted["title"], description=extracted["description"]
             )
-            await repo.replace_item_content(item_id, raw_text=extracted["text"])
+            await repo.replace_item_content(item_id, job_id, raw_text=extracted["text"])
             raw_text = extracted["text"]
 
         text = normalize_text(raw_text)
@@ -192,7 +209,7 @@ async def process_item(
         await repo.replace_chunks(item_id, job_id, chunk_rows)
 
         if get_search_repo is not None:
-            await _check_for_duplicate(item_id, repo, get_search_repo)
+            await _check_for_duplicate(item_id, job_id, repo, get_search_repo)
 
         if user_id is not None:
             tag_names = (
@@ -204,7 +221,7 @@ async def process_item(
             entities = await extract_entities(text, provider)
             await _attach_entities(item_id, job_id, user_id, entities, repo)
 
-        await repo.update_item_status(item_id, "completed")
+        await repo.update_item_status(item_id, job_id, "completed")
         await repo.mark_job_completed(job_id)
         logger.info(
             "item processed",
@@ -228,7 +245,7 @@ async def process_item(
                 "processing_time_ms": round((time.monotonic() - started) * 1000, 1),
             },
         )
-        await repo.update_item_status(item_id, "failed")
+        await repo.update_item_status(item_id, job_id, "failed")
         await repo.mark_job_failed(job_id, str(error))
     finally:
         # `repo` is constructed fresh per call (see api/ai/routes.py) and
@@ -259,6 +276,7 @@ async def _ocr_scanned_pdf(pdf_bytes: bytes, provider: AIProvider) -> str:
 
 async def _check_for_duplicate(
     item_id: str,
+    job_id: str,
     repo: SupabaseRestRepository,
     get_search_repo: Callable[[], SearchRepository],
 ) -> None:
@@ -270,7 +288,9 @@ async def _check_for_duplicate(
         search_repo = get_search_repo()
         candidate = await search_repo.find_duplicate_candidate(item_id)
         if candidate:
-            await repo.mark_duplicate(item_id, candidate["item_id"], candidate["similarity"])
+            await repo.mark_duplicate(
+                item_id, job_id, candidate["item_id"], candidate["similarity"]
+            )
     except Exception as error:
         logger.warning(
             "duplicate check failed", extra={"item_id": item_id, "error": str(error)}

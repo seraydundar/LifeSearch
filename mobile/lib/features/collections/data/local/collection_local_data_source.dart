@@ -13,6 +13,13 @@ class CollectionLocalDataSource {
 
   final AppDatabase _db;
 
+  /// Same contract as `ItemLocalDataSource.transaction` (P1-03,
+  /// docs/requirements-audit-2026-09-13.md) — pairs a local
+  /// collection/membership write with its `SyncQueueDataSource.enqueue()`
+  /// call in `OfflineCollectionRepository` atomically, since both data
+  /// sources share this same [AppDatabase] instance.
+  Future<T> transaction<T>(Future<T> Function() action) => _db.transaction(action);
+
   Stream<List<LocalCollection>> watchAll(String userId) {
     final query = _db.select(_db.localCollections)
       ..where((t) => t.userId.equals(userId))

@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lifesearch/core/database/app_database.dart';
 import 'package:lifesearch/features/item/data/local/item_local_data_source.dart';
+import 'package:lifesearch/features/item/data/local/sync_queue_data_source.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 
 void main() {
@@ -54,4 +55,77 @@ void main() {
       expect(result, isNull);
     });
   });
+
+  group('transaction (P1-03, docs/requirements-audit-2026-09-13.md)', () {
+    test('commits every write made inside it', () async {
+      final queue = SyncQueueDataSource(db);
+
+      await dataSource.transaction(() async {
+        await dataSource.upsert(LocalItemsCompanion.insert(
+          id: 'item-1',
+          userId: 'user-a',
+          type: ItemType.note.dbValue,
+          createdAt: DateTime(2026, 1, 1),
+        ));
+        await queue.enqueue(
+          userId: 'user-a',
+          operationType: 'create_note',
+          itemId: 'item-1',
+          payload: const {'title': 'x'},
+        );
+      });
+
+      expect(await dataSource.findById('user-a', 'item-1'), isNotNull);
+      expect(await queue.pendingEntries('user-a'), hasLength(1));
+    });
+
+    test(
+        'a failure partway through rolls back every write made so far — no '
+        'local-only mutation left with no queue entry to ever push it', () async {
+      final queue = _ThrowingSyncQueueDataSource(db);
+
+      await expectLater(
+        dataSource.transaction(() async {
+          await dataSource.upsert(LocalItemsCompanion.insert(
+            id: 'item-1',
+            userId: 'user-a',
+            type: ItemType.note.dbValue,
+            createdAt: DateTime(2026, 1, 1),
+          ));
+          // Stands in for the app dying, a disk error, or any other
+          // failure between the local write and the enqueue call that
+          // used to be two separate, unguarded `await`s.
+          await queue.enqueue(
+            userId: 'user-a',
+            operationType: 'create_note',
+            itemId: 'item-1',
+            payload: const {'title': 'x'},
+          );
+        }),
+        throwsA(isA<Exception>()),
+      );
+
+      // Rolled back, not left as an orphaned local write that
+      // `SyncService._pullRemote` would later delete outright, having
+      // no server row and no pending queue entry to explain it away.
+      expect(await dataSource.findById('user-a', 'item-1'), isNull);
+      expect(await queue.pendingEntries('user-a'), isEmpty);
+    });
+  });
+}
+
+/// Stands in for a crash/error between the local write and the enqueue
+/// call — `enqueue()` never actually reaches the database.
+class _ThrowingSyncQueueDataSource extends SyncQueueDataSource {
+  _ThrowingSyncQueueDataSource(super.db);
+
+  @override
+  Future<void> enqueue({
+    required String userId,
+    required String operationType,
+    required String itemId,
+    required Map<String, dynamic> payload,
+  }) {
+    throw Exception('simulated failure enqueuing');
+  }
 }

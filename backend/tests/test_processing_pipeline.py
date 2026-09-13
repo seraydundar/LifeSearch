@@ -76,6 +76,7 @@ class FakeRepo:
         self.note_content = note_content
         self.image_bytes = image_bytes
         self.status_history: list[str] = []
+        self.status_job_ids: list[str] = []
         self.job_updates: list[dict] = []
         self.inserted_chunks: list[dict] | None = None
         self.metadata_updates: list[dict] = []
@@ -103,8 +104,9 @@ class FakeRepo:
     async def mark_job_failed(self, job_id, error):
         self.job_updates.append({"status": "failed", "error": error})
 
-    async def update_item_status(self, item_id, status):
+    async def update_item_status(self, item_id, job_id, status):
         self.status_history.append(status)
+        self.status_job_ids.append(job_id)
 
     async def get_item(self, item_id):
         return self.item
@@ -121,6 +123,7 @@ class FakeRepo:
     async def update_item_metadata(
         self,
         item_id,
+        job_id,
         *,
         title=None,
         description=None,
@@ -129,6 +132,7 @@ class FakeRepo:
         captured_at=None,
     ):
         self.metadata_updates.append({
+            "job_id": job_id,
             "title": title,
             "description": description,
             "latitude": latitude,
@@ -137,15 +141,19 @@ class FakeRepo:
         })
 
     async def replace_item_content(
-        self, item_id, *, raw_text=None, ocr_text=None, ai_description=None
+        self, item_id, job_id, *, raw_text=None, ocr_text=None, ai_description=None
     ):
-        self.content_updates.append(
-            {"raw_text": raw_text, "ocr_text": ocr_text, "ai_description": ai_description}
-        )
+        self.content_updates.append({
+            "job_id": job_id,
+            "raw_text": raw_text,
+            "ocr_text": ocr_text,
+            "ai_description": ai_description,
+        })
 
-    async def mark_duplicate(self, item_id, duplicate_of_item_id, similarity):
+    async def mark_duplicate(self, item_id, job_id, duplicate_of_item_id, similarity):
         self.duplicate_marks.append({
             "item_id": item_id,
+            "job_id": job_id,
             "duplicate_of_item_id": duplicate_of_item_id,
             "similarity": similarity,
         })
@@ -187,7 +195,7 @@ async def test_processes_a_note_end_to_end():
         note_content="Docker container ile image arasındaki fark budur.",
     )
 
-    await process_item("item-1", repo, lambda: FakeProvider())
+    await process_item("item-1", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history == ["processing", "completed"]
     assert repo.job_updates[-1]["status"] == "completed"
@@ -201,7 +209,7 @@ async def test_processes_a_note_end_to_end():
 async def test_unsupported_type_marks_the_item_failed_not_crashes():
     repo = FakeRepo(item={"id": "item-2", "type": "carrier_pigeon"})
 
-    await process_item("item-2", repo, lambda: FakeProvider())  # must not raise
+    await process_item("item-2", "job-1", repo, lambda: FakeProvider())  # must not raise
 
     assert repo.status_history == ["processing", "failed"]
     assert repo.job_updates[-1]["status"] == "failed"
@@ -212,7 +220,7 @@ async def test_unsupported_type_marks_the_item_failed_not_crashes():
 async def test_empty_note_content_is_reported_as_a_failure():
     repo = FakeRepo(item={"id": "item-3", "type": "note"}, note_content="   ")
 
-    await process_item("item-3", repo, lambda: FakeProvider())
+    await process_item("item-3", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history[-1] == "failed"
     assert "no extractable text" in repo.job_updates[-1]["error"].lower()
@@ -229,7 +237,7 @@ async def test_a_pdf_with_a_real_text_layer_never_triggers_ocr():
         image_bytes=_text_pdf("Docker Compose notlarım burada."),
     )
 
-    await process_item("item-pdf-1", repo, lambda: FakeProvider())
+    await process_item("item-pdf-1", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history == ["processing", "completed"]
     combined = repo.inserted_chunks[0]["content"]
@@ -250,7 +258,7 @@ async def test_a_scanned_pdf_with_no_text_layer_falls_back_to_ocr():
         image_bytes=_blank_pdf(num_pages=2),
     )
 
-    await process_item("item-pdf-2", repo, lambda: FakeProvider())
+    await process_item("item-pdf-2", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history == ["processing", "completed"]
     combined = repo.inserted_chunks[0]["content"]
@@ -270,7 +278,7 @@ async def test_processes_an_image_end_to_end():
         },
     )
 
-    await process_item("item-5", repo, lambda: FakeProvider())
+    await process_item("item-5", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history == ["processing", "completed"]
     # AI-generated title/description overwrite the filename placeholder.
@@ -279,6 +287,7 @@ async def test_processes_an_image_end_to_end():
     # dedicated pipeline test below.
     assert repo.metadata_updates == [
         {
+            "job_id": "job-1",
             "title": "Dell G2724D Monitor",
             "description": "A screenshot of an online shopping page for a gaming monitor.",
             "latitude": None,
@@ -299,7 +308,7 @@ async def test_processes_an_image_end_to_end():
 async def test_image_without_a_storage_path_fails_clearly():
     repo = FakeRepo(item={"id": "item-6", "type": "image"})  # no storage_path
 
-    await process_item("item-6", repo, lambda: FakeProvider())
+    await process_item("item-6", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history[-1] == "failed"
     assert "no storage_path" in repo.job_updates[-1]["error"].lower()
@@ -318,7 +327,7 @@ async def test_processes_a_text_document_end_to_end():
         image_bytes="Docker Compose ile birden fazla container'ı tanımlarsın.".encode(),
     )
 
-    await process_item("item-doc-1", repo, lambda: FakeProvider())
+    await process_item("item-doc-1", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history == ["processing", "completed"]
     assert repo.inserted_chunks is not None
@@ -329,7 +338,7 @@ async def test_processes_a_text_document_end_to_end():
 async def test_document_without_a_storage_path_fails_clearly():
     repo = FakeRepo(item={"id": "item-doc-2", "type": "document"})  # no storage_path
 
-    await process_item("item-doc-2", repo, lambda: FakeProvider())
+    await process_item("item-doc-2", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history[-1] == "failed"
     assert "no storage_path" in repo.job_updates[-1]["error"].lower()
@@ -347,7 +356,7 @@ async def test_an_unrecognized_document_type_fails_clearly():
         },
     )
 
-    await process_item("item-doc-3", repo, lambda: FakeProvider())
+    await process_item("item-doc-3", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history[-1] == "failed"
     assert "unsupported document type" in repo.job_updates[-1]["error"].lower()
@@ -364,7 +373,7 @@ async def test_processes_an_audio_note_end_to_end():
         },
     )
 
-    await process_item("item-7", repo, lambda: FakeProvider())
+    await process_item("item-7", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history == ["processing", "completed"]
     # The transcript becomes both the title source and the embedded text.
@@ -378,7 +387,7 @@ async def test_processes_an_audio_note_end_to_end():
 async def test_audio_without_a_storage_path_fails_clearly():
     repo = FakeRepo(item={"id": "item-8", "type": "audio"})
 
-    await process_item("item-8", repo, lambda: FakeProvider())
+    await process_item("item-8", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history[-1] == "failed"
     assert "no storage_path" in repo.job_updates[-1]["error"].lower()
@@ -405,11 +414,12 @@ async def test_processes_a_url_item_end_to_end(monkeypatch):
         },
     )
 
-    await process_item("item-9", repo, lambda: FakeProvider())
+    await process_item("item-9", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history == ["processing", "completed"]
     assert repo.metadata_updates == [
         {
+            "job_id": "job-1",
             "title": "Docker Compose Guide",
             "description": "How to run multi-container apps.",
             "latitude": None,
@@ -427,7 +437,7 @@ async def test_processes_a_url_item_end_to_end(monkeypatch):
 async def test_url_item_without_a_source_url_fails_clearly():
     repo = FakeRepo(item={"id": "item-10", "type": "url"})
 
-    await process_item("item-10", repo, lambda: FakeProvider())
+    await process_item("item-10", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history[-1] == "failed"
     assert "no source_url" in repo.job_updates[-1]["error"].lower()
@@ -445,7 +455,7 @@ async def test_a_broken_provider_factory_fails_the_item_not_the_request():
     def broken_factory():
         raise RuntimeError("OPENAI_API_KEY is not set")
 
-    await process_item("item-4", repo, broken_factory)  # must not raise
+    await process_item("item-4", "job-1", repo, broken_factory)  # must not raise
 
     assert repo.status_history == ["processing", "failed"]
     assert "OPENAI_API_KEY" in repo.job_updates[-1]["error"]
@@ -461,11 +471,16 @@ async def test_marks_the_item_as_a_duplicate_when_a_near_identical_one_exists():
         candidate={"item_id": "item-1", "item_type": "note", "similarity": 0.97}
     )
 
-    await process_item("item-11", repo, lambda: FakeProvider(), lambda: search_repo)
+    await process_item("item-11", "job-1", repo, lambda: FakeProvider(), lambda: search_repo)
 
     assert search_repo.calls == ["item-11"]
     assert repo.duplicate_marks == [
-        {"item_id": "item-11", "duplicate_of_item_id": "item-1", "similarity": 0.97}
+        {
+            "item_id": "item-11",
+            "job_id": "job-1",
+            "duplicate_of_item_id": "item-1",
+            "similarity": 0.97,
+        }
     ]
     # Still completes normally — duplicate detection only flags, never blocks.
     assert repo.status_history == ["processing", "completed"]
@@ -478,7 +493,7 @@ async def test_no_duplicate_mark_when_nothing_is_similar_enough():
     )
     search_repo = FakeSearchRepo(candidate=None)
 
-    await process_item("item-12", repo, lambda: FakeProvider(), lambda: search_repo)
+    await process_item("item-12", "job-1", repo, lambda: FakeProvider(), lambda: search_repo)
 
     assert repo.duplicate_marks == []
     assert repo.status_history == ["processing", "completed"]
@@ -494,7 +509,7 @@ async def test_a_failing_duplicate_check_does_not_fail_the_item():
     repo = FakeRepo(item={"id": "item-13", "type": "note"}, note_content="hello")
     search_repo = FakeSearchRepo(error=RuntimeError("RPC unavailable"))
 
-    await process_item("item-13", repo, lambda: FakeProvider(), lambda: search_repo)
+    await process_item("item-13", "job-1", repo, lambda: FakeProvider(), lambda: search_repo)
 
     assert repo.duplicate_marks == []
     assert repo.status_history == ["processing", "completed"]
@@ -512,7 +527,7 @@ async def test_image_tags_come_from_the_vision_analysis_no_extra_call():
         },
     )
 
-    await process_item("item-14", repo, lambda: FakeProvider(), user_id="user-1")
+    await process_item("item-14", "job-1", repo, lambda: FakeProvider(), user_id="user-1")
 
     assert repo.tag_calls == [
         {
@@ -528,7 +543,7 @@ async def test_image_tags_come_from_the_vision_analysis_no_extra_call():
 async def test_note_tags_come_from_a_text_completion_call():
     repo = FakeRepo(item={"id": "item-15", "type": "note"}, note_content="Docker notes.")
 
-    await process_item("item-15", repo, lambda: FakeProvider(), user_id="user-1")
+    await process_item("item-15", "job-1", repo, lambda: FakeProvider(), user_id="user-1")
 
     # FakeProvider.generate_text always returns "fake answer" regardless
     # of the prompt — this only checks the wiring, not real tag quality.
@@ -541,7 +556,7 @@ async def test_note_tags_come_from_a_text_completion_call():
 async def test_no_user_id_means_no_tagging_attempt():
     repo = FakeRepo(item={"id": "item-16", "type": "note"}, note_content="Docker notes.")
 
-    await process_item("item-16", repo, lambda: FakeProvider())  # no user_id
+    await process_item("item-16", "job-1", repo, lambda: FakeProvider())  # no user_id
 
     assert repo.tag_calls == []
     assert repo.entity_calls == []
@@ -553,7 +568,7 @@ async def test_a_failing_tag_attach_does_not_fail_the_item():
     repo = FakeRepo(item={"id": "item-17", "type": "note"}, note_content="Docker notes.")
     repo.tag_error = RuntimeError("tags table unavailable")
 
-    await process_item("item-17", repo, lambda: FakeProvider(), user_id="user-1")
+    await process_item("item-17", "job-1", repo, lambda: FakeProvider(), user_id="user-1")
 
     assert repo.status_history == ["processing", "completed"]
     assert repo.job_updates[-1]["status"] == "completed"
@@ -572,7 +587,7 @@ async def test_entities_come_from_a_text_completion_call():
                 return "person: Ahmet\nplace: İstanbul\ndate: 15 Ocak"
             return await super().generate_text(prompt, system=system)
 
-    await process_item("item-19", repo, lambda: EntityProvider(), user_id="user-1")
+    await process_item("item-19", "job-1", repo, lambda: EntityProvider(), user_id="user-1")
 
     assert repo.entity_calls == [
         {
@@ -605,7 +620,7 @@ async def test_images_also_get_entity_extraction_unlike_the_free_vision_tags():
                 return "organization: Dell"
             return await super().generate_text(prompt, system=system)
 
-    await process_item("item-20", repo, lambda: EntityProvider(), user_id="user-1")
+    await process_item("item-20", "job-1", repo, lambda: EntityProvider(), user_id="user-1")
 
     assert repo.entity_calls == [
         {
@@ -622,7 +637,7 @@ async def test_a_failing_entity_attach_does_not_fail_the_item():
     repo = FakeRepo(item={"id": "item-21", "type": "note"}, note_content="Docker notes.")
     repo.entity_error = RuntimeError("entities table unavailable")
 
-    await process_item("item-21", repo, lambda: FakeProvider(), user_id="user-1")
+    await process_item("item-21", "job-1", repo, lambda: FakeProvider(), user_id="user-1")
 
     assert repo.status_history == ["processing", "completed"]
     assert repo.job_updates[-1]["status"] == "completed"
@@ -637,7 +652,7 @@ async def test_a_successful_run_logs_item_id_job_id_and_a_processing_time(caplog
     repo = FakeRepo(item={"id": "item-18", "type": "note"}, note_content="Docker notes.")
 
     with caplog.at_level(logging.INFO, logger="app.services.processing_pipeline"):
-        await process_item("item-18", repo, lambda: FakeProvider())
+        await process_item("item-18", "job-1", repo, lambda: FakeProvider())
 
     record = next(r for r in caplog.records if r.message == "item processed")
     assert record.item_id == "item-18"
@@ -651,7 +666,7 @@ async def test_a_failed_run_logs_the_error_and_a_processing_time(caplog):
     repo = FakeRepo(item={"id": "item-19", "type": "carrier_pigeon"})
 
     with caplog.at_level(logging.WARNING, logger="app.services.processing_pipeline"):
-        await process_item("item-19", repo, lambda: FakeProvider())
+        await process_item("item-19", "job-1", repo, lambda: FakeProvider())
 
     record = next(r for r in caplog.records if r.message == "processing failed")
     assert record.item_id == "item-19"
@@ -673,7 +688,7 @@ async def test_a_photo_with_gps_exif_gets_its_location_and_capture_time_saved():
         image_bytes=photo,
     )
 
-    await process_item("item-20", repo, lambda: FakeProvider())
+    await process_item("item-20", "job-1", repo, lambda: FakeProvider())
 
     update = repo.metadata_updates[0]
     assert update["latitude"] == pytest.approx(39.9334, abs=1e-3)
@@ -695,7 +710,7 @@ async def test_a_photo_with_no_exif_leaves_location_fields_empty():
         image_bytes=plain_photo.getvalue(),
     )
 
-    await process_item("item-21", repo, lambda: FakeProvider())  # must not raise
+    await process_item("item-21", "job-1", repo, lambda: FakeProvider())  # must not raise
 
     update = repo.metadata_updates[0]
     assert update["latitude"] is None
@@ -713,7 +728,7 @@ async def test_the_repo_is_closed_after_a_successful_run():
     """
     repo = FakeRepo(item={"id": "item-22", "type": "note"}, note_content="Docker notes.")
 
-    await process_item("item-22", repo, lambda: FakeProvider())
+    await process_item("item-22", "job-1", repo, lambda: FakeProvider())
 
     assert repo.closed is True
 
@@ -722,7 +737,7 @@ async def test_the_repo_is_closed_after_a_successful_run():
 async def test_the_repo_is_closed_even_after_a_failure():
     repo = FakeRepo(item={"id": "item-23", "type": "carrier_pigeon"})
 
-    await process_item("item-23", repo, lambda: FakeProvider())
+    await process_item("item-23", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history[-1] == "failed"
     assert repo.closed is True

@@ -17,14 +17,19 @@ rejects a non-HTML content-type, so a saved link can't be used to make
 this backend download something unbounded or something there's nothing
 useful to extract from anyway.
 
-**Known limitation**: the safety check resolves the hostname once and
-then httpx resolves it again to actually connect — a DNS-rebinding
-attacker who changes the answer between those two lookups could still
-slip through. Fully closing that needs a transport that connects to the
-exact IP this check already resolved (pinning it) rather than trusting
-a second, independent resolution; that's a meaningfully larger change
-than the URL/redirect/size/content-type checks below and is left as a
-known gap rather than built here.
+**DNS rebinding (P1-06, docs/requirements-audit-2026-09-13.md)**:
+`_ensure_safe_to_fetch()` used to resolve the hostname once and then let
+httpx resolve it again, independently, to actually connect — a
+DNS-rebinding attacker who changed the answer between those two lookups
+(their DNS record pointing at a public IP the first time, an internal
+one the second) could slip an unsafe address past the check entirely.
+`_fetch_safely()` now connects to the exact IP `_ensure_safe_to_fetch()`
+already validated (`request.url`'s host becomes that IP), rather than
+trusting a second, independent resolution — there's no longer a second
+lookup for an attacker to race. The `Host` header and TLS SNI are set
+explicitly to the real hostname (`extensions={"sni_hostname": ...}`) so
+the request still looks — and, for TLS, still verifies — like a normal
+request to that hostname; only the actual connection target is pinned.
 """
 
 import asyncio
@@ -69,8 +74,20 @@ async def _fetch_safely(url: str) -> str:
     current_url = url
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         for _ in range(_MAX_REDIRECTS + 1):
-            await _ensure_safe_to_fetch(current_url)
-            request = client.build_request("GET", current_url, headers={"User-Agent": _USER_AGENT})
+            pinned_ip = await _ensure_safe_to_fetch(current_url)
+            parsed = urlparse(current_url)
+            host_header = parsed.hostname if not parsed.port else f"{parsed.hostname}:{parsed.port}"
+            # Connect to `pinned_ip`, not `current_url`'s own hostname —
+            # see the module docstring's "DNS rebinding" note. `Host` and
+            # SNI stay the real hostname so the request (and, for https,
+            # certificate verification) still matches it.
+            pinned_url = httpx.URL(current_url).copy_with(host=pinned_ip)
+            request = client.build_request(
+                "GET",
+                pinned_url,
+                headers={"User-Agent": _USER_AGENT, "Host": host_header},
+                extensions={"sni_hostname": parsed.hostname},
+            )
             response = await client.send(request, stream=True)
             try:
                 if response.is_redirect:
@@ -116,14 +133,27 @@ async def _resolve_addresses(hostname: str) -> list[str]:
     return [info[4][0] for info in infos]
 
 
-async def _ensure_safe_to_fetch(url: str) -> None:
+async def _ensure_safe_to_fetch(url: str) -> str:
+    """Returns the resolved address `_fetch_safely()` should actually
+    connect to (see its "DNS rebinding" note) — the *first* validated
+    one, once every resolved address for this host has passed the
+    public-address check below. A host resolving to a mix of public and
+    non-public addresses is still refused entirely: picking only the
+    first-validated address to connect to isn't a safety compromise
+    (that's all any single connection ever uses anyway), but a host
+    that resolves to a private address *at all* is treated as unsafe
+    outright, same as before this returned anything.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise UnsafeUrlError(f"Unsupported URL scheme for a saved link: {parsed.scheme!r}")
     if not parsed.hostname:
         raise UnsafeUrlError("Saved link has no host.")
 
-    for address in await _resolve_addresses(parsed.hostname):
+    addresses = await _resolve_addresses(parsed.hostname)
+    if not addresses:
+        raise UnsafeUrlError(f"Could not resolve host: {parsed.hostname!r}")
+    for address in addresses:
         ip = ipaddress.ip_address(address)
         # is_global is the one check that already excludes private
         # (RFC 1918), loopback, link-local (including the cloud metadata
@@ -134,6 +164,7 @@ async def _ensure_safe_to_fetch(url: str) -> None:
             raise UnsafeUrlError(
                 f"{parsed.hostname!r} resolves to a non-public address ({ip}) — refusing."
             )
+    return addresses[0]
 
 
 def extract_from_html(html: str) -> dict[str, Any]:

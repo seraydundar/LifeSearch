@@ -69,24 +69,26 @@ class OfflineItemRepository implements ItemRepository {
     final id = _uuid.v4();
     final now = DateTime.now();
 
-    await _local.upsert(LocalItemsCompanion.insert(
-      id: id,
-      userId: _userId,
-      type: ItemType.note.dbValue,
-      title: Value(title),
-      // Chunked/embedded by the backend (Phase 4), same as PDFs — flips
-      // to 'completed' once that job finishes, not immediately.
-      processingStatus: const Value('pending'),
-      createdAt: now,
-      noteContent: Value(content),
-      syncStatus: const Value('pending'),
-    ));
-    await _queue.enqueue(
-      userId: _userId,
-      operationType: 'create_note',
-      itemId: id,
-      payload: {'title': title, 'content': content},
-    );
+    await _local.transaction(() async {
+      await _local.upsert(LocalItemsCompanion.insert(
+        id: id,
+        userId: _userId,
+        type: ItemType.note.dbValue,
+        title: Value(title),
+        // Chunked/embedded by the backend (Phase 4), same as PDFs — flips
+        // to 'completed' once that job finishes, not immediately.
+        processingStatus: const Value('pending'),
+        createdAt: now,
+        noteContent: Value(content),
+        syncStatus: const Value('pending'),
+      ));
+      await _queue.enqueue(
+        userId: _userId,
+        operationType: 'create_note',
+        itemId: id,
+        payload: {'title': title, 'content': content},
+      );
+    });
     _syncService.syncSoon();
 
     return Item(
@@ -105,13 +107,15 @@ class OfflineItemRepository implements ItemRepository {
     required String title,
     required String content,
   }) async {
-    await _local.setNoteContent(itemId, title, content, syncStatus: 'pending');
-    await _queue.enqueue(
-      userId: _userId,
-      operationType: 'update_note',
-      itemId: itemId,
-      payload: {'title': title, 'content': content},
-    );
+    await _local.transaction(() async {
+      await _local.setNoteContent(itemId, title, content, syncStatus: 'pending');
+      await _queue.enqueue(
+        userId: _userId,
+        operationType: 'update_note',
+        itemId: itemId,
+        payload: {'title': title, 'content': content},
+      );
+    });
     _syncService.syncSoon();
   }
 
@@ -134,30 +138,32 @@ class OfflineItemRepository implements ItemRepository {
     // and carried in the queued payload so the remote row gets it too.
     final fileSizeBytes = await File(persistedPath).length();
 
-    await _local.upsert(LocalItemsCompanion.insert(
-      id: id,
-      userId: _userId,
-      type: type.dbValue,
-      title: Value(originalFilename),
-      originalFilename: Value(originalFilename),
-      mimeType: Value(mimeType),
-      processingStatus: const Value('pending'),
-      createdAt: now,
-      fileSizeBytes: Value(fileSizeBytes),
-      syncStatus: const Value('pending'),
-    ));
-    await _queue.enqueue(
-      userId: _userId,
-      operationType: 'upload_file',
-      itemId: id,
-      payload: {
-        'localFilePath': persistedPath,
-        'originalFilename': originalFilename,
-        'mimeType': mimeType,
-        'type': type.dbValue,
-        'fileSizeBytes': fileSizeBytes,
-      },
-    );
+    await _local.transaction(() async {
+      await _local.upsert(LocalItemsCompanion.insert(
+        id: id,
+        userId: _userId,
+        type: type.dbValue,
+        title: Value(originalFilename),
+        originalFilename: Value(originalFilename),
+        mimeType: Value(mimeType),
+        processingStatus: const Value('pending'),
+        createdAt: now,
+        fileSizeBytes: Value(fileSizeBytes),
+        syncStatus: const Value('pending'),
+      ));
+      await _queue.enqueue(
+        userId: _userId,
+        operationType: 'upload_file',
+        itemId: id,
+        payload: {
+          'localFilePath': persistedPath,
+          'originalFilename': originalFilename,
+          'mimeType': mimeType,
+          'type': type.dbValue,
+          'fileSizeBytes': fileSizeBytes,
+        },
+      );
+    });
     _syncService.syncSoon();
 
     return Item(
@@ -178,22 +184,24 @@ class OfflineItemRepository implements ItemRepository {
     final id = _uuid.v4();
     final now = DateTime.now();
 
-    await _local.upsert(LocalItemsCompanion.insert(
-      id: id,
-      userId: _userId,
-      type: ItemType.url.dbValue,
-      title: Value(url),
-      sourceUrl: Value(url),
-      processingStatus: const Value('pending'),
-      createdAt: now,
-      syncStatus: const Value('pending'),
-    ));
-    await _queue.enqueue(
-      userId: _userId,
-      operationType: 'create_url',
-      itemId: id,
-      payload: {'url': url},
-    );
+    await _local.transaction(() async {
+      await _local.upsert(LocalItemsCompanion.insert(
+        id: id,
+        userId: _userId,
+        type: ItemType.url.dbValue,
+        title: Value(url),
+        sourceUrl: Value(url),
+        processingStatus: const Value('pending'),
+        createdAt: now,
+        syncStatus: const Value('pending'),
+      ));
+      await _queue.enqueue(
+        userId: _userId,
+        operationType: 'create_url',
+        itemId: id,
+        payload: {'url': url},
+      );
+    });
     _syncService.syncSoon();
 
     return Item(
@@ -225,44 +233,57 @@ class OfflineItemRepository implements ItemRepository {
 
   @override
   Future<void> setFavorite(String itemId, bool favorite) async {
-    await _local.setFavorite(itemId, favorite, syncStatus: 'pending');
-    await _queue.enqueue(
-      userId: _userId,
-      operationType: 'set_favorite',
-      itemId: itemId,
-      payload: {'favorite': favorite},
-    );
+    await _local.transaction(() async {
+      await _local.setFavorite(itemId, favorite, syncStatus: 'pending');
+      await _queue.enqueue(
+        userId: _userId,
+        operationType: 'set_favorite',
+        itemId: itemId,
+        payload: {'favorite': favorite},
+      );
+    });
     _syncService.syncSoon();
   }
 
   @override
   Future<void> setPrivate(String itemId, bool private) async {
-    await _local.setPrivate(itemId, private, syncStatus: 'pending');
-    await _queue.enqueue(
-      userId: _userId,
-      operationType: 'set_private',
-      itemId: itemId,
-      payload: {'private': private},
-    );
+    await _local.transaction(() async {
+      await _local.setPrivate(itemId, private, syncStatus: 'pending');
+      await _queue.enqueue(
+        userId: _userId,
+        operationType: 'set_private',
+        itemId: itemId,
+        payload: {'private': private},
+      );
+    });
     _syncService.syncSoon();
   }
 
   @override
   Future<void> dismissDuplicate(String itemId) async {
-    await _local.setDuplicateDismissed(itemId, syncStatus: 'pending');
-    await _queue.enqueue(userId: _userId, operationType: 'dismiss_duplicate', itemId: itemId, payload: const {});
+    await _local.transaction(() async {
+      await _local.setDuplicateDismissed(itemId, syncStatus: 'pending');
+      await _queue.enqueue(
+        userId: _userId,
+        operationType: 'dismiss_duplicate',
+        itemId: itemId,
+        payload: const {},
+      );
+    });
     _syncService.syncSoon();
   }
 
   @override
   Future<void> deleteItem(Item item) async {
-    await _local.delete(item.id);
-    await _queue.enqueue(
-      userId: _userId,
-      operationType: 'delete_item',
-      itemId: item.id,
-      payload: {'storagePath': item.storagePath},
-    );
+    await _local.transaction(() async {
+      await _local.delete(item.id);
+      await _queue.enqueue(
+        userId: _userId,
+        operationType: 'delete_item',
+        itemId: item.id,
+        payload: {'storagePath': item.storagePath},
+      );
+    });
     _syncService.syncSoon();
   }
 
@@ -273,13 +294,15 @@ class OfflineItemRepository implements ItemRepository {
     // skips this item while the queue entry below is still pending (see
     // its `pendingIds` check), so this doesn't get clobbered by a pull
     // that hasn't seen the retry succeed yet.
-    await _local.setProcessingStatus(itemId, 'pending');
-    await _queue.enqueue(
-      userId: _userId,
-      operationType: 'trigger_ai',
-      itemId: itemId,
-      payload: const {},
-    );
+    await _local.transaction(() async {
+      await _local.setProcessingStatus(itemId, 'pending');
+      await _queue.enqueue(
+        userId: _userId,
+        operationType: 'trigger_ai',
+        itemId: itemId,
+        payload: const {},
+      );
+    });
     _syncService.syncSoon();
   }
 }

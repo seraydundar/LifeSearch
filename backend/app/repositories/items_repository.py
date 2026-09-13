@@ -117,6 +117,7 @@ class SupabaseRestRepository:
     async def update_item_metadata(
         self,
         item_id: str,
+        job_id: str,
         *,
         title: str | None = None,
         description: str | None = None,
@@ -129,6 +130,13 @@ class SupabaseRestRepository:
         that are actually given. `latitude`/`longitude`/`captured_at`
         come from EXIF instead (section 8-12), not the AI provider —
         see `services/exif_service.py`.
+
+        Job-gated (P1-04, docs/requirements-audit-2026-09-13.md, see
+        `update_item_fields_for_job` in infra/supabase/migrations/
+        0018_job_gated_item_writes.sql), same reasoning as
+        `replace_chunks`/`attach_tags`: an older, slower reprocessing
+        run's metadata (e.g. a stale image analysis) must never overwrite
+        a newer run's, no matter which HTTP request happens to land last.
         """
         fields: dict[str, Any] = {}
         if title:
@@ -143,42 +151,41 @@ class SupabaseRestRepository:
             fields["captured_at"] = captured_at.isoformat()
         if not fields:
             return
-        response = await self._client.patch(
-            f"{self._base_url}/rest/v1/items",
-            params={"id": f"eq.{item_id}"},
+        response = await self._client.post(
+            f"{self._base_url}/rest/v1/rpc/update_item_fields_for_job",
             headers={"Content-Type": "application/json"},
-            json=fields,
+            json={"p_item_id": item_id, "p_job_id": job_id, "p_fields": fields},
         )
         response.raise_for_status()
 
     async def replace_item_content(
         self,
         item_id: str,
+        job_id: str,
         *,
         raw_text: str | None = None,
         ocr_text: str | None = None,
         ai_description: str | None = None,
     ) -> None:
-        """Idempotent via a single atomic UPSERT on `item_id`, not the old
-        independent DELETE-then-INSERT pair — two concurrent reprocessing
-        runs for the same item used to be able to interleave those into
-        two live rows (or a moment with zero). `item_contents_item_id_key`
-        (see infra/supabase/migrations/0012_item_contents_unique.sql)
-        makes this one PostgREST request instead of two. Notes write
-        their body once at creation instead and never call this.
+        """Job-gated atomic UPSERT (P1-04, docs/requirements-audit-2026-09-13.md,
+        see `replace_item_content_for_job` in infra/supabase/migrations/
+        0018_job_gated_item_writes.sql) — was already a single atomic
+        UPSERT on `item_id` (not the old independent DELETE-then-INSERT
+        pair; see `item_contents_item_id_key`,
+        infra/supabase/migrations/0012_item_contents_unique.sql), but
+        still had no job-ownership check: an older, slower run's content
+        could still land after a newer run's and overwrite it. Notes
+        write their body once at creation instead and never call this.
         """
         response = await self._client.post(
-            f"{self._base_url}/rest/v1/item_contents",
-            params={"on_conflict": "item_id"},
-            headers={
-                "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates,return=minimal",
-            },
+            f"{self._base_url}/rest/v1/rpc/replace_item_content_for_job",
+            headers={"Content-Type": "application/json"},
             json={
-                "item_id": item_id,
-                "raw_text": raw_text,
-                "ocr_text": ocr_text,
-                "ai_description": ai_description,
+                "p_item_id": item_id,
+                "p_job_id": job_id,
+                "p_raw_text": raw_text,
+                "p_ocr_text": ocr_text,
+                "p_ai_description": ai_description,
             },
         )
         response.raise_for_status()
@@ -242,30 +249,41 @@ class SupabaseRestRepository:
         response.raise_for_status()
 
     async def mark_duplicate(
-        self, item_id: str, duplicate_of_item_id: str, similarity: float
+        self, item_id: str, job_id: str, duplicate_of_item_id: str, similarity: float
     ) -> None:
         """Flags a possible duplicate found during processing (requirements
         doc, section 46) — never blocks or merges anything, just records
         the best candidate for the client to show a dismissible banner for.
+
+        Job-gated (P1-04, docs/requirements-audit-2026-09-13.md, see
+        `mark_duplicate_for_job` in infra/supabase/migrations/
+        0018_job_gated_item_writes.sql) — same reasoning as
+        `update_item_metadata`.
         """
-        response = await self._client.patch(
-            f"{self._base_url}/rest/v1/items",
-            params={"id": f"eq.{item_id}"},
+        response = await self._client.post(
+            f"{self._base_url}/rest/v1/rpc/mark_duplicate_for_job",
             headers={"Content-Type": "application/json"},
             json={
-                "duplicate_of_item_id": duplicate_of_item_id,
-                "duplicate_similarity": similarity,
-                "duplicate_dismissed": False,
+                "p_item_id": item_id,
+                "p_job_id": job_id,
+                "p_duplicate_of_item_id": duplicate_of_item_id,
+                "p_similarity": similarity,
             },
         )
         response.raise_for_status()
 
-    async def update_item_status(self, item_id: str, status: str) -> None:
-        response = await self._client.patch(
-            f"{self._base_url}/rest/v1/items",
-            params={"id": f"eq.{item_id}"},
+    async def update_item_status(self, item_id: str, job_id: str, status: str) -> None:
+        """Job-gated (P1-04, docs/requirements-audit-2026-09-13.md, see
+        `update_item_status_for_job` in infra/supabase/migrations/
+        0018_job_gated_item_writes.sql) — without this, an older job
+        erroring out *after* a newer job already completed successfully
+        could still flip the item back to `failed`; a stale, delayed
+        `processing`/`completed` write had the same risk in reverse.
+        """
+        response = await self._client.post(
+            f"{self._base_url}/rest/v1/rpc/update_item_status_for_job",
             headers={"Content-Type": "application/json"},
-            json={"processing_status": status},
+            json={"p_item_id": item_id, "p_job_id": job_id, "p_status": status},
         )
         response.raise_for_status()
 
@@ -296,16 +314,20 @@ class SupabaseRestRepository:
     async def mark_job_failed(self, job_id: str, error: str) -> None:
         await self.update_job(job_id, status="failed", error_message=error, completed_at=_now_iso())
 
-    async def find_jobs_by_status(self, status: str) -> list[dict[str, Any]]:
+    async def find_jobs_by_status(self, statuses: list[str]) -> list[dict[str, Any]]:
         """Used by `job_recovery.py`'s startup sweep — that's the one
         caller with a legitimate reason to look across every user's jobs
         at once, so it constructs this repository with the service_role
         key as its `access_token` (bypasses RLS) rather than a normal
         user's.
+
+        Takes multiple statuses (P1-05, docs/requirements-audit-2026-09-13.md)
+        — the sweep needs both `pending` and `processing` jobs, not just
+        the latter; see that module's docstring.
         """
         response = await self._client.get(
             f"{self._base_url}/rest/v1/processing_jobs",
-            params={"status": f"eq.{status}", "select": "id,item_id"},
+            params={"status": f"in.({','.join(statuses)})", "select": "id,item_id"},
         )
         response.raise_for_status()
         return response.json()

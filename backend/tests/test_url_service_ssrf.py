@@ -79,7 +79,7 @@ async def test_rejects_a_redirect_to_a_non_public_address(monkeypatch: pytest.Mo
     _fake_public_dns(monkeypatch)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "public.example.com":
+        if request.headers.get("host") == "public.example.com":
             return httpx.Response(302, headers={"location": "http://169.254.169.254/secret"})
         raise AssertionError(f"should never actually request {request.url}")
 
@@ -148,3 +148,88 @@ async def test_gives_up_after_too_many_redirects(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(UnsafeUrlError):
         await fetch_and_extract("http://public.example.com/")
+
+
+# P1-06 (docs/requirements-audit-2026-09-13.md): the actual connection
+# used to go to whatever address httpx's *own*, independent resolution
+# of the hostname returned — a second lookup a DNS-rebinding attacker
+# could answer differently from the one `_ensure_safe_to_fetch` had just
+# validated. These pin down the fix: the request that's actually sent
+# targets the already-validated address directly, with the real
+# hostname preserved only in `Host`/SNI, so there's no second lookup
+# left for an attacker to race.
+class TestDnsRebindingPinning:
+    @pytest.mark.asyncio
+    async def test_connects_to_the_already_validated_address_not_the_hostname(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _fake_public_dns(monkeypatch)
+        seen_hosts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_hosts.append(request.url.host)
+            return httpx.Response(
+                200, headers={"content-type": "text/html"}, content=b"<html></html>"
+            )
+
+        _mock_client(monkeypatch, handler)
+
+        await fetch_and_extract("http://public.example.com/")
+
+        # Not "public.example.com" — a second, independent resolution of
+        # that hostname is exactly the gap being closed here.
+        assert seen_hosts == ["93.184.215.14"]
+
+    @pytest.mark.asyncio
+    async def test_still_sends_the_real_hostname_as_the_host_header(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _fake_public_dns(monkeypatch)
+        seen_host_headers = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_host_headers.append(request.headers.get("host"))
+            return httpx.Response(
+                200, headers={"content-type": "text/html"}, content=b"<html></html>"
+            )
+
+        _mock_client(monkeypatch, handler)
+
+        await fetch_and_extract("http://public.example.com/")
+
+        assert seen_host_headers == ["public.example.com"]
+
+    @pytest.mark.asyncio
+    async def test_a_dns_answer_that_changes_between_check_and_connect_cannot_bypass_the_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The exact rebinding scenario: if the connection still did its
+        own, independent resolution, a hostname could resolve safely for
+        `_ensure_safe_to_fetch`'s lookup and unsafely by the time the
+        connection actually happened. Simulated here by making
+        `_resolve_addresses` itself flip answers between calls — pinning
+        means the second (attacker-controlled) answer is never consulted
+        again, so this must still succeed, never leak the internal
+        address to `handler`, and never raise.
+        """
+        calls = {"count": 0}
+
+        async def flip_flopping_resolve(hostname: str) -> list[str]:
+            calls["count"] += 1
+            return ["93.184.215.14"] if calls["count"] == 1 else ["169.254.169.254"]
+
+        monkeypatch.setattr(url_service, "_resolve_addresses", flip_flopping_resolve)
+        seen_hosts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_hosts.append(request.url.host)
+            return httpx.Response(
+                200, headers={"content-type": "text/html"}, content=b"<html></html>"
+            )
+
+        _mock_client(monkeypatch, handler)
+
+        await fetch_and_extract("http://public.example.com/")
+
+        assert seen_hosts == ["93.184.215.14"]
+        assert "169.254.169.254" not in seen_hosts

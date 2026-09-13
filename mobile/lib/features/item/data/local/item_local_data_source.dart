@@ -10,6 +10,21 @@ class ItemLocalDataSource {
 
   final AppDatabase _db;
 
+  /// Runs [action] in one Drift transaction — for `OfflineItemRepository`
+  /// to pair a local write with its `SyncQueueDataSource.enqueue()` call
+  /// (P1-03, docs/requirements-audit-2026-09-13.md): those used to be two
+  /// separate `await`s, so the app dying between them left a local-only
+  /// mutation with no queue entry to ever push it — worse, the next
+  /// `_pullRemote()` would then delete it outright, since a local id
+  /// that's neither on the server nor in the pending queue looks exactly
+  /// like "deleted elsewhere" (see `SyncService._pullRemote`'s
+  /// `staleIds`). Any query issued through this same [AppDatabase]
+  /// instance while [action] runs — including `SyncQueueDataSource`'s,
+  /// which shares it — participates in the same transaction, so a
+  /// failure partway through rolls back every write [action] made, not
+  /// just this data source's own.
+  Future<T> transaction<T>(Future<T> Function() action) => _db.transaction(action);
+
   Stream<List<LocalItem>> watchAll(String userId) {
     final query = _db.select(_db.localItems)
       ..where((t) => t.userId.equals(userId))
