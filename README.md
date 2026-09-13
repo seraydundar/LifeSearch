@@ -10,18 +10,22 @@ digital life."*
 > Status: all 9 planned phases have code, plus several passes beyond the
 > requirements doc's own scope (tags, offline keyword search, structured
 > logging, EXIF location, CI/CD, a full Settings screen, rate limiting,
-> reranking, ...). An independent audit on 2026-09-10 found real gaps
-> that "phases done" glossed over — the sharpest being that the local
-> sync queue isn't scoped per account (a second account signing in on
-> the same device can push a still-queued item under the wrong user),
-> a missing DB constraint that makes note creation fail on a clean
-> install, and search/RAG results opening a trimmed stand-in `Item`
-> that can't show its own file. See
-> [`docs/roadmap.md`](docs/roadmap.md)'s "Faz 10" for the full list and
-> fix order — **the requirements doc's section 66 MVP scenario should
-> not be considered done until that phase closes.** 234 tests green
-> across backend + mobile (passing tests, not a correctness guarantee —
-> see roadmap). Full requirements:
+> reranking, ...). A full independent audit against the 71-item
+> requirements doc, [`docs/requirements-audit-2026-09-13.md`](docs/requirements-audit-2026-09-13.md),
+> found and fixed the sharpest cross-account and per-job data-integrity
+> gaps since (account-switch isolation for search/chat/private reveal,
+> private items leaking past reveal in search/RAG, session pinning
+> across a multi-step upload, job-gated writes so an older reprocessing
+> run can't overwrite a newer one's output, a DNS-rebinding gap in URL
+> fetching, and several content/search gaps — see that document's
+> "Önerilen uygulama sırası" and the git history since for what's landed
+> — plus what's still open: a real two-account Supabase/RLS acceptance
+> run (needs a live project, not just code), offline tag search,
+> export completeness/pagination, and the further-out items below).
+> **The requirements doc's section 66 MVP scenario should not be
+> considered done until that live acceptance run happens.** 208 backend
+> + 251 mobile tests green (passing tests, not a correctness guarantee —
+> see the audit doc). Full requirements:
 > [`docs/requirements.md`](docs/requirements.md).
 
 ## Screenshots
@@ -55,11 +59,10 @@ flowchart LR
         Auth["Auth"]
         PG[("Postgres + pgvector\nRLS on every table")]
         Storage["Private Storage bucket\n(signed URLs)"]
-        Realtime["Realtime"]
     end
 
     subgraph Backend["FastAPI AI service (backend/)"]
-        API["/ai/process-item\n/search/\n/rag/ask\n/account/"]
+        API["/ai/process-item\n/ai/ask\n/search/\n/collections/\n/account/"]
         Pipeline["Processing pipeline\nchunk → embed → tag → EXIF"]
         Provider["AIProvider interface"]
         API --> Pipeline --> Provider
@@ -70,7 +73,6 @@ flowchart LR
     Repo -- "REST + signed URLs" --> Storage
     Repo -- "auth, CRUD, RPCs" --> PG
     Repo -- "sign in / sign up" --> Auth
-    Realtime -- "live item updates" --> Repo
     Repo -- "process/search/ask\n(own Supabase JWT, never a service key)" --> API
     Pipeline -- "reads/writes" --> PG
     Pipeline -- "reads files" --> Storage
@@ -79,12 +81,16 @@ flowchart LR
 
 Every mobile write goes to Drift first, then syncs to Supabase in the
 background (offline-first — see requirements doc, rule "yazma önce
-local'e"). The backend never gets the user's Supabase password or the
-`service_role` key from the app; it verifies the caller's own JWT
-against `/auth/v1/user` on every request and never touches Storage or
-Postgres except as that user. `AIProvider` is an interface, not a
-hard dependency on OpenAI — swapping providers doesn't touch the
-pipeline.
+local'e"). There's no Supabase Realtime channel wired up: a background
+job's `processing`/`completed`/`failed` transition reaches the device
+only through `SyncService`'s own pull/poll cycle (on a mutation,
+connectivity change, or a short interval while something is still
+pending — see `sync_service.dart`), not a push. The backend never gets
+the user's Supabase password or the `service_role` key from the app; it
+verifies the caller's own JWT against `/auth/v1/user` on every request
+and never touches Storage or Postgres except as that user. `AIProvider`
+is an interface, not a hard dependency on OpenAI — swapping providers
+doesn't touch the pipeline.
 
 ## Monorepo layout
 
