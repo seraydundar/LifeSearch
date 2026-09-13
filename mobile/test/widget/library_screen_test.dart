@@ -190,6 +190,44 @@ void main() {
     expect(titles.indexOf('Apple notes'), lessThan(titles.indexOf('Banana notes')));
   });
 
+  // P3 (docs/requirements-audit-2026-09-13.md): Library had no way to
+  // group items by type at all.
+  testWidgets('sorting by type groups items by their type', (tester) async {
+    final repo = FakeItemRepository(initialItems: [
+      Item(
+        id: '1',
+        type: ItemType.pdf,
+        title: 'A PDF',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+      ),
+      Item(
+        id: '2',
+        type: ItemType.audio,
+        title: 'A recording',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    ]);
+    await tester.pumpWidget(wrap(repo));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.sort));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Türe göre'));
+    await tester.pumpAndSettle();
+
+    final titles = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data)
+        .whereType<String>()
+        .toList();
+    // "audio" sorts before "pdf" alphabetically by type name.
+    expect(titles.indexOf('A recording'), lessThan(titles.indexOf('A PDF')));
+  });
+
   testWidgets('grid tiles are keyed by item id, not list position', (tester) async {
     // Regression test: a real photo's signed URL once showed up under a
     // brand-new note's title in the grid. Root cause — GridView.builder's

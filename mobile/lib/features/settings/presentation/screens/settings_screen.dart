@@ -19,7 +19,7 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authControllerProvider).valueOrNull;
-    final themeMode = ref.watch(themeModeProvider);
+    final themeMode = ref.watch(themeModeProvider).valueOrNull ?? ThemeMode.system;
     final isSigningOut = ref.watch(authControllerProvider).isLoading;
     final pendingSync = ref.watch(pendingSyncCountProvider).valueOrNull ?? 0;
     final items = ref.watch(itemsProvider).valueOrNull ?? const [];
@@ -115,7 +115,7 @@ class SettingsScreen extends ConsumerWidget {
               ],
               selected: {themeMode},
               onSelectionChanged: (selection) =>
-                  ref.read(themeModeProvider.notifier).state = selection.first,
+                  ref.read(themeModeProvider.notifier).setThemeMode(selection.first),
               showSelectedIcon: false,
             ),
           ),

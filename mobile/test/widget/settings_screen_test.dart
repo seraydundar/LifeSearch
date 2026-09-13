@@ -11,13 +11,20 @@ import 'package:lifesearch/features/item/presentation/providers/item_providers.d
 import 'package:lifesearch/features/settings/presentation/screens/settings_screen.dart';
 
 import 'package:lifesearch/features/settings/presentation/providers/app_lock_providers.dart';
+import 'package:lifesearch/features/settings/presentation/providers/theme_mode_provider.dart';
 
 import '../fakes/fake_app_lock_service.dart';
 import '../fakes/fake_auth_repository.dart';
 import '../fakes/fake_item_repository.dart';
+import '../fakes/fake_theme_preference_service.dart';
 
 void main() {
-  Widget wrap({FakeItemRepository? repo, bool aiAvailable = false, FakeAppLockService? appLock}) {
+  Widget wrap({
+    FakeItemRepository? repo,
+    bool aiAvailable = false,
+    FakeAppLockService? appLock,
+    FakeThemePreferenceService? themePreference,
+  }) {
     return ProviderScope(
       overrides: [
         authRepositoryProvider.overrideWithValue(
@@ -31,6 +38,9 @@ void main() {
         pendingSyncCountProvider.overrideWith((ref) => Stream.value(0)),
         apiClientProvider.overrideWithValue(null),
         appLockServiceProvider.overrideWithValue(appLock ?? FakeAppLockService()),
+        themePreferenceServiceProvider.overrideWithValue(
+          themePreference ?? FakeThemePreferenceService(),
+        ),
       ],
       child: MaterialApp.router(
         // The confirm dialog's buttons use go_router's `context.pop()`
@@ -212,5 +222,38 @@ void main() {
     expect(appLock.authenticateCallCount, 1);
     expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
     expect(find.textContaining('Doğrulanamadı, kilit açılmadı.'), findsOneWidget);
+  });
+
+  group('Theme (P3, docs/requirements-audit-2026-09-13.md)', () {
+    // This used to be in-memory only — a cold restart always reverted to
+    // following the system theme regardless of what was last picked.
+    testWidgets('reflects a persisted theme mode', (tester) async {
+      await tester.pumpWidget(wrap(
+        themePreference: FakeThemePreferenceService(initial: ThemeMode.dark),
+      ));
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -300));
+      await tester.pumpAndSettle();
+
+      final segmented =
+          tester.widget<SegmentedButton<ThemeMode>>(find.byType(SegmentedButton<ThemeMode>));
+      expect(segmented.selected, {ThemeMode.dark});
+    });
+
+    testWidgets('selecting a theme persists it, not just updates the UI', (tester) async {
+      final themePreference = FakeThemePreferenceService();
+      await tester.pumpWidget(wrap(themePreference: themePreference));
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -300));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.dark_mode_outlined));
+      await tester.pumpAndSettle();
+
+      expect(themePreference.saveCallCount, 1);
+      final segmented =
+          tester.widget<SegmentedButton<ThemeMode>>(find.byType(SegmentedButton<ThemeMode>));
+      expect(segmented.selected, {ThemeMode.dark});
+    });
   });
 }

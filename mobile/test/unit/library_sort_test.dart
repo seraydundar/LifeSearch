@@ -3,10 +3,16 @@ import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/library/domain/library_sort.dart';
 
 void main() {
-  Item item({required String id, String? title, String? originalFilename, DateTime? createdAt}) {
+  Item item({
+    required String id,
+    String? title,
+    String? originalFilename,
+    DateTime? createdAt,
+    ItemType type = ItemType.note,
+  }) {
     return Item(
       id: id,
-      type: ItemType.note,
+      type: type,
       title: title,
       originalFilename: originalFilename,
       processingStatus: 'completed',
@@ -54,6 +60,30 @@ void main() {
 
     // "apple.pdf" < "Untitled" < "Zebra"
     expect(sorted.map((i) => i.id), ['b', 'c', 'a']);
+  });
+
+  // P3 (docs/requirements-audit-2026-09-13.md): Library had no way to
+  // group items by type at all.
+  group('byType', () {
+    test('groups items alphabetically by their type name', () {
+      final note = item(id: 'note', type: ItemType.note);
+      final pdf = item(id: 'pdf', type: ItemType.pdf);
+      final audio = item(id: 'audio', type: ItemType.audio);
+
+      final sorted = sortItems([note, pdf, audio], LibrarySort.byType);
+
+      // "audio" < "note" < "pdf"
+      expect(sorted.map((i) => i.id), ['audio', 'note', 'pdf']);
+    });
+
+    test('within the same type, newest first', () {
+      final older = item(id: 'older', type: ItemType.note, createdAt: DateTime(2026, 1, 1));
+      final newer = item(id: 'newer', type: ItemType.note, createdAt: DateTime(2026, 2, 1));
+
+      final sorted = sortItems([older, newer], LibrarySort.byType);
+
+      expect(sorted.map((i) => i.id), ['newer', 'older']);
+    });
   });
 
   test('does not mutate the input list', () {

@@ -62,6 +62,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               PopupMenuItem(value: LibrarySort.newestFirst, child: Text('En yeni')),
               PopupMenuItem(value: LibrarySort.oldestFirst, child: Text('En eski')),
               PopupMenuItem(value: LibrarySort.nameAscending, child: Text('İsme göre (A-Z)')),
+              PopupMenuItem(value: LibrarySort.byType, child: Text('Türe göre')),
             ],
           ),
           IconButton(

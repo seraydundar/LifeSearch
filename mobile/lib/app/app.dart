@@ -12,7 +12,11 @@ class LifeSearchApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(goRouterProvider);
-    final themeMode = ref.watch(themeModeProvider);
+    // Falls back to system while the persisted choice is still loading
+    // (a normal, brief `AsyncLoading` at cold start, not an error state)
+    // — same contract as every other persisted setting here (e.g.
+    // `appLockEnabledProvider`).
+    final themeMode = ref.watch(themeModeProvider).valueOrNull ?? ThemeMode.system;
 
     return MaterialApp.router(
       title: 'LifeSearch',
