@@ -5,16 +5,19 @@ import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
 import 'package:lifesearch/features/item/presentation/screens/item_detail_screen.dart';
 import 'package:lifesearch/features/search/presentation/providers/search_providers.dart';
+import 'package:lifesearch/features/settings/presentation/providers/app_lock_providers.dart';
 
+import '../fakes/fake_app_lock_service.dart';
 import '../fakes/fake_item_repository.dart';
 import '../fakes/fake_search_repository.dart';
 
 void main() {
-  Widget wrap(Item openedWith, {FakeItemRepository? repo}) {
+  Widget wrap(Item openedWith, {FakeItemRepository? repo, List<Override> extraOverrides = const []}) {
     return ProviderScope(
       overrides: [
         itemRepositoryProvider.overrideWithValue(repo ?? FakeItemRepository()),
         searchRepositoryProvider.overrideWithValue(FakeSearchRepository()),
+        ...extraOverrides,
       ],
       child: MaterialApp(home: ItemDetailScreen(item: openedWith)),
     );
@@ -237,5 +240,95 @@ void main() {
     // returning null must never crash or blank the screen.
     expect(find.text('Untitled from search'), findsOneWidget);
     expect(find.text('Dosyayı Aç'), findsNothing); // never had a real storagePath to show one for
+  });
+
+  // P1-02 (docs/requirements-audit-2026-09-13.md): this screen used to
+  // keep showing whatever item it was first given regardless of reveal
+  // changing later — the one private-item entry point that didn't
+  // re-hide live the way Home/Library/Search/collection detail already
+  // did (e.g. `AppLockGate` resetting reveal when the app is
+  // backgrounded while this exact screen is still on screen).
+  group('re-locks when reveal turns off (P1-02)', () {
+    testWidgets('an item that was already private when opened locks itself once reveal turns off',
+        (tester) async {
+      final item = Item(
+        id: 'item-1',
+        type: ItemType.note,
+        title: 'Secret',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+        private: true,
+      );
+      await tester.pumpWidget(wrap(
+        item,
+        repo: FakeItemRepository(initialItems: [item]),
+        extraOverrides: [privateItemsRevealedProvider.overrideWith((ref) => true)],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Secret'), findsOneWidget);
+      expect(find.text('Kilidi Aç'), findsNothing);
+
+      final container = ProviderScope.containerOf(tester.element(find.byType(ItemDetailScreen)));
+      container.read(privateItemsRevealedProvider.notifier).state = false;
+      await tester.pump();
+
+      expect(find.text('Secret'), findsNothing);
+      expect(find.text('Kilidi Aç'), findsOneWidget);
+    });
+
+    testWidgets('marking the currently-open item private yourself does not lock the screen',
+        (tester) async {
+      // Regression guard for the existing "no auth needed either way"
+      // contract above: `_requiresRevealToView` is fixed at the item this
+      // screen *opened* with, not whatever `_item.private` becomes after
+      // the user's own toggle.
+      final item = Item(
+        id: 'item-1',
+        type: ItemType.note,
+        title: 'A note',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+      );
+      await tester.pumpWidget(wrap(item, repo: FakeItemRepository(initialItems: [item])));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.lock_open_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('A note'), findsOneWidget);
+      expect(find.text('Kilidi Aç'), findsNothing);
+    });
+
+    testWidgets('tapping "Kilidi Aç" re-authenticates and reveals the screen again',
+        (tester) async {
+      final item = Item(
+        id: 'item-1',
+        type: ItemType.note,
+        title: 'Secret',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+        private: true,
+      );
+      final appLock = FakeAppLockService(authenticateResult: true);
+      await tester.pumpWidget(wrap(
+        item,
+        repo: FakeItemRepository(initialItems: [item]),
+        extraOverrides: [appLockServiceProvider.overrideWithValue(appLock)],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Kilidi Aç'), findsOneWidget);
+
+      await tester.tap(find.text('Kilidi Aç'));
+      await tester.pumpAndSettle();
+
+      expect(appLock.authenticateCallCount, 1);
+      expect(find.text('Secret'), findsOneWidget);
+      expect(find.text('Kilidi Aç'), findsNothing);
+    });
   });
 }

@@ -37,12 +37,20 @@ class LocalSearchDataSource {
     String? userId,
     String query, {
     SearchFilters filters = const SearchFilters(),
+    bool includePrivate = false,
   }) async {
     if (userId == null) return [];
     final trimmedQuery = query.trim();
     if (trimmedQuery.isEmpty) return [];
 
     final q = _db.select(_db.localItems)..where((t) => t.userId.equals(userId));
+    // Same rule as the remote RPCs (P1-02, docs/requirements-audit-2026-09-13.md,
+    // see 0017_search_excludes_private.sql): exclude private items at the
+    // query itself rather than counting on `_hidePrivateResults`'
+    // cross-check downstream to be the only thing catching this.
+    if (!includePrivate) {
+      q.where((t) => t.private.equals(false));
+    }
     if (filters.types.isNotEmpty) {
       final dbValues = filters.types.map((t) => t.dbValue).toList();
       q.where((t) => t.type.isIn(dbValues));

@@ -37,6 +37,7 @@ async def semantic_search(
     date_after: datetime | None = None,
     date_before: datetime | None = None,
     rerank: bool = True,
+    include_private: bool = False,
 ) -> list[dict[str, Any]]:
     query_embedding = await provider.generate_embedding(query)
 
@@ -49,6 +50,7 @@ async def semantic_search(
         item_types=item_types,
         date_after=date_after,
         date_before=date_before,
+        include_private=include_private,
     )
     # Dedupe to a *shortlist* wider than the final `limit`, not straight
     # down to it — reranking a list already cut to size by RRF alone
@@ -66,8 +68,11 @@ async def find_related_items(
     repo: SearchRepository,
     *,
     limit: int = 6,
+    include_private: bool = False,
 ) -> list[dict[str, Any]]:
-    matches = await repo.related_items(item_id, match_count=limit * 3)
+    matches = await repo.related_items(
+        item_id, match_count=limit * 3, include_private=include_private
+    )
     # related_items() has no keyword/hybrid score, only cosine similarity —
     # reuse the same dedupe shape by aliasing it as "score".
     for match in matches:

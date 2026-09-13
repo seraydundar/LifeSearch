@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../features/auth/presentation/providers/auth_providers.dart';
 import '../features/item/presentation/providers/item_providers.dart';
 import '../features/settings/presentation/providers/app_lock_providers.dart';
 import '../features/settings/presentation/screens/app_lock_screen.dart';
@@ -50,6 +51,17 @@ class _AppLockGateState extends ConsumerState<AppLockGate> with WidgetsBindingOb
 
   @override
   Widget build(BuildContext context) {
+    // P1-01 (docs/requirements-audit-2026-09-13.md): private reveal used
+    // to survive a sign-out/sign-in inside the same app session — the
+    // next account could inherit the previous one's unlocked private
+    // view until the app happened to be backgrounded. Any account change
+    // re-hides private items, the same as backgrounding already does.
+    ref.listen(currentUserIdProvider, (previous, next) {
+      if (previous != next) {
+        ref.read(privateItemsRevealedProvider.notifier).state = false;
+      }
+    });
+
     final enabled = ref.watch(appLockEnabledProvider).valueOrNull ?? false;
     final unlocked = ref.watch(appLockUnlockedProvider);
 

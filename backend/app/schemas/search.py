@@ -12,6 +12,11 @@ class SearchRequest(BaseModel):
     item_types: list[str] | None = None
     date_from: datetime | None = None
     date_to: datetime | None = None
+    # True only once the device's own private reveal (biometric/PIN) is
+    # unlocked — see `privateItemsRevealedProvider` — so private items are
+    # excluded in SQL by default (P1-02, docs/requirements-audit-2026-09-13.md)
+    # instead of merely being hidden client-side after already being sent.
+    include_private: bool = False
 
 
 class SearchResult(BaseModel):
@@ -30,6 +35,7 @@ class SearchResponse(BaseModel):
 class RelatedRequest(BaseModel):
     item_id: str
     limit: int = 6
+    include_private: bool = False
 
 
 class RelatedResponse(BaseModel):

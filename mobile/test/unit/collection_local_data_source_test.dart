@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lifesearch/core/database/app_database.dart';
@@ -21,6 +22,20 @@ void main() {
       name: '$userId\'s collection',
       createdAt: DateTime(2026, 1, 1),
     ));
+  }
+
+  Future<void> insertItem({
+    required String id,
+    required String userId,
+    bool private = false,
+  }) {
+    return db.into(db.localItems).insert(LocalItemsCompanion.insert(
+          id: id,
+          userId: userId,
+          type: 'note',
+          createdAt: DateTime(2026, 1, 1),
+          private: Value(private),
+        ));
   }
 
   group('allMemberships (Faz 12, madde 4 — see docs/roadmap.md)', () {
@@ -60,6 +75,48 @@ void main() {
       final memberships = await dataSource.allMemberships('user-a');
 
       expect(memberships, isEmpty);
+    });
+  });
+
+  group('watchItemsForCollection (P1-01/P1-02, docs/requirements-audit-2026-09-13.md)', () {
+    test('only resolves for the collection\'s own owner, not by collectionId alone', () async {
+      // Same collectionId as another account's cached collection — a
+      // stale id left over in route state after an account switch (or a
+      // shared device's cache not yet purged) used to be enough to see
+      // through it, since the old query never checked ownership at all.
+      await insertCollection(id: 'shared-id', userId: 'user-a');
+      await insertItem(id: 'a-item', userId: 'user-a');
+      await dataSource.addItem('shared-id', 'a-item', syncStatus: 'synced');
+
+      final asOwner = await dataSource.watchItemsForCollection('shared-id', 'user-a').first;
+      final asOther = await dataSource.watchItemsForCollection('shared-id', 'user-b').first;
+
+      expect(asOwner.map((i) => i.id), ['a-item']);
+      expect(asOther, isEmpty);
+    });
+
+    test('excludes a private item by default', () async {
+      await insertCollection(id: 'coll-a', userId: 'user-a');
+      await insertItem(id: 'secret', userId: 'user-a', private: true);
+      await insertItem(id: 'public', userId: 'user-a');
+      await dataSource.addItem('coll-a', 'secret', syncStatus: 'synced');
+      await dataSource.addItem('coll-a', 'public', syncStatus: 'synced');
+
+      final items = await dataSource.watchItemsForCollection('coll-a', 'user-a').first;
+
+      expect(items.map((i) => i.id), ['public']);
+    });
+
+    test('includes a private item once includePrivate is true', () async {
+      await insertCollection(id: 'coll-a', userId: 'user-a');
+      await insertItem(id: 'secret', userId: 'user-a', private: true);
+      await dataSource.addItem('coll-a', 'secret', syncStatus: 'synced');
+
+      final items = await dataSource
+          .watchItemsForCollection('coll-a', 'user-a', includePrivate: true)
+          .first;
+
+      expect(items.map((i) => i.id), ['secret']);
     });
   });
 }

@@ -16,8 +16,12 @@ abstract interface class CollectionRepository {
 
   Future<void> deleteCollection(String id);
 
-  /// The items currently in a collection, newest-added first.
-  Stream<List<Item>> watchCollectionItems(String collectionId);
+  /// The items currently in a collection, newest-added first. Scoped to
+  /// the signed-in user internally (P1-01, docs/requirements-audit-2026-09-13.md)
+  /// — a stale [collectionId] belonging to a previous account never
+  /// resolves. [includePrivate] mirrors `SearchRepository.search`'s
+  /// contract: pass the live `privateItemsRevealedProvider` value.
+  Stream<List<Item>> watchCollectionItems(String collectionId, {bool includePrivate = false});
 
   Future<void> addItemToCollection({required String collectionId, required String itemId});
 

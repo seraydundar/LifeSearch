@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../shared/extensions/build_context_x.dart';
+import '../../../../shared/widgets/private_item_locked_view.dart';
 import '../../../collections/presentation/widgets/add_to_collection_sheet.dart';
 import '../../domain/entities/item.dart';
 import '../providers/item_providers.dart';
@@ -36,6 +37,16 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   /// had none of them before).
   late Item? _item = widget.item;
 
+  /// P1-02 (docs/requirements-audit-2026-09-13.md) — same contract as
+  /// `ItemDetailScreen._requiresRevealToView`: whether reaching this
+  /// screen at all required reveal to already be on, captured once from
+  /// the (cache-corrected) item this screen opened with, not from
+  /// whatever `_item.private` becomes afterwards — so marking the
+  /// currently-open note private yourself via [_togglePrivate] doesn't
+  /// immediately lock you out of the screen you're editing. `false` in
+  /// create mode; there's no item yet to require reveal for.
+  late final bool _requiresRevealToView;
+
   bool get _isEditing => widget.item != null;
 
   @override
@@ -46,7 +57,10 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       // `initState()` — see that widget's docstring.
       final fresh = ref.read(watchItemByIdProvider(widget.item!.id));
       if (fresh != null) _item = fresh;
+      _requiresRevealToView = _item!.private;
       _loadContent();
+    } else {
+      _requiresRevealToView = false;
     }
   }
 
@@ -164,6 +178,12 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // P1-02 (docs/requirements-audit-2026-09-13.md) — same live re-check
+    // as `ItemDetailScreen`'s: e.g. `AppLockGate` resetting reveal the
+    // moment the app is backgrounded while this note is still open.
+    if (_requiresRevealToView && !ref.watch(privateItemsRevealedProvider)) {
+      return const PrivateItemLockedView();
+    }
     if (_isEditing) {
       // Live, not one-shot — same reasoning as `ItemDetailScreen`'s
       // `ref.listen(watchItemByIdProvider(...))` (Faz 12, madde 8 — see

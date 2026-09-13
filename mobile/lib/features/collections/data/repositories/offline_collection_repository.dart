@@ -90,8 +90,8 @@ class OfflineCollectionRepository implements CollectionRepository {
   }
 
   @override
-  Stream<List<Item>> watchCollectionItems(String collectionId) {
-    return _local.watchItemsForCollection(collectionId);
+  Stream<List<Item>> watchCollectionItems(String collectionId, {bool includePrivate = false}) {
+    return _local.watchItemsForCollection(collectionId, _userId, includePrivate: includePrivate);
   }
 
   @override

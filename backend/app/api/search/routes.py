@@ -74,6 +74,7 @@ async def search_endpoint(
         item_types=item_types,
         date_after=date_from,
         date_before=date_to,
+        include_private=body.include_private,
     )
 
     return SearchResponse(query=body.query, results=[_to_result(m) for m in matches])
@@ -92,6 +93,8 @@ async def related_endpoint(
     the per-call cost the rate limit exists to bound.
     """
     repo = SearchRepository(user.access_token)
-    matches = await find_related_items(body.item_id, repo, limit=body.limit)
+    matches = await find_related_items(
+        body.item_id, repo, limit=body.limit, include_private=body.include_private
+    )
 
     return RelatedResponse(item_id=body.item_id, results=[_to_result(m) for m in matches])

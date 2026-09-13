@@ -17,9 +17,16 @@ void main() {
     createdAt: DateTime(2026, 1, 1),
   );
 
-  Widget wrap(FakeItemRepository repo, {String itemId = 'item-1'}) {
+  Widget wrap(
+    FakeItemRepository repo, {
+    String itemId = 'item-1',
+    List<Override> extraOverrides = const [],
+  }) {
     return ProviderScope(
-      overrides: [itemRepositoryProvider.overrideWithValue(repo)],
+      overrides: [
+        itemRepositoryProvider.overrideWithValue(repo),
+        ...extraOverrides,
+      ],
       child: MaterialApp(
         home: ItemByIdLoader(
           itemId: itemId,
@@ -54,5 +61,30 @@ void main() {
 
     expect(find.textContaining('bulunamadı'), findsOneWidget);
     expect(find.text('resolved: Docker Notes'), findsNothing);
+  });
+
+  // P1-02 (docs/requirements-audit-2026-09-13.md): this was a second,
+  // unguarded way to reach a private item's detail screen — a deep link,
+  // push notification, or Android/iOS route restore skips every other
+  // private filter (Home/Library/Search all gate on `itemsProvider`'s tap
+  // targets, which this never goes through).
+  testWidgets('a private item does not resolve while reveal is off', (tester) async {
+    final privateItem = item.copyWith(private: true);
+    await tester.pumpWidget(wrap(FakeItemRepository(initialItems: [privateItem])));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('bulunamadı'), findsOneWidget);
+    expect(find.text('resolved: Docker Notes'), findsNothing);
+  });
+
+  testWidgets('a private item resolves once reveal is on', (tester) async {
+    final privateItem = item.copyWith(private: true);
+    await tester.pumpWidget(wrap(
+      FakeItemRepository(initialItems: [privateItem]),
+      extraOverrides: [privateItemsRevealedProvider.overrideWith((ref) => true)],
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('resolved: Docker Notes'), findsOneWidget);
   });
 }

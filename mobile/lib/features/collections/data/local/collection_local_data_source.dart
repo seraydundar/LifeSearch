@@ -119,15 +119,44 @@ class CollectionLocalDataSource {
   /// first — matches `CollectionRepository.watchCollectionItems`'s
   /// contract. An item can briefly be missing from `LocalItems` (its own
   /// pull hasn't landed yet) — that row is skipped rather than crashing.
-  Stream<List<Item>> watchItemsForCollection(String collectionId) {
+  ///
+  /// **P1-01** (docs/requirements-audit-2026-09-13.md): this used to
+  /// filter by `collectionId` alone, with no check that the collection —
+  /// or the items in it — actually belong to [userId]. A stale
+  /// `collectionId` still sitting in route state after an account switch
+  /// (or simply a shared device's cache not yet purged) was a second,
+  /// unfiltered way to reach another account's cached items, alongside
+  /// whatever `itemsProvider`'s per-user filtering already caught.
+  /// Requires an inner join against `LocalCollections`, not just a
+  /// `where` on the membership row — `LocalCollectionItems` itself
+  /// carries no `userId` column (see `allMemberships`'s docstring).
+  ///
+  /// [includePrivate] mirrors `SearchRepository.search`'s contract
+  /// (P1-02): pass the live `privateItemsRevealedProvider` value so a
+  /// private item is excluded from a collection's detail list the same
+  /// way it already is from Home/Library.
+  Stream<List<Item>> watchItemsForCollection(
+    String collectionId,
+    String userId, {
+    bool includePrivate = false,
+  }) {
     final query = _db.select(_db.localCollectionItems).join([
+      innerJoin(
+        _db.localCollections,
+        _db.localCollections.id.equalsExp(_db.localCollectionItems.collectionId),
+      ),
       innerJoin(
         _db.localItems,
         _db.localItems.id.equalsExp(_db.localCollectionItems.itemId),
       ),
     ])
-      ..where(_db.localCollectionItems.collectionId.equals(collectionId))
+      ..where(_db.localCollectionItems.collectionId.equals(collectionId) &
+          _db.localCollections.userId.equals(userId) &
+          _db.localItems.userId.equals(userId))
       ..orderBy([OrderingTerm.desc(_db.localCollectionItems.addedAt)]);
+    if (!includePrivate) {
+      query.where(_db.localItems.private.equals(false));
+    }
 
     return query
         .watch()

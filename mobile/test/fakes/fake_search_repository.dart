@@ -20,6 +20,8 @@ class FakeSearchRepository implements SearchRepository {
   String? lastQuery;
   SearchFilters? lastFilters;
   String? lastRelatedItemId;
+  bool? lastIncludePrivate;
+  bool? lastRelatedIncludePrivate;
 
   /// Per-query results, for tests that need two different queries to
   /// resolve with two different result sets. Falls back to
@@ -33,9 +35,14 @@ class FakeSearchRepository implements SearchRepository {
   Map<String, Completer<void>>? gates;
 
   @override
-  Future<List<SearchResult>> search(String query, {SearchFilters filters = const SearchFilters()}) async {
+  Future<List<SearchResult>> search(
+    String query, {
+    SearchFilters filters = const SearchFilters(),
+    bool includePrivate = false,
+  }) async {
     lastQuery = query;
     lastFilters = filters;
+    lastIncludePrivate = includePrivate;
     final gate = gates?[query];
     if (gate != null) await gate.future;
     if (errorToThrow != null) throw errorToThrow!;
@@ -43,8 +50,9 @@ class FakeSearchRepository implements SearchRepository {
   }
 
   @override
-  Future<List<SearchResult>> related(String itemId) async {
+  Future<List<SearchResult>> related(String itemId, {bool includePrivate = false}) async {
     lastRelatedItemId = itemId;
+    lastRelatedIncludePrivate = includePrivate;
     if (errorToThrow != null) throw errorToThrow!;
     return relatedToReturn;
   }

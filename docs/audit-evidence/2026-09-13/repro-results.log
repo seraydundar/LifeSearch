@@ -1,0 +1,36 @@
+00:00 +0: loading /private/tmp/lifesearch-audit-20260913-tkg2e18v/mobile/test/unit/audit_20260913_repro_test.dart
+00:00 +0: AUDIT search results should clear when account changes
+00:00 +0 -1: AUDIT search results should clear when account changes [E]
+  Expected: empty
+    Actual: [
+              _SearchResult:SearchResult(itemId: user-a-private-document, itemType: ItemType.note, itemTitle: Docker Notes, snippet: Docker container ile image arasindaki fark..., similarity: 0.9)
+            ]
+  
+  package:matcher                                     expect
+  package:flutter_test/src/widget_tester.dart 473:18  expect
+  test/unit/audit_20260913_repro_test.dart 36:5       main.<fn>
+  
+00:00 +0 -1: AUDIT chat history should clear when account changes
+00:00 +0 -2: AUDIT chat history should clear when account changes [E]
+  Expected: empty
+    Actual: [
+              _ChatMessage:ChatMessage(role: ChatRole.user, text: My private question, sources: [], isError: false),
+              _ChatMessage:ChatMessage(role: ChatRole.assistant, text: User A confidential answer, sources: [], isError: false)
+            ]
+  
+  package:matcher                                     expect
+  package:flutter_test/src/widget_tester.dart 473:18  expect
+  test/unit/audit_20260913_repro_test.dart 59:5       main.<fn>
+  
+00:00 +0 -2: AUDIT unknown privacy status should not show remote snippet
+00:00 +0 -3: AUDIT unknown privacy status should not show remote snippet [E]
+  Expected: empty
+    Actual: [
+              _SearchResult:SearchResult(itemId: unsynced-private-item, itemType: ItemType.note, itemTitle: Docker Notes, snippet: Docker container ile image arasindaki fark..., similarity: 0.9)
+            ]
+  
+  package:matcher                                     expect
+  package:flutter_test/src/widget_tester.dart 473:18  expect
+  test/unit/audit_20260913_repro_test.dart 72:5       main.<fn>
+  
+00:00 +0 -3: Some tests failed.

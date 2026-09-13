@@ -126,6 +126,15 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
     ref.listen(privateItemsRevealedProvider, (previous, next) {
       if (previous == true && next == false) _reapplyPrivacyFilter();
     });
+    // P1-01 (docs/requirements-audit-2026-09-13.md): this controller
+    // never watched who's signed in — switching accounts within the same
+    // app session (sign out A, sign in B, no full restart) left A's
+    // result list on screen for B until B ran a fresh search(). Every
+    // account change (including to/from signed-out) clears it immediately,
+    // the same as `recentSearchesProvider` already does for its own state.
+    ref.listen(currentUserIdProvider, (previous, next) {
+      if (previous != next) clear();
+    });
     return [];
   }
 
@@ -147,8 +156,17 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
 
     state = const AsyncLoading();
     final filters = ref.read(searchFiltersProvider);
+    // The backend excludes private items by default (P1-02, docs/
+    // requirements-audit-2026-09-13.md) — only ask for them once this
+    // device's own private reveal is unlocked. `_hidePrivateResults`
+    // below still re-checks the response: reveal can flip back off
+    // between this read and the response landing (see
+    // `_reapplyPrivacyFilter`'s docstring).
+    final includePrivate = ref.read(privateItemsRevealedProvider);
     final result = await AsyncValue.guard(() async {
-      final results = await ref.read(searchRepositoryProvider).search(trimmed, filters: filters);
+      final results = await ref
+          .read(searchRepositoryProvider)
+          .search(trimmed, filters: filters, includePrivate: includePrivate);
       return _hidePrivateResults(ref, results);
     });
 
@@ -185,7 +203,10 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
 /// between items doesn't reuse a stale result.
 final relatedItemsProvider = FutureProvider.autoDispose.family<List<SearchResult>, String>(
   (ref, itemId) async {
-    final results = await ref.watch(searchRepositoryProvider).related(itemId);
+    final includePrivate = ref.watch(privateItemsRevealedProvider);
+    final results = await ref
+        .watch(searchRepositoryProvider)
+        .related(itemId, includePrivate: includePrivate);
     return _hidePrivateResults(ref, results);
   },
 );

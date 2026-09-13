@@ -37,6 +37,10 @@ async def answer_question(
     *,
     limit: int = 8,
 ) -> dict[str, Any]:
+    # No `include_private` here, deliberately — chat has no device-level
+    # private reveal concept the way Search does (Faz 13/14, P1-02, see
+    # docs/requirements-audit-2026-09-13.md). A private item should never
+    # enter the LLM context, revealed or not.
     matches = await semantic_search(question, repo, provider, limit=limit)
 
     if not matches:

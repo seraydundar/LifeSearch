@@ -1,15 +1,23 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lifesearch/app/app_lock_gate.dart';
+import 'package:lifesearch/features/auth/domain/entities/app_user.dart';
+import 'package:lifesearch/features/auth/presentation/providers/auth_providers.dart';
+import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
 import 'package:lifesearch/features/settings/presentation/providers/app_lock_providers.dart';
 
 import '../fakes/fake_app_lock_service.dart';
 
 void main() {
-  Widget wrap(FakeAppLockService appLock) {
+  Widget wrap(FakeAppLockService appLock, {List<Override> extraOverrides = const []}) {
     return ProviderScope(
-      overrides: [appLockServiceProvider.overrideWithValue(appLock)],
+      overrides: [
+        appLockServiceProvider.overrideWithValue(appLock),
+        ...extraOverrides,
+      ],
       child: MaterialApp(
         home: AppLockGate(child: const Scaffold(body: Text('home'))),
       ),
@@ -77,5 +85,43 @@ void main() {
 
     expect(find.text('home'), findsOneWidget);
     expect(appLock.authenticateCallCount, 1);
+  });
+
+  testWidgets(
+      // P1-01 (docs/requirements-audit-2026-09-13.md): private reveal used
+      // to survive a sign-out/sign-in inside the same app session, the
+      // same gap `AppLockGate`'s backgrounding re-lock already covered
+      // for a background/foreground cycle — a different account on the
+      // same device inherited the previous one's unlocked private view.
+      'switching accounts re-hides already-revealed private items',
+      (tester) async {
+    final auth = StreamController<AppUser?>();
+    addTearDown(auth.close);
+    final appLock = FakeAppLockService(initiallyEnabled: false);
+
+    late ProviderContainer container;
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        appLockServiceProvider.overrideWithValue(appLock),
+        authStateChangesProvider.overrideWith((ref) => auth.stream),
+      ],
+      child: Consumer(builder: (context, ref, _) {
+        container = ProviderScope.containerOf(context);
+        return MaterialApp(
+          home: AppLockGate(child: const Scaffold(body: Text('home'))),
+        );
+      }),
+    ));
+    await tester.pumpAndSettle();
+
+    auth.add(const AppUser(id: 'user-a', email: 'a@example.com'));
+    await tester.pump();
+    container.read(privateItemsRevealedProvider.notifier).state = true;
+    expect(container.read(privateItemsRevealedProvider), isTrue);
+
+    auth.add(const AppUser(id: 'user-b', email: 'b@example.com'));
+    await tester.pump();
+
+    expect(container.read(privateItemsRevealedProvider), isFalse);
   });
 }

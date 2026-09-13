@@ -24,8 +24,10 @@ class FakeProvider(AIProvider):
 class FakeSearchRepo:
     def __init__(self, matches):
         self._matches = matches
+        self.last_hybrid_call_filters = None
 
     async def match_chunks_hybrid(self, query_embedding, query_text, *, match_count=40, **filters):
+        self.last_hybrid_call_filters = filters
         return self._matches
 
 
@@ -87,3 +89,17 @@ async def test_system_prompt_forbids_answering_outside_the_sources():
 
     assert provider.last_system is not None
     assert "only" in provider.last_system.lower() or "yalnız" in provider.last_system.lower()
+
+
+@pytest.mark.asyncio
+async def test_never_requests_private_items():
+    """P1-02 (docs/requirements-audit-2026-09-13.md): chat has no private
+    reveal concept, so it must never ask retrieval to include private
+    items, unrevealed or not.
+    """
+    repo = FakeSearchRepo([])
+    provider = FakeProvider()
+
+    await answer_question("soru", repo, provider)
+
+    assert repo.last_hybrid_call_filters["include_private"] is False

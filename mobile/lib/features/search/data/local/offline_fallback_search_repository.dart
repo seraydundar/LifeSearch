@@ -27,14 +27,21 @@ class OfflineFallbackSearchRepository implements SearchRepository {
   Future<List<SearchResult>> search(
     String query, {
     SearchFilters filters = const SearchFilters(),
+    bool includePrivate = false,
   }) async {
     try {
-      return await _remote.search(query, filters: filters);
+      return await _remote.search(query, filters: filters, includePrivate: includePrivate);
     } catch (_) {
-      return _local.search(_currentUserId(), query, filters: filters);
+      return _local.search(
+        _currentUserId(),
+        query,
+        filters: filters,
+        includePrivate: includePrivate,
+      );
     }
   }
 
   @override
-  Future<List<SearchResult>> related(String itemId) => _remote.related(itemId);
+  Future<List<SearchResult>> related(String itemId, {bool includePrivate = false}) =>
+      _remote.related(itemId, includePrivate: includePrivate);
 }

@@ -26,6 +26,7 @@ void main() {
     String? noteContent,
     String? sourceUrl,
     DateTime? createdAt,
+    bool private = false,
   }) {
     return db.into(db.localItems).insert(LocalItemsCompanion.insert(
           id: id,
@@ -36,6 +37,7 @@ void main() {
           noteContent: Value(noteContent),
           sourceUrl: Value(sourceUrl),
           createdAt: createdAt ?? DateTime(2026, 1, 1),
+          private: Value(private),
         ));
   }
 
@@ -71,6 +73,28 @@ void main() {
     final results = await dataSource.search('user-1', 'docker');
 
     expect(results, isEmpty);
+  });
+
+  // P1-02 (docs/requirements-audit-2026-09-13.md): the offline keyword
+  // fallback used to have no notion of `private` at all — it relied
+  // entirely on `_hidePrivateResults`' cross-check downstream to catch a
+  // private item, same as the remote RPCs before
+  // 0017_search_excludes_private.sql. Excluding it here too is defense
+  // in depth, matching that SQL fix's `include_private` contract.
+  test('excludes a private item by default', () async {
+    await insertItem(id: 'a', noteContent: 'Docker notes', private: true);
+
+    final results = await dataSource.search('user-1', 'docker');
+
+    expect(results, isEmpty);
+  });
+
+  test('includes a private item once includePrivate is true', () async {
+    await insertItem(id: 'a', noteContent: 'Docker notes', private: true);
+
+    final results = await dataSource.search('user-1', 'docker', includePrivate: true);
+
+    expect(results.map((r) => r.itemId), ['a']);
   });
 
   test('a null userId (nobody signed in) never matches anything', () async {

@@ -33,11 +33,16 @@ class SearchRepository:
         item_types: list[str] | None = None,
         date_after: datetime | None = None,
         date_before: datetime | None = None,
+        include_private: bool = False,
     ) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {
             "query_embedding": format_embedding_literal(query_embedding),
             "query_text": query_text,
             "match_count": match_count,
+            # Private items are excluded in SQL by default (see
+            # 0017_search_excludes_private.sql) — the client only asks for
+            # them once its own device-level private reveal is unlocked.
+            "include_private": include_private,
         }
         if item_types:
             payload["filter_types"] = item_types
@@ -55,12 +60,18 @@ class SearchRepository:
             response.raise_for_status()
             return response.json()
 
-    async def related_items(self, item_id: str, *, match_count: int = 12) -> list[dict[str, Any]]:
+    async def related_items(
+        self, item_id: str, *, match_count: int = 12, include_private: bool = False
+    ) -> list[dict[str, Any]]:
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(
                 f"{self._base_url}/rest/v1/rpc/related_items",
                 headers=self._headers,
-                json={"source_item_id": item_id, "match_count": match_count},
+                json={
+                    "source_item_id": item_id,
+                    "match_count": match_count,
+                    "include_private": include_private,
+                },
             )
             response.raise_for_status()
             return response.json()

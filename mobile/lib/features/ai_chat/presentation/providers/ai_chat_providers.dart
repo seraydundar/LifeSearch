@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/error/failure.dart';
 import '../../../../core/network/api_client_provider.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../data/remote/api_ai_chat_repository.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/repositories/ai_chat_repository.dart';
@@ -23,7 +24,17 @@ final chatControllerProvider =
 /// the conversation so far.
 class ChatController extends AsyncNotifier<List<ChatMessage>> {
   @override
-  List<ChatMessage> build() => [];
+  List<ChatMessage> build() {
+    // P1-01 (docs/requirements-audit-2026-09-13.md): the conversation
+    // used to survive a sign-out/sign-in inside the same app session —
+    // a different account on the same device could see the previous
+    // one's questions and answers until the chat screen happened to be
+    // rebuilt from scratch. Any account change wipes it immediately.
+    ref.listen(currentUserIdProvider, (previous, next) {
+      if (previous != next) state = const AsyncData([]);
+    });
+    return [];
+  }
 
   Future<void> ask(String question) async {
     final trimmed = question.trim();

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../shared/extensions/build_context_x.dart';
+import '../../../../shared/widgets/private_item_locked_view.dart';
 import '../../../collections/presentation/widgets/add_to_collection_sheet.dart';
 import '../../../search/domain/entities/search_result.dart';
 import '../../../search/presentation/providers/search_providers.dart';
@@ -31,6 +32,22 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   bool _isDeleting = false;
   Item? _duplicateTarget;
 
+  /// P1-02 (docs/requirements-audit-2026-09-13.md): whether reaching this
+  /// screen at all required private reveal to already be on — captured
+  /// once in `initState()`, from the item this screen was *opened* with
+  /// (corrected against the local cache first, same as `_item` itself),
+  /// not from whatever `_item.private` becomes afterwards. That
+  /// distinction matters: marking the currently-open item private
+  /// yourself via [_togglePrivate] below must not immediately lock you
+  /// out of the screen you're actively using (see that test in
+  /// item_detail_screen_test.dart, "no auth needed either way") — only
+  /// an item that was *already* private when opened (so getting here at
+  /// all already required reveal, whether via an already-revealed
+  /// Library/Search tap or `ItemByIdLoader`'s own gate) should re-lock
+  /// itself if reveal turns back off later, e.g. the app is backgrounded
+  /// while this screen is still on screen.
+  late final bool _requiresRevealToView;
+
   @override
   void initState() {
     super.initState();
@@ -47,6 +64,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     // there).
     final fresh = ref.read(watchItemByIdProvider(widget.item.id));
     if (fresh != null) _item = fresh;
+    _requiresRevealToView = _item.private;
     _loadSignedUrl();
     _loadDuplicateTarget();
   }
@@ -238,6 +256,13 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     ref.listen(watchItemByIdProvider(widget.item.id), (previous, next) {
       if (next != null) _applyFreshItem(next, previous);
     });
+    // P1-02 (docs/requirements-audit-2026-09-13.md): re-checked on every
+    // build (via `ref.watch`, not just read once) so this actually
+    // reacts live — e.g. `AppLockGate` resetting reveal the moment the
+    // app is backgrounded while this screen is still the one on screen.
+    if (_requiresRevealToView && !ref.watch(privateItemsRevealedProvider)) {
+      return const PrivateItemLockedView();
+    }
     final isImage = _item.type == ItemType.image || _item.type == ItemType.screenshot;
 
     return Scaffold(

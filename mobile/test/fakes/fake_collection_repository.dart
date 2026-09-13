@@ -51,7 +51,7 @@ class FakeCollectionRepository implements CollectionRepository {
   }
 
   @override
-  Stream<List<Item>> watchCollectionItems(String collectionId) {
+  Stream<List<Item>> watchCollectionItems(String collectionId, {bool includePrivate = false}) {
     return Stream.value(itemsByCollection[collectionId] ?? const []);
   }
 

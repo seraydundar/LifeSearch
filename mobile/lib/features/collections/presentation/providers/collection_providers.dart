@@ -39,7 +39,10 @@ final collectionsProvider = StreamProvider<List<Collection>>((ref) {
 });
 
 final collectionItemsProvider = StreamProvider.family<List<Item>, String>((ref, collectionId) {
-  return ref.watch(collectionRepositoryProvider).watchCollectionItems(collectionId);
+  final includePrivate = ref.watch(privateItemsRevealedProvider);
+  return ref
+      .watch(collectionRepositoryProvider)
+      .watchCollectionItems(collectionId, includePrivate: includePrivate);
 });
 
 /// Which collections an item is already in — re-fetched each time the

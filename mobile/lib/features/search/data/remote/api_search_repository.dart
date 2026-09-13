@@ -41,7 +41,11 @@ class ApiSearchRepository implements SearchRepository {
   }
 
   @override
-  Future<List<SearchResult>> search(String query, {SearchFilters filters = const SearchFilters()}) async {
+  Future<List<SearchResult>> search(
+    String query, {
+    SearchFilters filters = const SearchFilters(),
+    bool includePrivate = false,
+  }) async {
     final dio = _requireDio();
     try {
       final response = await dio.post('/search/', data: {
@@ -49,6 +53,7 @@ class ApiSearchRepository implements SearchRepository {
         if (filters.types.isNotEmpty) 'item_types': filters.types.map((t) => t.dbValue).toList(),
         if (filters.dateFrom != null) 'date_from': filters.dateFrom!.toIso8601String(),
         if (filters.dateTo != null) 'date_to': filters.dateTo!.toIso8601String(),
+        'include_private': includePrivate,
       });
       return _parseResults(response.data);
     } on DioException catch (e) {
@@ -57,10 +62,13 @@ class ApiSearchRepository implements SearchRepository {
   }
 
   @override
-  Future<List<SearchResult>> related(String itemId) async {
+  Future<List<SearchResult>> related(String itemId, {bool includePrivate = false}) async {
     final dio = _requireDio();
     try {
-      final response = await dio.post('/search/related', data: {'item_id': itemId});
+      final response = await dio.post('/search/related', data: {
+        'item_id': itemId,
+        'include_private': includePrivate,
+      });
       return _parseResults(response.data);
     } on DioException catch (e) {
       _throwFromDioError(e, 'İlgili içerikler yüklenemedi.');

@@ -40,8 +40,12 @@ class FakeSearchRepo:
         }
         return self._matches
 
-    async def related_items(self, item_id, *, match_count=12):
-        self.last_related_call = {"item_id": item_id, "match_count": match_count}
+    async def related_items(self, item_id, *, match_count=12, include_private=False):
+        self.last_related_call = {
+            "item_id": item_id,
+            "match_count": match_count,
+            "include_private": include_private,
+        }
         return self._related
 
 
@@ -144,6 +148,29 @@ async def test_passes_metadata_filters_through_to_the_repository():
 
 
 @pytest.mark.asyncio
+async def test_excludes_private_items_by_default():
+    """P1-02 (docs/requirements-audit-2026-09-13.md): private items are
+    excluded in SQL by default — the repository call must say so rather
+    than relying on a client-side filter after the content already left
+    the server.
+    """
+    repo = FakeSearchRepo([])
+
+    await semantic_search("query", repo, FakeProvider())
+
+    assert repo.last_hybrid_call["include_private"] is False
+
+
+@pytest.mark.asyncio
+async def test_include_private_is_forwarded_when_reveal_is_on():
+    repo = FakeSearchRepo([])
+
+    await semantic_search("query", repo, FakeProvider(), include_private=True)
+
+    assert repo.last_hybrid_call["include_private"] is True
+
+
+@pytest.mark.asyncio
 async def test_related_items_dedupes_and_ranks_by_similarity():
     repo = FakeSearchRepo(
         related=[
@@ -168,6 +195,7 @@ async def test_related_items_dedupes_and_ranks_by_similarity():
 
     assert [r["item_id"] for r in results] == ["y", "x"]
     assert repo.last_related_call["item_id"] == "source-item"
+    assert repo.last_related_call["include_private"] is False
 
 
 @pytest.mark.asyncio

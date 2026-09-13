@@ -87,6 +87,56 @@ void main() {
     });
   });
 
+  // P1-02 (docs/requirements-audit-2026-09-13.md): the backend now
+  // excludes private items in SQL by default (see
+  // 0017_search_excludes_private.sql) instead of relying only on the
+  // client-side `_hidePrivateResults` cross-check — the client has to
+  // actually ask for them, and only once reveal is unlocked.
+  group('SearchController include_private threading (P1-02)', () {
+    test('search() does not ask for private items while reveal is off', () async {
+      final repo = FakeSearchRepository();
+      final container = ProviderContainer(overrides: [
+        searchRepositoryProvider.overrideWithValue(repo),
+        itemRepositoryProvider.overrideWithValue(FakeItemRepository()),
+      ]);
+      addTearDown(container.dispose);
+
+      await container.read(searchControllerProvider.notifier).search('docker');
+
+      expect(repo.lastIncludePrivate, isFalse);
+    });
+
+    test('search() asks for private items once reveal is on', () async {
+      final repo = FakeSearchRepository();
+      final container = ProviderContainer(overrides: [
+        searchRepositoryProvider.overrideWithValue(repo),
+        itemRepositoryProvider.overrideWithValue(FakeItemRepository()),
+      ]);
+      addTearDown(container.dispose);
+
+      container.read(privateItemsRevealedProvider.notifier).state = true;
+      await container.read(searchControllerProvider.notifier).search('docker');
+
+      expect(repo.lastIncludePrivate, isTrue);
+    });
+
+    test('relatedItemsProvider follows the same reveal-gated contract', () async {
+      final repo = FakeSearchRepository();
+      final container = ProviderContainer(overrides: [
+        searchRepositoryProvider.overrideWithValue(repo),
+        itemRepositoryProvider.overrideWithValue(FakeItemRepository()),
+      ]);
+      addTearDown(container.dispose);
+
+      await container.read(relatedItemsProvider('item-1').future);
+      expect(repo.lastRelatedIncludePrivate, isFalse);
+
+      container.read(privateItemsRevealedProvider.notifier).state = true;
+      await container.read(relatedItemsProvider('item-1').future);
+      expect(repo.lastRelatedIncludePrivate, isTrue);
+    });
+  });
+
   // Faz 12, madde 13 (denetim düzeltmesi — see docs/roadmap.md): nothing
   // previously stopped a slow, older search()'s response from landing
   // after a faster, newer one already updated state (or after clear()

@@ -24,8 +24,19 @@ class ItemByIdLoader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final item = ref.watch(itemByIdProvider(itemId));
+    // P1-02 (docs/requirements-audit-2026-09-13.md): this was a second,
+    // unguarded way to reach a private item's detail screen — a deep
+    // link, a push notification, or an Android/iOS route restore never
+    // goes through Home/Library/Search's own private filtering, so it
+    // resolved and rendered a private item unconditionally, reveal or
+    // not. Same gate as everywhere else: revealed, or not private.
+    final revealed = ref.watch(privateItemsRevealedProvider);
     return item.when(
-      data: (item) => item == null ? const _ItemNotFound() : builder(item),
+      data: (item) {
+        if (item == null) return const _ItemNotFound();
+        if (item.private && !revealed) return const _ItemNotFound();
+        return builder(item);
+      },
       loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
       error: (_, _) => const _ItemNotFound(),
     );

@@ -5,7 +5,9 @@ import 'package:go_router/go_router.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
 import 'package:lifesearch/features/item/presentation/screens/note_editor_screen.dart';
+import 'package:lifesearch/features/settings/presentation/providers/app_lock_providers.dart';
 
+import '../fakes/fake_app_lock_service.dart';
 import '../fakes/fake_item_repository.dart';
 
 void main() {
@@ -14,10 +16,15 @@ void main() {
   // support the same favorite/Private/delete actions every other item
   // type does, but this screen had none of the corresponding controls
   // — only "add to collection" and "save".
-  Widget wrap(Item? openedWith, {FakeItemRepository? repo}) {
+  Widget wrap(
+    Item? openedWith, {
+    FakeItemRepository? repo,
+    List<Override> extraOverrides = const [],
+  }) {
     return ProviderScope(
       overrides: [
         itemRepositoryProvider.overrideWithValue(repo ?? FakeItemRepository()),
+        ...extraOverrides,
       ],
       child: MaterialApp(home: NoteEditorScreen(item: openedWith)),
     );
@@ -193,6 +200,64 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('docker'), findsOneWidget);
+    });
+  });
+
+  // P1-02 (docs/requirements-audit-2026-09-13.md) — same contract as
+  // `ItemDetailScreen`'s: see that screen's test file for the full
+  // rationale.
+  group('re-locks when reveal turns off (P1-02)', () {
+    testWidgets('a note that was already private when opened locks itself once reveal turns off',
+        (tester) async {
+      final n = note(private: true, title: 'Secret note');
+      await tester.pumpWidget(wrap(
+        n,
+        repo: FakeItemRepository(initialItems: [n]),
+        extraOverrides: [privateItemsRevealedProvider.overrideWith((ref) => true)],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Kilidi Aç'), findsNothing);
+
+      final container =
+          ProviderScope.containerOf(tester.element(find.byType(NoteEditorScreen)));
+      container.read(privateItemsRevealedProvider.notifier).state = false;
+      await tester.pump();
+
+      expect(find.text('Kilidi Aç'), findsOneWidget);
+    });
+
+    testWidgets('marking the currently-open note private yourself does not lock the screen',
+        (tester) async {
+      final n = note(private: false);
+      await tester.pumpWidget(wrap(n, repo: FakeItemRepository(initialItems: [n])));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.lock_open_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.lock_outline), findsOneWidget); // still the editor, now marked
+      expect(find.text('Kilidi Aç'), findsNothing);
+    });
+
+    testWidgets('tapping "Kilidi Aç" re-authenticates and reveals the screen again',
+        (tester) async {
+      final n = note(private: true);
+      final appLock = FakeAppLockService(authenticateResult: true);
+      await tester.pumpWidget(wrap(
+        n,
+        repo: FakeItemRepository(initialItems: [n]),
+        extraOverrides: [appLockServiceProvider.overrideWithValue(appLock)],
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Kilidi Aç'), findsOneWidget);
+
+      await tester.tap(find.text('Kilidi Aç'));
+      await tester.pumpAndSettle();
+
+      expect(appLock.authenticateCallCount, 1);
+      expect(find.text('Kilidi Aç'), findsNothing);
     });
   });
 }
