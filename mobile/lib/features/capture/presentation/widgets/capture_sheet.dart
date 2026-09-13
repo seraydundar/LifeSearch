@@ -228,6 +228,30 @@ class _CaptureSheet extends ConsumerWidget {
                   itemTypeFor: (_) => ItemType.image,
                 ),
               ),
+              // P2-06 (docs/requirements-audit-2026-09-13.md): the gallery
+              // picker had no way to produce `ItemType.screenshot` at
+              // all — every picked image landed as a plain `image`, so
+              // Library's screenshot filter and the backend's
+              // screenshot-specific vision prompt (see
+              // processing_pipeline.py) never actually got used from
+              // this flow. An explicit second tile, rather than guessing
+              // from the filename/EXIF (unreliable — a screenshot saved
+              // via "Share" or synced from another device often loses
+              // whatever naming convention the OS originally gave it),
+              // same tradeoff already made for "Choose Image" vs. "Take
+              // Photo" right below.
+              _CaptureTile(
+                icon: Icons.screenshot_outlined,
+                label: 'Choose Screenshot',
+                enabled: !isUploading && _fileCaptureSupported,
+                unavailableReason: _fileCaptureUnavailableReason,
+                onTap: () => _pickAndUpload(
+                  context,
+                  ref,
+                  fileType: FileType.image,
+                  itemTypeFor: (_) => ItemType.screenshot,
+                ),
+              ),
               _CaptureTile(
                 icon: Icons.description_outlined,
                 label: 'Upload Document',

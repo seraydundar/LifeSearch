@@ -20,7 +20,7 @@ from .ai_provider import AIProvider
 from .chunking_service import chunk_text
 from .document_service import (
     extract_document_text,
-    extract_pdf_text,
+    extract_pdf_text_per_page,
     normalize_text,
     render_pdf_pages_to_images,
 )
@@ -36,11 +36,12 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_TYPES = {"note", "pdf", "image", "screenshot", "audio", "url", "document"}
 
-# Bounds the number of (paid) vision calls one scanned PDF's OCR fallback
-# can trigger — see _ocr_scanned_pdf(). Well past what a "PDF" normally
-# means in this app (a document, not a scanned book); a huge scan is
-# better served by whatever text its first pages have than by an
-# unbounded per-page API bill.
+# Bounds the number of (paid) vision calls one PDF's OCR fallback can
+# trigger — see _ocr_missing_pdf_pages(). Counts only pages that actually
+# need OCR (P2-04, docs/requirements-audit-2026-09-13.md), not every page
+# in the document — well past what a "PDF" normally means in this app (a
+# document, not a scanned book); a huge scan is better served by whatever
+# text its first pages have than by an unbounded per-page API bill.
 _MAX_OCR_PDF_PAGES = 30
 
 
@@ -105,14 +106,19 @@ async def process_item(
             if not storage_path:
                 raise ValueError("PDF item has no storage_path.")
             pdf_bytes = await repo.download_file(storage_path)
-            raw_text = extract_pdf_text(pdf_bytes)
-            if not raw_text.strip():
-                # No text layer at all — a scanned/image-only PDF
-                # (requirements doc, section 15; see docs/roadmap.md,
-                # Faz 10c). Rather than failing the item outright, OCR
-                # each page through the same vision call a photo
-                # already gets.
-                raw_text = await _ocr_scanned_pdf(pdf_bytes, provider)
+            # Per-page, not whole-document (P2-04, docs/requirements-audit-
+            # 2026-09-13.md): a PDF where only *some* pages are scanned
+            # images (e.g. a signed page scanned back into an otherwise
+            # text-based document) used to get no OCR at all — the old
+            # check only ran OCR when literally every page came back
+            # empty. See _ocr_missing_pdf_pages()'s own docstring.
+            raw_text = await _ocr_missing_pdf_pages(pdf_bytes, provider)
+            # P2-05 (docs/requirements-audit-2026-09-13.md): every other
+            # non-note type (image/audio/url) already saves its extracted
+            # text to `item_contents` — PDF never did, so there was no
+            # way to see or reuse a PDF's actual extracted text outside
+            # of the chunks it got split into.
+            await repo.replace_item_content(item_id, job_id, raw_text=raw_text)
         elif item_type == "document":
             # "Upload Document" (requirements doc, section 13), broadened
             # past PDF-only in Faz 10c (see docs/roadmap.md) — .docx/.txt
@@ -124,6 +130,8 @@ async def process_item(
             raw_text = extract_document_text(
                 document_bytes, item.get("mime_type"), item.get("original_filename")
             )
+            # Same P2-05 fix as the PDF branch above.
+            await repo.replace_item_content(item_id, job_id, raw_text=raw_text)
         elif item_type in {"image", "screenshot"}:
             storage_path = item.get("storage_path")
             if not storage_path:
@@ -254,24 +262,39 @@ async def process_item(
         await repo.aclose()
 
 
-async def _ocr_scanned_pdf(pdf_bytes: bytes, provider: AIProvider) -> str:
-    """OCR fallback for a PDF with no text layer (see the PDF branch
-    above) — rasterizes each page and runs it through the same vision
-    call a photo already gets (`vision_service.analyze_image`), keeping
-    only its `ocr_text`. A scanned page isn't a photo, so its `title`/
-    `description`/`tags` are simply discarded here rather than reused
-    for anything — this is one vision call per page either way, and
-    splitting OCR into its own cheaper provider call is a bigger change
-    than reusing what already exists.
+async def _ocr_missing_pdf_pages(pdf_bytes: bytes, provider: AIProvider) -> str:
+    """Extracts each page's text layer, then OCRs — through the same
+    vision call a photo already gets (`vision_service.analyze_image`),
+    keeping only its `ocr_text` — exactly the pages that came back empty
+    (P2-04, docs/requirements-audit-2026-09-13.md). Per-page, not "OCR
+    the whole document if *any* page lacks text": a PDF with a text layer
+    on most pages but one or two scanned ones (e.g. a signed page
+    scanned back in) used to get zero OCR for those pages, since the old
+    check only ever ran when the *entire* document came back empty.
+
+    A scanned page isn't a photo, so its `title`/`description`/`tags`
+    are simply discarded here rather than reused for anything — this is
+    one vision call per page either way, and splitting OCR into its own
+    cheaper provider call is a bigger change than reusing what already
+    exists.
+
+    Bounded at `_MAX_OCR_PDF_PAGES` pages actually needing OCR — a page
+    past that limit is silently left blank rather than failing the whole
+    item, same tradeoff the old whole-document version made (just scoped
+    to the pages that need it, not the document's total page count).
     """
-    page_images = render_pdf_pages_to_images(pdf_bytes, max_pages=_MAX_OCR_PDF_PAGES)
-    page_texts: list[str] = []
-    for page_bytes in page_images:
-        analysis = await analyze_image(page_bytes, "image/png", provider)
-        page_text = extract_ocr_text(analysis)
-        if page_text.strip():
-            page_texts.append(page_text)
-    return "\n\n".join(page_texts)
+    page_texts = extract_pdf_text_per_page(pdf_bytes)
+    missing_indices = [index for index, text in enumerate(page_texts) if not text]
+    if not missing_indices:
+        return "\n\n".join(page_texts)
+
+    ocr_indices = missing_indices[:_MAX_OCR_PDF_PAGES]
+    page_images = render_pdf_pages_to_images(pdf_bytes, page_indices=ocr_indices)
+    for index, image_bytes in zip(ocr_indices, page_images, strict=True):
+        analysis = await analyze_image(image_bytes, "image/png", provider)
+        page_texts[index] = extract_ocr_text(analysis).strip()
+
+    return "\n\n".join(text for text in page_texts if text)
 
 
 async def _check_for_duplicate(

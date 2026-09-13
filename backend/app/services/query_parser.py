@@ -75,7 +75,17 @@ def _strip(text: str, phrase: str) -> str:
 def _extract_types(text: str) -> tuple[str, list[str]]:
     remaining = text
     found: set[str] = set()
-    for keyword, item_type in _TYPE_KEYWORDS.items():
+    # Longest keyword first (P2-02, docs/requirements-audit-2026-09-13.md)
+    # — iterating in `_TYPE_KEYWORDS`' own declared order let a shorter
+    # keyword that's also a complete, `\b`-bounded substring of a longer
+    # one (`"notlar"` inside `"sesli notlar"`) match and get stripped out
+    # *before* the longer, more specific phrase ever got a chance —
+    # misclassifying a voice note as a text note and leaving a stray
+    # "sesli" behind in the cleaned query. Sorting by length here, rather
+    # than just carefully hand-ordering the dict, stays correct as new
+    # keywords are added later.
+    for keyword in sorted(_TYPE_KEYWORDS, key=len, reverse=True):
+        item_type = _TYPE_KEYWORDS[keyword]
         pattern = r"\b" + re.escape(keyword) + r"\b"
         if re.search(pattern, remaining, flags=re.IGNORECASE):
             found.add(item_type)

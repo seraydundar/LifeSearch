@@ -14,28 +14,57 @@ from pypdf import PdfReader
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
-    """Best-effort text layer extraction. A scanned/image-only PDF yields
-    little or nothing here — `render_pdf_pages_to_images()` below is the
-    OCR fallback for exactly that case (requirements doc, section 15;
-    see processing_pipeline.py's PDF branch, which calls it only once
-    this comes back empty).
+    """Best-effort text layer extraction, whole document. A scanned/
+    image-only PDF yields little or nothing here — `render_pdf_pages_to_images()`
+    below is the OCR fallback for exactly that case (requirements doc,
+    section 15). Prefer `extract_pdf_text_per_page()` for anything that
+    needs to tell *which* pages have no text layer (see
+    processing_pipeline.py's PDF branch, P2-04) — this just joins that
+    same per-page result together.
+    """
+    return "\n\n".join(page for page in extract_pdf_text_per_page(pdf_bytes) if page)
+
+
+def extract_pdf_text_per_page(pdf_bytes: bytes) -> list[str]:
+    """Same extraction as `extract_pdf_text()`, but one entry per page
+    (empty string for a page with no text layer at all, not dropped) —
+    lets the OCR fallback in processing_pipeline.py target only the
+    pages that actually need it (P2-04, docs/requirements-audit-2026-09-13.md).
+    A single scanned page mixed into an otherwise text-based PDF used to
+    get no OCR at all, since the old whole-document check only ran OCR
+    when *every* page came back empty.
     """
     reader = PdfReader(io.BytesIO(pdf_bytes))
-    pages = [page.extract_text() or "" for page in reader.pages]
-    return "\n\n".join(page.strip() for page in pages if page.strip())
+    return [(page.extract_text() or "").strip() for page in reader.pages]
 
 
-def render_pdf_pages_to_images(pdf_bytes: bytes, *, max_pages: int) -> list[bytes]:
-    """Rasterizes each page of a PDF to a PNG — what a scanned/image-only
-    PDF (no text layer for `extract_pdf_text()` to find) needs before it
-    can go through the same vision-model OCR call a photo already gets
-    (`vision_service.analyze_image`'s `ocr_text`, see
-    processing_pipeline.py). `max_pages` bounds the number of (paid)
-    vision calls a single huge scanned PDF can trigger — the caller
-    decides the actual limit (see processing_pipeline._MAX_OCR_PDF_PAGES).
+def render_pdf_pages_to_images(
+    pdf_bytes: bytes,
+    *,
+    max_pages: int | None = None,
+    page_indices: list[int] | None = None,
+) -> list[bytes]:
+    """Rasterizes pages of a PDF to PNGs — what a scanned/image-only page
+    (no text layer for `extract_pdf_text_per_page()` to find) needs
+    before it can go through the same vision-model OCR call a photo
+    already gets (`vision_service.analyze_image`'s `ocr_text`, see
+    processing_pipeline.py).
+
+    Exactly one of [max_pages] (the first N pages, in order — the
+    whole-document-is-scanned case) or [page_indices] (specific pages,
+    in the given order — P2-04's mixed-PDF case, where only *some* pages
+    lack a text layer) must be given. `max_pages`/`len(page_indices)`
+    bounds the number of (paid) vision calls a single PDF can trigger —
+    the caller decides the actual limit (see
+    processing_pipeline._MAX_OCR_PDF_PAGES).
     """
+    if (max_pages is None) == (page_indices is None):
+        raise ValueError("Pass exactly one of max_pages or page_indices.")
+
     document = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
+        if page_indices is not None:
+            return [document[index].get_pixmap().tobytes("png") for index in page_indices]
         images: list[bytes] = []
         for index, page in enumerate(document):
             if index >= max_pages:

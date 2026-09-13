@@ -24,6 +24,29 @@ def test_extracts_multiple_type_keywords():
     assert result.item_types == ["image", "note"]
 
 
+# P2-02 (docs/requirements-audit-2026-09-13.md): "sesli not"/"sesli
+# notlar" contain "not"/"notlar" as a complete, word-bounded substring
+# — these used to match as plain text notes (the shorter keyword) before
+# the longer, more specific "sesli ..." phrase ever got a chance, since
+# extraction went in the dict's own declared order rather than
+# longest-keyword-first.
+def test_sesli_not_is_recognized_as_audio_not_note():
+    result = parse_query("geçen ay kaydettiğim sesli not", now=_NOW)
+
+    assert result.item_types == ["audio"]
+    assert "sesli" not in result.cleaned_query.lower()
+
+
+def test_sesli_notlar_is_recognized_as_audio_not_note():
+    result = parse_query("sesli notlar", now=_NOW)
+
+    assert result.item_types == ["audio"]
+    # Not left over as a stray, meaningless word once the type keyword
+    # is stripped — falls back to the original text instead of an
+    # empty-looking cleaned query (see parse_query's own fallback).
+    assert result.cleaned_query.strip() != "sesli"
+
+
 def test_bugun_resolves_to_start_of_today_with_no_upper_bound():
     result = parse_query("bugün eklediğim not", now=_NOW)
 

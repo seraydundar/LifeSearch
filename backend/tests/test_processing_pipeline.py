@@ -29,6 +29,23 @@ def _text_pdf(text: str) -> bytes:
     return document.tobytes()
 
 
+def _mixed_pdf(*, text_pages: list[str], blank_page_count: int) -> bytes:
+    """A PDF with a real text layer on some pages and none at all on
+    others (P2-04, docs/requirements-audit-2026-09-13.md) — a signed
+    page scanned back into an otherwise text-based document is the
+    common real-world shape of this. Text pages come first, purely for
+    this helper's own simplicity — `_ocr_missing_pdf_pages` doesn't care
+    about page order, only which specific pages come back empty.
+    """
+    document = pymupdf.open()
+    for text in text_pages:
+        page = document.new_page()
+        page.insert_text((72, 72), text)
+    for _ in range(blank_page_count):
+        document.new_page()
+    return document.tobytes()
+
+
 def _jpeg_with_exif(*, lat: float, lon: float, when: str) -> bytes:
     image = Image.new("RGB", (4, 4), color="red")
     exif = image.getexif()
@@ -245,6 +262,11 @@ async def test_a_pdf_with_a_real_text_layer_never_triggers_ocr():
     # FakeProvider.analyze_image()'s fixed OCR text never shows up —
     # indirect proof that OCR fallback was never triggered.
     assert "Dell G2724D" not in combined
+    # P2-05 (docs/requirements-audit-2026-09-13.md): a PDF's extracted
+    # text used to never reach `item_contents` at all — only its chunks.
+    assert len(repo.content_updates) == 1
+    assert repo.content_updates[0]["job_id"] == "job-1"
+    assert "Docker Compose" in repo.content_updates[0]["raw_text"]
 
 
 @pytest.mark.asyncio
@@ -265,6 +287,40 @@ async def test_a_scanned_pdf_with_no_text_layer_falls_back_to_ocr():
     # Both pages OCR'd (FakeProvider returns the same fixed ocr_text per
     # call) — two page's worth of it ends up in what gets embedded.
     assert combined.count("Dell G2724D 27 inch 165Hz") == 2
+    # P2-05: the OCR'd text is saved to item_contents too, not just chunked.
+    assert repo.content_updates[0]["raw_text"].count("Dell G2724D 27 inch 165Hz") == 2
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_with_some_scanned_pages_ocrs_only_those_pages():
+    """P2-04 (docs/requirements-audit-2026-09-13.md): the actual bug —
+    a PDF where *most* pages have a real text layer but one or two are
+    scanned images used to get zero OCR at all, since the old check only
+    ran OCR when the *entire* document came back empty.
+    """
+    repo = FakeRepo(
+        item={
+            "id": "item-pdf-3",
+            "type": "pdf",
+            "storage_path": "u1/item-pdf-3/mixed.pdf",
+        },
+        image_bytes=_mixed_pdf(
+            text_pages=["Docker Compose notlarım burada."], blank_page_count=1
+        ),
+    )
+
+    await process_item("item-pdf-3", "job-1", repo, lambda: FakeProvider())
+
+    assert repo.status_history == ["processing", "completed"]
+    combined = repo.inserted_chunks[0]["content"]
+    # The real text page's own content is untouched...
+    assert "Docker Compose" in combined
+    # ...and the scanned page is OCR'd instead of being silently dropped.
+    assert "Dell G2724D 27 inch 165Hz" in combined
+    # Both end up in item_contents too, not just the chunks.
+    saved = repo.content_updates[0]["raw_text"]
+    assert "Docker Compose" in saved
+    assert "Dell G2724D 27 inch 165Hz" in saved
 
 
 @pytest.mark.asyncio
@@ -332,6 +388,17 @@ async def test_processes_a_text_document_end_to_end():
     assert repo.status_history == ["processing", "completed"]
     assert repo.inserted_chunks is not None
     assert "Docker Compose" in repo.inserted_chunks[0]["content"]
+    # P2-05 (docs/requirements-audit-2026-09-13.md): a document's
+    # extracted text used to never reach `item_contents` — only its
+    # chunks.
+    assert repo.content_updates == [
+        {
+            "job_id": "job-1",
+            "raw_text": "Docker Compose ile birden fazla container'ı tanımlarsın.",
+            "ocr_text": None,
+            "ai_description": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio

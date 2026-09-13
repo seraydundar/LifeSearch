@@ -6,6 +6,7 @@ import pytest
 
 from app.services.document_service import (
     extract_document_text,
+    extract_pdf_text_per_page,
     normalize_text,
     render_pdf_pages_to_images,
 )
@@ -18,6 +19,16 @@ def _blank_pdf(num_pages: int) -> bytes:
     """
     document = pymupdf.open()
     for _ in range(num_pages):
+        document.new_page()
+    return document.tobytes()
+
+
+def _mixed_pdf(*, text_pages: list[str], blank_page_count: int) -> bytes:
+    document = pymupdf.open()
+    for text in text_pages:
+        page = document.new_page()
+        page.insert_text((72, 72), text)
+    for _ in range(blank_page_count):
         document.new_page()
     return document.tobytes()
 
@@ -132,3 +143,40 @@ def test_render_pdf_pages_to_images_on_a_single_page_pdf():
     images = render_pdf_pages_to_images(_blank_pdf(1), max_pages=30)
 
     assert len(images) == 1
+
+
+def test_render_pdf_pages_to_images_requires_exactly_one_of_max_pages_or_page_indices():
+    with pytest.raises(ValueError):
+        render_pdf_pages_to_images(_blank_pdf(1))
+    with pytest.raises(ValueError):
+        render_pdf_pages_to_images(_blank_pdf(1), max_pages=1, page_indices=[0])
+
+
+def test_render_pdf_pages_to_images_with_page_indices_renders_only_those_pages_in_order():
+    # 3 pages; ask for the last and first, in that order.
+    images_in_order = render_pdf_pages_to_images(_blank_pdf(3), page_indices=[2, 0])
+
+    assert len(images_in_order) == 2
+    assert all(image.startswith(b"\x89PNG\r\n\x1a\n") for image in images_in_order)
+
+
+# P2-04 (docs/requirements-audit-2026-09-13.md): `extract_pdf_text_per_page`
+# is what lets processing_pipeline.py OCR only the pages that actually
+# lack a text layer, instead of treating a PDF as either fully text or
+# fully scanned.
+def test_extract_pdf_text_per_page_returns_one_entry_per_page():
+    pages = extract_pdf_text_per_page(_blank_pdf(3))
+
+    assert len(pages) == 3
+    assert all(page == "" for page in pages)
+
+
+def test_extract_pdf_text_per_page_distinguishes_text_pages_from_blank_ones():
+    pdf_bytes = _mixed_pdf(text_pages=["Docker Compose notlarım."], blank_page_count=2)
+
+    pages = extract_pdf_text_per_page(pdf_bytes)
+
+    assert len(pages) == 3
+    assert "Docker Compose" in pages[0]
+    assert pages[1] == ""
+    assert pages[2] == ""
