@@ -136,7 +136,7 @@ async def test_replace_item_content_is_a_single_upsert_not_delete_then_insert():
 
 
 @pytest.mark.asyncio
-async def test_attach_tags_calls_the_atomic_rpc_once_not_an_upsert_and_a_separate_delete_insert():
+async def test_attach_tags_calls_the_atomic_rpc_once_not_upsert_then_delete_insert():
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -183,7 +183,7 @@ async def test_attach_tags_with_no_names_still_calls_the_rpc():
 
 
 @pytest.mark.asyncio
-async def test_attach_entities_calls_the_atomic_rpc_once_not_an_upsert_and_a_separate_delete_insert():
+async def test_attach_entities_calls_the_atomic_rpc_once_not_upsert_then_delete_insert():
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
