@@ -129,8 +129,20 @@ class FakeItemRepository implements ItemRepository {
     return item;
   }
 
+  /// P2-09 (docs/requirements-audit-2026-09-13.md): lets a test simulate
+  /// a failed signed-URL fetch, then a successful retry, by flipping
+  /// this and calling the same repository method again — same shape as
+  /// `retryProcessingCallCount` below.
+  Object? getSignedUrlError;
+  int getSignedUrlCallCount = 0;
+
   @override
-  Future<String> getSignedUrl(String storagePath) async => 'https://example.test/$storagePath';
+  Future<String> getSignedUrl(String storagePath) async {
+    getSignedUrlCallCount++;
+    final error = getSignedUrlError;
+    if (error != null) throw error;
+    return 'https://example.test/$storagePath';
+  }
 
   @override
   Future<void> setFavorite(String itemId, bool favorite) async {

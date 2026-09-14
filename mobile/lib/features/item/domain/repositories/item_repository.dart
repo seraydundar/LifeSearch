@@ -31,9 +31,14 @@ abstract interface class ItemRepository {
   /// locally yet, needs a connection to show" contract as `fetchTags`.
   Future<List<ExtractedEntity>> fetchEntities(String itemId);
 
-  /// Single item by id from the local cache, or `null` if it isn't known
-  /// yet — used for the duplicate-candidate banner on item detail, which
-  /// needs the *other* item's title/type without loading the whole list.
+  /// Single item by id — the local cache first, then (P2-09, docs/
+  /// requirements-audit-2026-09-13.md) a remote lookup for an id this
+  /// device hasn't synced yet, caching the result for next time. `null`
+  /// only once both come up empty (or there's no connection to even try
+  /// the remote fallback) — used for the duplicate-candidate banner on
+  /// item detail (needs the *other* item's title/type without loading
+  /// the whole list) and for resolving a route reached without the full
+  /// `Item` already in hand (`ItemByIdLoader`).
   Future<Item?> findById(String itemId);
 
   Future<Item> createNote({required String title, required String content});

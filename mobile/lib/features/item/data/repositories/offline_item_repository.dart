@@ -61,7 +61,29 @@ class OfflineItemRepository implements ItemRepository {
   @override
   Future<Item?> findById(String itemId) async {
     final local = await _local.findById(_userId, itemId);
-    return local?.toDomainItem();
+    if (local != null) return local.toDomainItem();
+
+    // P2-09 (docs/requirements-audit-2026-09-13.md): the local cache
+    // used to be the only place this looked — a genuinely new item on
+    // another device (or one a search/RAG/related result surfaced
+    // before this device's own sync ever pulled it in) could never
+    // resolve to more than whatever trimmed stand-in the caller already
+    // had in hand (see e.g. `search_tab.dart`'s `_openResult`).
+    try {
+      final remote = await _remote.fetchById(itemId);
+      if (remote == null) return null;
+      // Cached locally so the next lookup — and anything watching
+      // `watchItems()`/`watchItemByIdProvider` — sees it without
+      // another round trip, same end state a normal sync pull leaves
+      // behind, just for one item instead of the whole archive.
+      await _local.upsert(remote.toLocalItemsCompanion(userId: _userId));
+      return remote;
+    } catch (_) {
+      // Offline, or a genuine backend hiccup — same "not synced to this
+      // device yet" contract a local-only miss already had; callers
+      // (e.g. `ItemByIdLoader`) already degrade gracefully for `null`.
+      return null;
+    }
   }
 
   @override

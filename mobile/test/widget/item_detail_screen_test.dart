@@ -86,6 +86,39 @@ void main() {
     expect(find.text('Dosyayı Aç'), findsOneWidget);
   });
 
+  // P2-09 (docs/requirements-audit-2026-09-13.md): a failed signed-URL
+  // fetch used to leave the button disabled forever, indistinguishable
+  // from "still loading" — no visible error, no way to retry short of
+  // leaving and reopening the screen.
+  testWidgets('a failed signed URL fetch shows a retry affordance, not a stuck disabled button',
+      (tester) async {
+    final full = Item(
+      id: 'item-1',
+      type: ItemType.pdf,
+      title: 'Backend Notes',
+      originalFilename: 'backend-notes.pdf',
+      storagePath: 'user/1/backend-notes.pdf',
+      processingStatus: 'completed',
+      favorite: false,
+      createdAt: DateTime(2026, 1, 1),
+    );
+    final repo = FakeItemRepository(initialItems: [full])
+      ..getSignedUrlError = Exception('network error');
+
+    await tester.pumpWidget(wrap(full, repo: repo));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dosyayı Aç'), findsNothing);
+    expect(find.textContaining('Tekrar Dene'), findsOneWidget);
+
+    repo.getSignedUrlError = null; // the network recovers
+    await tester.tap(find.textContaining('Tekrar Dene'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dosyayı Aç'), findsOneWidget);
+    expect(repo.getSignedUrlCallCount, 2);
+  });
+
   testWidgets(
       'a trimmed stand-in from search adopts the real local item — Open File appears once resolved',
       (tester) async {

@@ -29,6 +29,13 @@ class ItemDetailScreen extends ConsumerStatefulWidget {
 class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   late Item _item = widget.item;
   String? _signedUrl;
+  // P2-09 (docs/requirements-audit-2026-09-13.md): a failed signed-URL
+  // fetch used to leave `_signedUrl` null forever, indistinguishable
+  // from "still loading" — the file-open button/image just stayed
+  // disabled/blank with no way to try again short of leaving the screen
+  // and coming back (which re-runs `initState()`, itself no guarantee
+  // the network is any better a second later).
+  bool _signedUrlError = false;
   bool _isDeleting = false;
   Item? _duplicateTarget;
 
@@ -148,8 +155,15 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   Future<void> _loadSignedUrl() async {
     final path = _item.storagePath;
     if (path == null) return;
-    final url = await ref.read(itemRepositoryProvider).getSignedUrl(path);
-    if (mounted) setState(() => _signedUrl = url);
+    setState(() => _signedUrlError = false); // clears a previous failure on retry
+    try {
+      final url = await ref.read(itemRepositoryProvider).getSignedUrl(path);
+      if (mounted) setState(() => _signedUrl = url);
+    } catch (_) {
+      // P2-09: a real, visible failure state — not an indefinitely
+      // disabled button with no explanation and no way to try again.
+      if (mounted) setState(() => _signedUrlError = true);
+    }
   }
 
   Future<void> _toggleFavorite() async {
@@ -310,6 +324,28 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
               borderRadius: BorderRadius.circular(16),
               child: Image.network(_signedUrl!, fit: BoxFit.cover),
             )
+          else if (isImage && _signedUrlError)
+            // P2-09 (docs/requirements-audit-2026-09-13.md): distinct
+            // from "still loading" — an explicit failure with a way to
+            // try again, instead of sitting on the generic type-icon
+            // placeholder with no explanation.
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    const Icon(Icons.broken_image_outlined, size: 48),
+                    const SizedBox(height: 8),
+                    const Text('Görsel yüklenemedi.'),
+                    TextButton.icon(
+                      onPressed: _loadSignedUrl,
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: const Text('Tekrar Dene'),
+                    ),
+                  ],
+                ),
+              ),
+            )
           else
             Card(
               child: Padding(
@@ -362,6 +398,16 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
               onPressed: _openSourceUrl,
               icon: const Icon(Icons.open_in_new),
               label: const Text('Bağlantıyı Aç'),
+            )
+          else if (!isImage && _item.storagePath != null && _signedUrlError)
+            // P2-09 (docs/requirements-audit-2026-09-13.md): previously
+            // indistinguishable from "still loading" — the button just
+            // stayed disabled forever with no way to retry short of
+            // leaving and re-opening the screen.
+            OutlinedButton.icon(
+              onPressed: _loadSignedUrl,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Dosya bağlantısı alınamadı — Tekrar Dene'),
             )
           else if (!isImage && _item.storagePath != null)
             FilledButton.icon(

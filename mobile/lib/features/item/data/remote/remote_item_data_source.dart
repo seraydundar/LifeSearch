@@ -76,6 +76,17 @@ class RemoteItemDataSource {
     });
   }
 
+  /// A single row by id, or `null` if it doesn't exist (or isn't this
+  /// user's — RLS scopes this the same as [fetchAllRows]) — used by
+  /// `OfflineItemRepository.findById()`'s remote fallback (P2-09,
+  /// docs/requirements-audit-2026-09-13.md) for an item this device
+  /// hasn't synced yet (a search/RAG/related-item result, or a deep
+  /// link, for something created on another device).
+  Future<Item?> fetchById(String itemId) async {
+    final rows = await _client.from('items').select().eq('id', itemId).eq('user_id', userId);
+    return rows.isEmpty ? null : rowToItem(rows.first);
+  }
+
   Future<String> fetchNoteContent(String itemId) async {
     final row = await _client
         .from('item_contents')
