@@ -42,3 +42,4 @@ backend/.coverage
 # --- Editors ---
 .vscode/
 .idea/
+apply_migrations.sql
