@@ -220,6 +220,9 @@ async def test_processes_a_note_end_to_end():
     assert len(repo.inserted_chunks) == 1
     assert repo.inserted_chunks[0]["chunk_index"] == 0
     assert repo.inserted_chunks[0]["embedding"] == "[0.1,0.2,0.3]"
+    # P3 (docs/requirements-audit-2026-09-13.md): only PDFs have a page
+    # concept — every other content type's chunks carry no page_number.
+    assert repo.inserted_chunks[0]["metadata"] == {}
 
 
 @pytest.mark.asyncio
@@ -262,6 +265,9 @@ async def test_a_pdf_with_a_real_text_layer_never_triggers_ocr():
     # FakeProvider.analyze_image()'s fixed OCR text never shows up —
     # indirect proof that OCR fallback was never triggered.
     assert "Dell G2724D" not in combined
+    # P3 (docs/requirements-audit-2026-09-13.md): a single-page PDF's one
+    # chunk is tagged with that page.
+    assert repo.inserted_chunks[0]["metadata"] == {"page_number": 1}
     # P2-05 (docs/requirements-audit-2026-09-13.md): a PDF's extracted
     # text used to never reach `item_contents` at all — only its chunks.
     assert len(repo.content_updates) == 1
@@ -283,10 +289,13 @@ async def test_a_scanned_pdf_with_no_text_layer_falls_back_to_ocr():
     await process_item("item-pdf-2", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history == ["processing", "completed"]
-    combined = repo.inserted_chunks[0]["content"]
-    # Both pages OCR'd (FakeProvider returns the same fixed ocr_text per
-    # call) — two page's worth of it ends up in what gets embedded.
+    # P3 (docs/requirements-audit-2026-09-13.md): chunking is per page now
+    # (see chunk_pages()'s docstring for why), so two short OCR'd pages
+    # become two chunks, not one — each carrying its own page_number.
+    assert len(repo.inserted_chunks) == 2
+    combined = "\n\n".join(c["content"] for c in repo.inserted_chunks)
     assert combined.count("Dell G2724D 27 inch 165Hz") == 2
+    assert [c["metadata"]["page_number"] for c in repo.inserted_chunks] == [1, 2]
     # P2-05: the OCR'd text is saved to item_contents too, not just chunked.
     assert repo.content_updates[0]["raw_text"].count("Dell G2724D 27 inch 165Hz") == 2
 
@@ -312,11 +321,15 @@ async def test_a_pdf_with_some_scanned_pages_ocrs_only_those_pages():
     await process_item("item-pdf-3", "job-1", repo, lambda: FakeProvider())
 
     assert repo.status_history == ["processing", "completed"]
-    combined = repo.inserted_chunks[0]["content"]
+    # P3: one chunk per page — the real text page (1) and the OCR'd
+    # scanned page (2), each correctly attributed.
+    assert len(repo.inserted_chunks) == 2
+    combined = "\n\n".join(c["content"] for c in repo.inserted_chunks)
     # The real text page's own content is untouched...
     assert "Docker Compose" in combined
     # ...and the scanned page is OCR'd instead of being silently dropped.
     assert "Dell G2724D 27 inch 165Hz" in combined
+    assert [c["metadata"]["page_number"] for c in repo.inserted_chunks] == [1, 2]
     # Both end up in item_contents too, not just the chunks.
     saved = repo.content_updates[0]["raw_text"]
     assert "Docker Compose" in saved

@@ -17,7 +17,7 @@ from collections.abc import Callable
 from ..repositories.items_repository import SupabaseRestRepository
 from ..repositories.search_repository import SearchRepository
 from .ai_provider import AIProvider
-from .chunking_service import chunk_text
+from .chunking_service import chunk_pages, chunk_text
 from .document_service import (
     extract_document_text,
     extract_pdf_text_per_page,
@@ -111,8 +111,12 @@ async def process_item(
             # images (e.g. a signed page scanned back into an otherwise
             # text-based document) used to get no OCR at all — the old
             # check only ran OCR when literally every page came back
-            # empty. See _ocr_missing_pdf_pages()'s own docstring.
-            raw_text = await _ocr_missing_pdf_pages(pdf_bytes, provider)
+            # empty. See _ocr_missing_pdf_pages()'s own docstring. Kept as
+            # a per-page list (not joined into one string yet) so the
+            # chunking step below can tag each chunk with the page it
+            # actually came from (P3, docs/requirements-audit-2026-09-13.md).
+            page_texts = await _ocr_missing_pdf_pages(pdf_bytes, provider)
+            raw_text = "\n\n".join(text for text in page_texts if text)
             # P2-05 (docs/requirements-audit-2026-09-13.md): every other
             # non-note type (image/audio/url) already saves its extracted
             # text to `item_contents` — PDF never did, so there was no
@@ -201,7 +205,19 @@ async def process_item(
         if not text:
             raise ValueError("No extractable text found in this item.")
 
-        pieces = chunk_text(text)
+        if item_type == "pdf":
+            # Page-aware chunking (P3, docs/requirements-audit-2026-09-13.md):
+            # a PDF is the one content type with an actual page concept, so
+            # its chunks carry a page_number — everything else has no pages
+            # to speak of. See chunk_pages()'s own docstring for why this
+            # chunks per page rather than the whole joined document.
+            pairs = chunk_pages([normalize_text(page) for page in page_texts])
+            pieces = [chunk for chunk, _ in pairs]
+            page_numbers: list[int | None] = [page for _, page in pairs]
+        else:
+            pieces = chunk_text(text)
+            page_numbers = [None] * len(pieces)
+
         embeddings = await embed_chunks(pieces, provider)
 
         chunk_rows = [
@@ -210,9 +226,11 @@ async def process_item(
                 "content": piece,
                 "chunk_index": index,
                 "embedding": format_embedding_literal(embedding),
-                "metadata": {},
+                "metadata": {"page_number": page_number} if page_number is not None else {},
             }
-            for index, (piece, embedding) in enumerate(zip(pieces, embeddings, strict=True))
+            for index, (piece, embedding, page_number) in enumerate(
+                zip(pieces, embeddings, page_numbers, strict=True)
+            )
         ]
         await repo.replace_chunks(item_id, job_id, chunk_rows)
 
@@ -262,7 +280,7 @@ async def process_item(
         await repo.aclose()
 
 
-async def _ocr_missing_pdf_pages(pdf_bytes: bytes, provider: AIProvider) -> str:
+async def _ocr_missing_pdf_pages(pdf_bytes: bytes, provider: AIProvider) -> list[str]:
     """Extracts each page's text layer, then OCRs — through the same
     vision call a photo already gets (`vision_service.analyze_image`),
     keeping only its `ocr_text` — exactly the pages that came back empty
@@ -271,6 +289,13 @@ async def _ocr_missing_pdf_pages(pdf_bytes: bytes, provider: AIProvider) -> str:
     on most pages but one or two scanned ones (e.g. a signed page
     scanned back in) used to get zero OCR for those pages, since the old
     check only ever ran when the *entire* document came back empty.
+
+    Returns one entry per page (empty string for a page with nothing
+    extractable even after OCR) rather than a single joined string — kept
+    as a list, not flattened here, so the caller can both join it for
+    `item_contents.raw_text` *and* feed it to `chunk_pages()` for P3's
+    page-numbered chunk metadata (docs/requirements-audit-2026-09-13.md),
+    which needs the page boundaries a flattened string would have lost.
 
     A scanned page isn't a photo, so its `title`/`description`/`tags`
     are simply discarded here rather than reused for anything — this is
@@ -286,7 +311,7 @@ async def _ocr_missing_pdf_pages(pdf_bytes: bytes, provider: AIProvider) -> str:
     page_texts = extract_pdf_text_per_page(pdf_bytes)
     missing_indices = [index for index, text in enumerate(page_texts) if not text]
     if not missing_indices:
-        return "\n\n".join(page_texts)
+        return page_texts
 
     ocr_indices = missing_indices[:_MAX_OCR_PDF_PAGES]
     page_images = render_pdf_pages_to_images(pdf_bytes, page_indices=ocr_indices)
@@ -294,7 +319,7 @@ async def _ocr_missing_pdf_pages(pdf_bytes: bytes, provider: AIProvider) -> str:
         analysis = await analyze_image(image_bytes, "image/png", provider)
         page_texts[index] = extract_ocr_text(analysis).strip()
 
-    return "\n\n".join(text for text in page_texts if text)
+    return page_texts
 
 
 async def _check_for_duplicate(

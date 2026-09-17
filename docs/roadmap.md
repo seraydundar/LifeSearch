@@ -3388,3 +3388,44 @@ işaretleyebiliyordu.
 Backend: `ruff check` temiz, testler 208 → **209** (+1, dört yeni türü
 ayrıştırma testi). Mobile: `flutter analyze` temiz, testler 272 →
 **273** (+1, dört yeni tür için chip/ikon testi).
+
+## Faz 23 — P3: chunk'lara sayfa numarası metadata'sı (yalnızca PDF) ✅
+
+`docs/requirements-audit-2026-09-13.md`'nin P3 kaleminin ikincisi:
+`chunks.metadata` (jsonb, 0001_init.sql'den beri var) hiç kullanılmıyordu
+— hangi chunk'ın kaynak belgenin hangi sayfasından geldiği hiçbir yerde
+tutulmuyordu.
+
+- **`chunking_service.chunk_pages()`** (yeni fonksiyon, `chunk_text()`'e
+  dokunulmadı): sayfa listesi alıp her sayfayı **bağımsız** chunk'lıyor,
+  her chunk'ı 1-tabanlı sayfa numarasıyla etiketliyor. Bilinçli tasarım
+  kararı: sayfa sınırları arasında chunk paketlemiyor (iki kısa sayfayı
+  `chunk_text()` tek bir chunk'ta paketlerdi) — bunun bedeli bazı kısa
+  sayfalı belgelerde biraz daha fazla/küçük chunk, karşılığında bir
+  chunk'ın sayfa numarası her zaman **kesin**, konuma dayalı bir
+  yaklaşıklık değil. Offset/karakter-pozisyonu eşlemesiyle sayfalar arası
+  paketlemeyi korumak da mümkündü ama `chunk_text()`'in overlap mantığının
+  ürettiği metni orijinal kaynakta arayıp bulmaya dayanan kırılgan bir
+  çözüm olurdu — bu basitlik/doğruluk takası tercih edildi.
+- **`processing_pipeline.py`**: yalnızca `pdf` tipi için — tek gerçek
+  "sayfa" kavramı olan içerik türü — `_ocr_missing_pdf_pages()`'in dönüşü
+  artık birleştirilmiş tek string değil, sayfa başına bir liste (diğer
+  çağıran, `item_contents.raw_text`, kendi birleştirmesini kendi yapıyor).
+  Not/ses/URL/görsel gibi diğer her tip hâlâ düz `chunk_text()`
+  kullanıyor, `metadata` onlarda hep `{}` kalıyor.
+- **Canlıda doğrulandı**: gerçek 2 sayfalı bir PDF (PyMuPDF ile üretildi)
+  gerçek backend + gerçek yerel Ollama üzerinden işlendi — Supabase'in
+  `chunks` tablosunda `chunk_index=0` → `{"page_number": 1}`,
+  `chunk_index=1` → `{"page_number": 2}` olarak doğru yazıldığı
+  görüldü, sonra test verisi temizlendi.
+
+**Kapsam dışı bırakılan** (P3'ün aynı maddesinin ikinci yarısı, ayrı bir
+ürün kararı gerektiriyor): embedding provider/model/version'ın chunk
+başına saklanması ve `AI_PROVIDER` değişince eski embedding'lerin
+yeniden işlenmesi için bir reindex mekanizması — bunlar "otomatik mi
+elle mi tetiklenecek" sorusuna önce bir cevap gerektiriyor.
+
+Backend: `ruff check` temiz, testler 209 → **213** (+4:
+`chunk_pages()`'in kendi 4 birim testi; 3 mevcut PDF testi de yeni
+sayfa-başına-chunk davranışına ve `page_number` metadata'sına göre
+güncellendi). Mobile değişmedi (bu tamamen backend/chunk üretimi).
