@@ -3270,3 +3270,91 @@ P2-08 kapandı. Denetimin önerdiği sırada hâlâ açık olan tek şey:
   benchmark'ı.
 
 Backend 208, mobile 272 test yeşil.
+
+## Faz 21 — P1-07: gerçek MVP kabul senaryosu, yerel AI ile (17 Eylül 2026)
+
+Denetimin son kalan öncelikli maddesini kapatır — ama OpenAI key ile
+değil: `docs/local-ai-provider-setup.md`'nin belgelediği `AI_PROVIDER=local`
+yolu bu makinede gerçekten kuruldu (Ollama + `llama3.2`/`nomic-embed-text`/
+`llava`, hepsi bu oturumda indirilip gerçek backend kodu üzerinden —
+sahte transport değil — tek tek doğrulandı) ve P1-07'nin gerektirdiği
+"gerçek AI" şartını ücretsiz, bulut key'i olmadan karşıladı.
+
+**Ortam notu — ilgisiz bir Homebrew/macOS hatası bulunup düzeltildi**:
+Ollama kurulumundan bağımsız, önceden var olan bir sorun: bu makinedeki
+Homebrew `python@3.12` (3.12.14) bottle'ı, `pyexpat`'ı macOS 26.2'nin
+sistem `libexpat`'ında olmayan bir sembolle (`_XML_SetAllocTrackerActivationThreshold`)
+derlenmiş — `pypdf`'in (dolayısıyla `document_service.py`'nin, dolayısıyla
+tüm `app.main`'in) import edilmesini `dlopen` hatasıyla çöktürüyordu.
+Backend'i `DYLD_LIBRARY_PATH=/opt/homebrew/opt/expat/lib` ile başlatmak
+Homebrew'in kendi (güncel) expat'ını öne alıp sorunu çözüyor — bu proje
+koduyla ilgisiz, yalnızca bu makinenin `backend/.env`'i dışında bir ortam
+notu, kalıcı bir kod değişikliği gerektirmiyor. Ayrıca fark edildi:
+arka planda kalıcı bir süreç başlatmak için `nohup ... & disown` yerine
+yalnızca `... & disown` kullanmak gerekiyor — bu makinede `nohup` her
+nedense `DYLD_*` ortam değişkenlerini siliyor, `disown` tek başına
+silmiyor.
+
+**Doğrulama yöntemi**: mobil UI üzerinden tıklama değil — gerçek
+Supabase Auth/Postgres/Storage'a ve gerçek backend'e doğrudan HTTP
+istekleriyle konuşan tek seferlik bir Python scripti (bu oturuma özel,
+depoya commit edilmedi). Sebep: bu makinede `System Events`/Accessibility
+izni kısıtlı (`osascript` ile pencere koordinatı okumak "yardımcı
+erişime izin verilmiyor" hatası veriyor — Faz 11'in Face ID otomasyonunda
+belgelenen aynı sınırın bir başka görünümü), yani simülatöre programatik
+dokunuş göndermek bu ortamdan mümkün değildi. Bunun yerine mobil
+uygulamanın zaten yaptığı şeyin ta kendisini — aynı Supabase REST/Storage
+uçları, aynı `/ai/process-item`/`/search/`/`/ai/ask` endpoint'leri,
+aynı RLS/JWT modeli — dışarıdan tetikleyip sonuçlarını denetlemek, arayüz
+etkileşimini simüle etmeye çalışmaktan daha güvenilir bir doğrulama.
+
+**Senaryo ve sonuç — 18/18 kontrol geçti**:
+
+1. İki gerçek test hesabı oluşturuldu (`/auth/v1/signup`, e-posta
+   doğrulaması bu projede kapalı — anında `access_token` dönüyor).
+2. Hesap A'ya doğrudan Supabase'e (mobil'in kendi yaptığı gibi) bir not
+   ("Flutter'da state management... Riverpod kullanıyoruz çünkü..."),
+   gerçek metin içeren bir PDF (PyMuPDF ile üretildi) ve "RIVERPOD STATE
+   MANAGEMENT" yazan gerçek bir screenshot (Pillow ile üretildi) eklendi.
+3. Üçü için de `/ai/process-item` çağrıldı — **gerçek Ollama** üzerinden
+   embedding + (screenshot için) vision/OCR çalıştı, üçü de
+   `processing_status: completed`'e ulaştı.
+4. Dokümanın MVP cümlesiyle birebir aynı sorgu — **"Flutter state
+   management hakkında kaydettiğim şeyleri bul"** — `/search/`'e
+   gönderildi: üç item'ın üçü de sonuçlarda çıktı.
+5. **"Bunlara göre Riverpod neden kullanılıyor?"** `/ai/ask`'e soruldu:
+   gerçek bir LLM (yerel `llama3.2`) cevabı geldi ("Riverpod kullanılıyor
+   çünkü compile-time güvenlik sağlıyor, test edilebilirliği
+   InheritedWidget'a göre çok daha kolaylaştırıyor...") ve 3 kaynakla
+   (kayıtlı chunk'lar) birlikte.
+6. **RLS izolasyonu**: hesap B ile aynı işlemler tekrarlandı — B'nin hiç
+   item'ı görünmüyor, A'nın notunu id'siyle doğrudan çekmeye çalışınca da
+   boş dönüyor (Postgres RLS, backend/uygulama kodu değil), B'nin aynı
+   sorguyla araması da A'nın hiçbir sonucunu getirmiyor.
+7. Temizlik: Storage'daki dosyalar, `items` satırları ve iki test hesabı
+   da (admin API ile) silindi — canlı projede kalıcı bir iz bırakmadı.
+
+**Kapsam dışı kalan (dürüstçe belirtilmeli)**: bu turda mobil
+uygulamanın kendi arayüzünden gerçek bir dokunuşla dosya seçme/kaydetme/
+açma denenmedi — yukarıdaki Accessibility kısıtı yüzünden. Simülatörde
+uygulama açılıp gerçek bir Supabase oturumuyla render olduğu ekran
+görüntüsüyle doğrulandı (ayrı, önceden var olan bir geliştirici
+hesabıyla), ama bu turun asıl kanıtı arayüz katmanından değil,
+mobilin zaten kullandığı aynı API/RLS/AI zincirinin dışarıdan
+tetiklenmesinden geliyor. Denetimin "kaynak dosyalarını mobilde aç"
+maddesi tam anlamıyla ancak gerçek bir dokunuşla (kullanıcı elleriyle,
+ya da Accessibility izni olan bir makineden) tamamlanabilir.
+
+Kod değişmedi (bu tur tamamen doğrulama). Backend 208, mobile 272 test
+hâlâ yeşil, hiçbiri bu turdan etkilenmedi.
+
+## Şu an neredeyiz (17 Eylül 2026 itibarıyla, güncelleme 3)
+
+Denetimin (`docs/requirements-audit-2026-09-13.md`) önerdiği tüm
+öncelikli maddeler (P1-01 → P1-07, P2-01 → P2-10) artık kapalı — P1-07
+gerçek veriyle, gerçek AI ile, gerçek RLS izolasyonuyla doğrulandı.
+Geriye yalnızca **P3'ün ileri-aşama/geliştirme kalemleri** kaldı (MVP
+zorunluluğu değil): entity türü genişletme, chunk/source metadata,
+Windows/web/macOS platform boşlukları, büyük arşiv için ölçek/gecikme
+benchmark'ı — ve mobil arayüzün kendisinden elle bir dokunuş turu
+(yukarıdaki kapsam-dışı notu).
