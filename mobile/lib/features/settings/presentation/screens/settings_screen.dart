@@ -79,9 +79,15 @@ class SettingsScreen extends ConsumerWidget {
             onTap: () => context.push('/analytics'),
           ),
           const Divider(),
+          // "AI Status", not "AI Settings" (P2-08, docs/requirements-audit
+          // -2026-09-13.md): there's nothing here to configure — the AI
+          // provider is chosen server-side (backend/.env's AI_PROVIDER),
+          // not per-user — so a "Settings" label overclaimed what this
+          // row actually does. It's a read-only status line, same as
+          // Storage/Sync above it, not a control.
           ListTile(
             leading: const Icon(Icons.auto_awesome_outlined),
-            title: const Text('AI Settings'),
+            title: const Text('AI Status'),
             subtitle: Text(
               aiAvailable
                   ? 'AI destekli işleme aktif — embedding, arama ve Ask AI bu sunucu üzerinden çalışıyor'

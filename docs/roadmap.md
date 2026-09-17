@@ -3213,3 +3213,60 @@ P2-07 kapandı. Denetimin önerdiği sırada hâlâ açık olanlar değişmedi:
   Windows/web/macOS platform boşlukları, ölçek/gecikme benchmark'ı.
 
 Backend 208, mobile 271 test yeşil.
+
+## Faz 20 — Export kapsamının genişletilmesi ve "AI Settings" adının düzeltilmesi (P2-08) ✅
+
+`docs/requirements-audit-2026-09-13.md`'nin P2-08 kalemini giderir: "JSON
+export dosyaları, koleksiyon/üyelikleri, entities, OCR/AI alanlarının
+tamamını ve private bilgisini içermiyor. Sorgular sayfalamasız... AI
+Settings sadece durum metni."
+
+- **`export_payload.dart`/`export_service.dart`**: `export_version` 1'den
+  2'ye çıktı — v1'in tek taşıdığı alan (`note_content`, aslında her içerik
+  tipinin yazdığı aynı `item_contents.raw_text`'ti, yalnızca notlar için
+  doğru isimlendirilmişti) yerine `item_contents`'in beş alanı da
+  (`raw_text`, `ocr_text`, `ai_description`, `summary`, `language`),
+  entity'ler (tag'lerle aynı join deseni), `private` bayrağı ve —
+  tamamen eksik olan— koleksiyonlar (`item_ids` üyelik listesiyle
+  birlikte, `RemoteCollectionDataSource`'la aynı `collections`/
+  `collection_items` şekli). Export bir içe-aktarma formatı değil,
+  tek yönlü bir paylaş-ve-bitir JSON olduğundan v1'i geriye dönük
+  taşımaya gerek yok — temiz bir yeniden isimlendirme.
+- **Sayfalama**: `items`, `item_contents`, `item_tags`, `item_entities`,
+  `collections`, `collection_items` sorgularının hepsi artık
+  `fetchAllPages` (Faz 12, madde 9'la aynı yardımcı) ile — büyük bir
+  arşiv artık PostgREST'in sessiz satır sınırına takılıp export'un
+  ilk sayfadan sonrasını sessizce atlamasına yol açmıyor. Dosya arşivi
+  (fotoğraf/PDF/ses dosyalarının kendisi) bilinçli olarak kapsam dışı
+  bırakıldı — `export_payload.dart`'ın kendi notu bunu zaten açıkça
+  söylüyor, bu turda değişmedi.
+- **"AI Settings" → "AI Status"**: denetimin sunduğu iki seçenekten
+  ("gerçek AI ayar kontrolleri ekle" veya "ekran adını doğru kapsamla
+  eşleştir") ikincisi seçildi — AI sağlayıcısı kullanıcı başına değil
+  sunucu tarafında (`backend/.env`'nin `AI_PROVIDER`'ı) seçildiğinden,
+  burada gerçekten yapılandırılabilecek bir şey yok; satır zaten
+  Storage/Sync gibi salt-okunur bir durum bildirimi, adı da artık bunu
+  söylüyor.
+
+Backend değişmedi (tamamen mobil — export ve Settings zaten Supabase'e
+doğrudan konuşuyordu). Mobile: `flutter analyze` temiz, testler 271 →
+**272** (`export_payload_test.dart` v2 şekline göre yeniden yazıldı —
+5 test: item_contents'in beş alanı + entity'ler, `private` bayrağının
+mevcut/varsayılan hali, koleksiyon+üyelik listesi, alanların hepsi boşken
+varsayılanlar, üst düzey metadata/sayaçlar; `settings_screen_test.dart`
+etkilenmedi, yalnızca bir test adı güncellendi).
+
+## Şu an neredeyiz (17 Eylül 2026 itibarıyla, güncelleme 2)
+
+P2-08 kapandı. Denetimin önerdiği sırada hâlâ açık olan tek şey:
+
+- **P1-07** — gerçek MVP kabul kanıtı yok: iki gerçek Supabase test
+  hesabı ve gerçek bir OpenAI key gerektiriyor, kod tarafında yapılacak
+  bir şey kalmadı.
+- **P3'ün geri kalanı** (ileri aşama/geliştirme, MVP zorunluluğu değil):
+  entity türü genişletme (Product/Price/Website/Technology), chunk/
+  source metadata (sayfa/bölüm izi, embedding model/version), Windows/
+  web/macOS platform boşlukları, büyük arşiv için ölçek/gecikme
+  benchmark'ı.
+
+Backend 208, mobile 272 test yeşil.

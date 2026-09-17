@@ -97,7 +97,7 @@ void main() {
     expect(find.textContaining('1.0 MB'), findsOneWidget);
   });
 
-  testWidgets('AI Settings tile reflects whether a backend is configured', (tester) async {
+  testWidgets('AI Status tile reflects whether a backend is configured', (tester) async {
     await tester.pumpWidget(wrap());
     await tester.pumpAndSettle();
 
