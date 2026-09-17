@@ -5,10 +5,16 @@ from app.services.rag_service import answer_question
 
 
 class FakeProvider(AIProvider):
+    provider_name = "fake"
+
     def __init__(self):
         self.last_prompt = None
         self.last_system = None
         self.embedding_calls: list[str] = []
+
+    @property
+    def embedding_model(self):
+        return "fake-embedding-model"
 
     async def generate_text(self, prompt, *, system=None):
         self.last_prompt = prompt

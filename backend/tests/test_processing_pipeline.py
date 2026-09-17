@@ -66,6 +66,12 @@ class FakeProvider(AIProvider):
     a real API — lets the pipeline's plumbing be tested without a key.
     """
 
+    provider_name = "fake"
+
+    @property
+    def embedding_model(self):
+        return "fake-embedding-model"
+
     async def generate_text(self, prompt, *, system=None):
         return "fake answer"
 

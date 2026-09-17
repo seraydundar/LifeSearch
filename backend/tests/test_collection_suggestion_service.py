@@ -7,9 +7,15 @@ from app.services.collection_suggestion_service import suggest_collections
 
 
 class FakeProvider(AIProvider):
+    provider_name = "fake"
+
     def __init__(self, name: str = "Docker Notları", *, fails: bool = False):
         self._name = name
         self._fails = fails
+
+    @property
+    def embedding_model(self):
+        return "fake-embedding-model"
 
     async def generate_text(self, prompt, *, system=None):
         if self._fails:
@@ -139,9 +145,15 @@ class _ConcurrencyTrackingProvider(AIProvider):
     concurrently rather than one at a time.
     """
 
+    provider_name = "fake"
+
     def __init__(self) -> None:
         self.active = 0
         self.max_active = 0
+
+    @property
+    def embedding_model(self):
+        return "fake-embedding-model"
 
     async def generate_text(self, prompt, *, system=None):
         self.active += 1

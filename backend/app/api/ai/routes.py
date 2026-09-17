@@ -7,6 +7,8 @@ admin key — it reuses the caller's own session token, so RLS applies
 exactly as it would if the client made the request itself.
 """
 
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from ...core.config import get_settings
@@ -14,11 +16,20 @@ from ...core.rate_limit import require_ai_rate_limit
 from ...core.security import CurrentUser
 from ...repositories.items_repository import SupabaseRestRepository
 from ...repositories.search_repository import SearchRepository
-from ...schemas.ai import AskRequest, AskResponse, ProcessItemRequest, ProcessItemResponse
+from ...schemas.ai import (
+    AskRequest,
+    AskResponse,
+    ProcessItemRequest,
+    ProcessItemResponse,
+    ReprocessStaleEmbeddingsResponse,
+)
 from ...schemas.search import SearchResult
-from ...services.ai_provider import get_ai_provider
+from ...services.ai_provider import AIProvider, get_ai_provider
 from ...services.processing_pipeline import process_item
 from ...services.rag_service import answer_question
+from ...services.reembedding_service import reembed_stale_items
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -100,3 +111,58 @@ async def ask_endpoint(
             for m in result["sources"]
         ],
     )
+
+
+@router.post(
+    "/reprocess-stale-embeddings",
+    response_model=ReprocessStaleEmbeddingsResponse,
+    status_code=202,
+)
+async def reprocess_stale_embeddings_endpoint(
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(require_ai_rate_limit),
+) -> ReprocessStaleEmbeddingsResponse:
+    """User-triggered fix for a provider/model switch (P3, docs/
+    requirements-audit-2026-09-13.md) — a Settings button for "I just
+    changed AI_PROVIDER, some of my search results might be wrong now."
+    Re-embeds only; see `reembedding_service.py`'s own docstring for why
+    that's a deliberately narrower scope than a full reprocess.
+
+    `stale_item_count` is known synchronously (one quick query) even
+    though the actual re-embedding happens in the background after this
+    response is sent — same "202 now, work after" shape as
+    `/process-item`, just without a `processing_status` the mobile app
+    would need to poll (see `reembed_stale_items`'s docstring for why).
+    """
+    try:
+        provider = get_ai_provider(get_settings())
+    except (RuntimeError, NotImplementedError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Re-embedding is unavailable: {error}",
+        ) from error
+
+    repo = SupabaseRestRepository(user.access_token)
+    try:
+        stale_item_ids = await repo.find_stale_chunk_item_ids(
+            provider.provider_name, provider.embedding_model
+        )
+    except Exception as error:
+        await repo.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not check for stale embeddings: {error}",
+        ) from error
+
+    background_tasks.add_task(_reembed_stale_and_close, repo, provider)
+    return ReprocessStaleEmbeddingsResponse(
+        status="accepted", stale_item_count=len(stale_item_ids)
+    )
+
+
+async def _reembed_stale_and_close(repo: SupabaseRestRepository, provider: AIProvider) -> None:
+    try:
+        count = await reembed_stale_items(repo, provider)
+        logger.info("re-embedded stale chunks", extra={"item_count": count})
+    finally:
+        await repo.aclose()

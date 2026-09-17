@@ -331,3 +331,49 @@ class SupabaseRestRepository:
         )
         response.raise_for_status()
         return response.json()
+
+    async def find_stale_chunk_item_ids(
+        self, current_provider: str, current_embedding_model: str
+    ) -> list[str]:
+        """Item ids (deduped) with at least one chunk embedded by a
+        different provider/model than the one currently configured (P3,
+        docs/requirements-audit-2026-09-13.md) — used by
+        `reembedding_service.py`'s on-request "reprocess stale
+        embeddings" action. RLS already scopes `chunks` to this caller's
+        own items (see `chunks_owner` in infra/supabase/migrations/
+        0015_replace_chunks_atomic.sql's referenced policy).
+
+        A chunk with a *null* `embedding_provider` (every chunk embedded
+        before this feature existed) is never considered stale — same
+        "null means trust it" contract as `match_chunks_hybrid`, see
+        0021_chunk_embedding_provenance.sql's own comment.
+        """
+        response = await self._client.get(
+            f"{self._base_url}/rest/v1/chunks",
+            params={
+                "select": "item_id",
+                "embedding_provider": "not.is.null",
+                "or": (
+                    f"(embedding_provider.neq.{current_provider},"
+                    f"embedding_model.neq.{current_embedding_model})"
+                ),
+            },
+        )
+        response.raise_for_status()
+        return sorted({row["item_id"] for row in response.json()})
+
+    async def get_chunks_for_item(self, item_id: str) -> list[dict[str, Any]]:
+        """`chunk_index`/`content`/`metadata` for every chunk an item
+        currently has, oldest index first — what `reembedding_service.py`
+        re-embeds without touching anything else about the chunk (P3).
+        """
+        response = await self._client.get(
+            f"{self._base_url}/rest/v1/chunks",
+            params={
+                "item_id": f"eq.{item_id}",
+                "select": "chunk_index,content,metadata",
+                "order": "chunk_index",
+            },
+        )
+        response.raise_for_status()
+        return response.json()

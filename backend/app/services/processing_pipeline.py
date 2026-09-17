@@ -226,6 +226,13 @@ async def process_item(
                 "content": piece,
                 "chunk_index": index,
                 "embedding": format_embedding_literal(embedding),
+                # P3 (docs/requirements-audit-2026-09-13.md): which
+                # AI_PROVIDER/model actually produced this vector — lets a
+                # later switch tell exactly which chunks now live in a
+                # stale, incomparable embedding space. See
+                # reembedding_service.py, the on-request fix for that.
+                "embedding_provider": provider.provider_name,
+                "embedding_model": provider.embedding_model,
                 "metadata": {"page_number": page_number} if page_number is not None else {},
             }
             for index, (piece, embedding, page_number) in enumerate(

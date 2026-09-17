@@ -5,8 +5,14 @@ from app.services.reranking_service import rerank_matches
 
 
 class _StubProvider(AIProvider):
+    provider_name = "fake"
+
     def __init__(self, response: str | Exception):
         self._response = response
+
+    @property
+    def embedding_model(self):
+        return "fake-embedding-model"
 
     async def generate_text(self, prompt, *, system=None):
         if isinstance(self._response, Exception):

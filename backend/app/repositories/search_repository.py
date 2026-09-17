@@ -34,6 +34,8 @@ class SearchRepository:
         date_after: datetime | None = None,
         date_before: datetime | None = None,
         include_private: bool = False,
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
     ) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {
             "query_embedding": format_embedding_literal(query_embedding),
@@ -50,6 +52,15 @@ class SearchRepository:
             payload["filter_after"] = date_after.isoformat()
         if date_before:
             payload["filter_before"] = date_before.isoformat()
+        # P3 (docs/requirements-audit-2026-09-13.md): excludes a chunk
+        # embedded by a different provider/model than the one live right
+        # now — see 0023_hybrid_search_embedding_provenance.sql. Omitted
+        # entirely (not sent as null) when the caller doesn't have both —
+        # the RPC's own default (no filtering) already covers that case,
+        # and PostgREST would otherwise happily send a literal "null".
+        if embedding_provider and embedding_model:
+            payload["filter_embedding_provider"] = embedding_provider
+            payload["filter_embedding_model"] = embedding_model
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(

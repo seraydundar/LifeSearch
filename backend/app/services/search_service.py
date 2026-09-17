@@ -51,6 +51,11 @@ async def semantic_search(
         date_after=date_after,
         date_before=date_before,
         include_private=include_private,
+        # P3 (docs/requirements-audit-2026-09-13.md): never compare this
+        # query's embedding against a chunk from a different provider's
+        # vector space — see match_chunks_hybrid's own migration note.
+        embedding_provider=provider.provider_name,
+        embedding_model=provider.embedding_model,
     )
     # Dedupe to a *shortlist* wider than the final `limit`, not straight
     # down to it — reranking a list already cut to size by RRF alone

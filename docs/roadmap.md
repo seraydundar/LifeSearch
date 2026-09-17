@@ -3429,3 +3429,62 @@ Backend: `ruff check` temiz, testler 209 → **213** (+4:
 `chunk_pages()`'in kendi 4 birim testi; 3 mevcut PDF testi de yeni
 sayfa-başına-chunk davranışına ve `page_number` metadata'sına göre
 güncellendi). Mobile değişmedi (bu tamamen backend/chunk üretimi).
+
+## Faz 24 — P3: embedding provider/model takibi ve isteğe bağlı reindex (⚠️ canlıya migrasyon uygulanmadan pushlanmamalı)
+
+Faz 23'ün kapsam dışı bıraktığı ikinci yarı: `AI_PROVIDER`/embedding
+modeli değişince eski chunk'ların embedding'leri artık sorgu
+vektörleriyle karşılaştırılabilir değil (farklı vektör uzayı). Üç karar
+kullanıcıyla netleştirildi: **(1)** elle tetiklenen bir buton (otomatik
+değil — beklenmedik bir AI faturası riski istenmedi), **(2)** geçiş
+sırasında eski embedding'li chunk'lar aramadan hariç tutulsun, **(3)**
+yalnızca embedding yenilensin (OCR/tag/entity'ye dokunulmasın).
+
+- **`0021_chunk_embedding_provenance.sql`**: `chunks`'a `embedding_provider`/
+  `embedding_model` (nullable). Var olan satırlar backfill edilmiyor —
+  bu özellik var olmadan önce hangi provider'ın embed ettiği hiç
+  kayıtlı değildi; `null` her yerde "güven, stale sayma" anlamına
+  geliyor (aksi hâlde bu migrasyonun kendisi, hiçbir şey değişmemiş bir
+  arşivin aramasını aniden boşaltırdı).
+- **`AIProvider`**: her alt sınıf artık `provider_name` (openai/gemini/
+  local) ve `embedding_model` (property) ifşa ediyor — `processing_pipeline
+  .py` her chunk'ı bunlarla etiketliyor.
+- **`0022_replace_chunks_atomic_with_provenance.sql`**: `replace_chunks_for_job`
+  RPC'si artık bu iki alanı da yazıyor (aynı advisory-lock/job-gate
+  gövdesi, bkz. 0015).
+- **`0023_hybrid_search_embedding_provenance.sql`**: `match_chunks_hybrid`'e
+  iki opsiyonel filtre parametresi — `search_service.semantic_search`
+  artık her zaman o anki provider/model'i geçiriyor, eşleşmeyen (ve
+  `null` olmayan) bir `embedding_provider`'lı chunk sorgudan hariç
+  tutuluyor. `related_items`/`find_duplicate_candidate` bilinçli olarak
+  bu turun dışında bırakıldı — onlar zaten best-effort sözleşmeli,
+  ikincil özellikler.
+- **`reembedding_service.py`** (yeni) + **`POST /ai/reprocess-stale-embeddings`**:
+  kullanıcının kendi arşivinde hangi item'ların stale olduğunu bulup
+  (`find_stale_chunk_item_ids`), her birinin var olan chunk **içeriğini**
+  değiştirmeden yalnızca embedding'ini yeniden üretiyor (chunk'ın
+  `page_number` metadata'sı dahil her şeyi koruyor). `items.processing_status`'a
+  hiç dokunmuyor — mobilin "İşleniyor..." polling'ini tetiklemiyor,
+  çünkü kullanıcı açısından değişen hiçbir şey yok, yalnızca dahili
+  vektör tazeleniyor.
+- **Mobile**: Settings'in "AI Status" satırına bir "Reprocess" butonu —
+  yalnızca backend yapılandırılmışken görünüyor, basınca sonucu
+  ("N öğe arka planda yeniden işleniyor" / "yeniden işlenecek öğe yok")
+  bir snackbar'da gösteriyor.
+
+**⚠️ Önemli — bu migrasyon önceki P3 migrasyonlarından farklı, geciktirmeden
+uygulanmalı**: entity türü genişletme (Faz 22) ve sayfa metadata'sı
+(Faz 23) canlıya hemen uygulanmasa da hiçbir şeyi bozmuyordu — bu
+`search_service.py` artık `match_chunks_hybrid`'i HER ZAMAN yeni iki
+parametreyle çağırıyor. Bu üç migrasyon (0021/0022/0023) canlı Supabase
+projesine uygulanmadan bu kod deploy edilirse **semantic search
+tamamen kırılır** (PostgREST fonksiyonu yeni parametre isimleriyle
+eşleştiremediği için 500 döner) — bu, gerçek bir test hesabıyla bu
+oturumda `localhost:8000` üzerinden doğrulandı. Aynı sebeple bu üçü,
+canlıda migrasyon uygulanana kadar bu oturumda uçtan uca test
+edilemedi (Faz 19/21/23'ün aksine).
+
+Backend: `ruff check` temiz, testler 213 → **224** (+11: `reembedding_service`
+için 6, yeni route için 4, `search_service`'in provider/model'i
+geçirdiğini doğrulayan 1). Mobile: `flutter analyze` temiz, testler 273 →
+**275** (+2, "Reprocess" butonunun backend yokken/varken görünürlüğü).

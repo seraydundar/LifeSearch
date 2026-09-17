@@ -22,6 +22,23 @@ from ..core.config import Settings
 
 
 class AIProvider(ABC):
+    #: Matches `Settings.ai_provider`'s own values ("openai" | "gemini" |
+    #: "local") — set by each subclass. Tagged onto every chunk this
+    #: provider embeds (P3, docs/requirements-audit-2026-09-13.md), so a
+    #: later switch can tell which chunks it actually produced.
+    provider_name: str
+
+    @property
+    @abstractmethod
+    def embedding_model(self) -> str:
+        """The exact model name `generate_embedding(s)` calls with —
+        together with `provider_name`, identifies the embedding space a
+        chunk's vector actually lives in (P3). Two different models can
+        share `provider_name` (e.g. Gemini's embedding model has been
+        swapped once already, see `GeminiProvider`'s docstring) and
+        produce vectors that aren't comparable to each other at all.
+        """
+
     @abstractmethod
     async def generate_text(self, prompt: str, *, system: str | None = None) -> str:
         """Used by RAG answers (Phase 7) and AI-generated summaries/tags."""
@@ -52,6 +69,8 @@ class OpenAIProvider(AIProvider):
     `chunks.embedding` column in infra/supabase/migrations/0001_init.sql
     (vector(1536) — text-embedding-3-small's native size)."""
 
+    provider_name = "openai"
+
     def __init__(
         self,
         api_key: str,
@@ -62,6 +81,10 @@ class OpenAIProvider(AIProvider):
         self._client = AsyncOpenAI(api_key=api_key)
         self._embedding_model = embedding_model
         self._text_model = text_model
+
+    @property
+    def embedding_model(self) -> str:
+        return self._embedding_model
 
     async def generate_text(self, prompt: str, *, system: str | None = None) -> str:
         messages = []
@@ -178,11 +201,17 @@ class GeminiProvider(AIProvider):
     model's embedding space is its own, unrelated to any other's, right
     dimension or not. Switching `AI_PROVIDER`, or bumping
     `embedding_model` to a different model than whatever embedded the
-    existing archive, needs a full re-embed of every existing chunk;
-    this backend has no migration for that, so don't do either on a live
-    archive without doing one by hand first.
+    existing archive, needs a full re-embed of every existing chunk —
+    `reembedding_service.py` (P3, docs/requirements-audit-2026-09-13.md)
+    is the on-request button that does this: `chunks.embedding_provider`/
+    `embedding_model` tag which space each chunk's vector actually lives
+    in, and search (`match_chunks_hybrid`) quietly excludes any chunk
+    tagged with a different one than what's currently configured, so a
+    switch never surfaces silently-wrong similarity scores while the
+    re-embed is pending.
     """
 
+    provider_name = "gemini"
     _EMBEDDING_DIMENSIONS = 1536  # chunks.embedding's fixed column size
 
     def __init__(
@@ -195,6 +224,10 @@ class GeminiProvider(AIProvider):
         self._client = genai.Client(api_key=api_key)
         self._embedding_model = embedding_model
         self._text_model = text_model
+
+    @property
+    def embedding_model(self) -> str:
+        return self._embedding_model
 
     async def generate_text(self, prompt: str, *, system: str | None = None) -> str:
         config = types.GenerateContentConfig(system_instruction=system) if system else None
@@ -281,9 +314,12 @@ class LocalProvider(AIProvider):
     `vector(1536)` column, exactly like `GeminiProvider` — see that
     class's docstring for why this is mathematically safe. Same caveat
     applies: switching `AI_PROVIDER` on a database with embeddings from
-    a *different* provider needs a full manual re-embed first.
+    a *different* provider needs a full manual re-embed first — see
+    `reembedding_service.py` for the (P3) button that now does exactly
+    that, on request.
     """
 
+    provider_name = "local"
     _EMBEDDING_DIMENSIONS = 1536  # chunks.embedding's fixed column size
 
     def __init__(
@@ -301,6 +337,10 @@ class LocalProvider(AIProvider):
         self._vision_model = vision_model
         self._whisper_model_size = whisper_model_size
         self._whisper_model: Any = None  # lazily loaded — see _get_whisper_model()
+
+    @property
+    def embedding_model(self) -> str:
+        return self._embedding_model
 
     async def generate_text(self, prompt: str, *, system: str | None = None) -> str:
         messages = []

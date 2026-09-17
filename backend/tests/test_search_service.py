@@ -5,6 +5,8 @@ from app.services.search_service import find_related_items, semantic_search
 
 
 class FakeProvider(AIProvider):
+    provider_name = "fake"
+
     def __init__(self, rerank_response: str = "fake"):
         # "fake" deliberately parses into zero usable indices (see
         # reranking_service._parse_order), so every pre-existing test in
@@ -12,6 +14,10 @@ class FakeProvider(AIProvider):
         # plain RRF/dedupe order — rerank_matches falls back to it.
         self._rerank_response = rerank_response
         self.generate_text_calls = 0
+
+    @property
+    def embedding_model(self):
+        return "fake-embedding-model"
 
     async def generate_text(self, prompt, *, system=None):
         self.generate_text_calls += 1
@@ -168,6 +174,21 @@ async def test_include_private_is_forwarded_when_reveal_is_on():
     await semantic_search("query", repo, FakeProvider(), include_private=True)
 
     assert repo.last_hybrid_call["include_private"] is True
+
+
+@pytest.mark.asyncio
+async def test_passes_the_current_providers_identity_through_for_embedding_provenance():
+    """P3 (docs/requirements-audit-2026-09-13.md): a query's embedding must
+    never be compared against a chunk from a different provider/model's
+    vector space — match_chunks_hybrid needs to know which one is "current"
+    to exclude a mismatch (see 0023_hybrid_search_embedding_provenance.sql).
+    """
+    repo = FakeSearchRepo([])
+
+    await semantic_search("query", repo, FakeProvider())
+
+    assert repo.last_hybrid_call["embedding_provider"] == "fake"
+    assert repo.last_hybrid_call["embedding_model"] == "fake-embedding-model"
 
 
 @pytest.mark.asyncio

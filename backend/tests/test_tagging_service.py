@@ -5,9 +5,15 @@ from app.services.tagging_service import generate_tags
 
 
 class FakeProvider(AIProvider):
+    provider_name = "fake"
+
     def __init__(self, response: str = "docker, container, devops", *, fails: bool = False):
         self._response = response
         self._fails = fails
+
+    @property
+    def embedding_model(self):
+        return "fake-embedding-model"
 
     async def generate_text(self, prompt, *, system=None):
         if self._fails:

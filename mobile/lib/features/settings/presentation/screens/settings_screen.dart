@@ -9,6 +9,7 @@ import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../domain/storage_usage.dart';
 import '../providers/account_providers.dart';
+import '../providers/ai_maintenance_providers.dart';
 import '../providers/app_lock_providers.dart';
 import '../providers/export_providers.dart';
 import '../providers/theme_mode_provider.dart';
@@ -28,9 +29,30 @@ class SettingsScreen extends ConsumerWidget {
     final aiAvailable = ref.watch(apiClientProvider) != null;
     final appLockEnabled = ref.watch(appLockEnabledProvider).valueOrNull ?? false;
     final appLockSupported = ref.watch(appLockDeviceSupportedProvider).valueOrNull ?? false;
+    final isReprocessing = ref.watch(reprocessStaleEmbeddingsControllerProvider).isLoading;
 
     ref.listen(exportControllerProvider, (previous, next) {
       if (next.hasError) context.showErrorSnackBar('Dışa aktarılamadı.');
+    });
+    // P3 (docs/requirements-audit-2026-09-13.md): reports the result
+    // either way — a silent "accepted" for a button press the user is
+    // actively watching would look like nothing happened.
+    ref.listen(reprocessStaleEmbeddingsControllerProvider, (previous, next) {
+      if (next.hasError) {
+        context.showErrorSnackBar('Yeniden işleme başlatılamadı.');
+        return;
+      }
+      final count = next.valueOrNull;
+      if (count == null || (previous?.isLoading ?? false) == false) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            count == 0
+                ? 'Yeniden işlenecek eski embedding bulunamadı.'
+                : '$count öğe arka planda yeniden işleniyor.',
+          ),
+        ),
+      );
     });
     ref.listen(accountControllerProvider, (previous, next) {
       if (next.hasError) {
@@ -93,6 +115,25 @@ class SettingsScreen extends ConsumerWidget {
                   ? 'AI destekli işleme aktif — embedding, arama ve Ask AI bu sunucu üzerinden çalışıyor'
                   : 'Backend yapılandırılmamış — AI destekli işleme (arama, Ask AI) devre dışı',
             ),
+            // P3 (docs/requirements-audit-2026-09-13.md): the one actual
+            // action this row can trigger — everything else about "AI
+            // Status" is read-only, see that rename's own note above.
+            trailing: aiAvailable
+                ? TextButton(
+                    onPressed: isReprocessing
+                        ? null
+                        : () => ref
+                            .read(reprocessStaleEmbeddingsControllerProvider.notifier)
+                            .reprocess(),
+                    child: isReprocessing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Reprocess'),
+                  )
+                : null,
           ),
           const Divider(),
           ListTile(

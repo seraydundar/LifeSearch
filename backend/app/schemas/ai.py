@@ -34,3 +34,13 @@ class AskResponse(BaseModel):
     question: str
     answer: str
     sources: list[SearchResult]
+
+
+class ReprocessStaleEmbeddingsResponse(BaseModel):
+    """P3 (docs/requirements-audit-2026-09-13.md) — see
+    reembedding_service.py. `stale_item_count` is known synchronously
+    (a quick query) even though the actual re-embedding runs in the
+    background after this response is sent."""
+
+    status: str
+    stale_item_count: int

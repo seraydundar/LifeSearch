@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,7 +37,13 @@ void main() {
         // sibling tests for the same real-DB pattern used where it's
         // actually needed (a one-shot write, never a live `.watch()`).
         pendingSyncCountProvider.overrideWith((ref) => Stream.value(0)),
-        apiClientProvider.overrideWithValue(null),
+        // A real (never-called-in-these-tests) Dio when `aiAvailable` —
+        // only ever used to check whether the "AI Status" row's
+        // aiAvailable-gated UI (P3, docs/requirements-audit-2026-09-13.md)
+        // renders, not to exercise a real network call.
+        apiClientProvider.overrideWithValue(
+          aiAvailable ? Dio(BaseOptions(baseUrl: 'http://backend.test')) : null,
+        ),
         appLockServiceProvider.overrideWithValue(appLock ?? FakeAppLockService()),
         themePreferenceServiceProvider.overrideWithValue(
           themePreference ?? FakeThemePreferenceService(),
@@ -102,6 +109,25 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('devre dışı'), findsOneWidget);
+  });
+
+  // P3 (docs/requirements-audit-2026-09-13.md): the "Reprocess" button is
+  // the row's one actual action — it must not be offered when there's no
+  // backend to send the request to.
+  group('Reprocess stale embeddings button (P3, docs/requirements-audit-2026-09-13.md)', () {
+    testWidgets('is not shown when no backend is configured', (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reprocess'), findsNothing);
+    });
+
+    testWidgets('is shown once a backend is configured', (tester) async {
+      await tester.pumpWidget(wrap(aiAvailable: true));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reprocess'), findsOneWidget);
+    });
   });
 
   testWidgets('Export tile is present and tappable', (tester) async {
