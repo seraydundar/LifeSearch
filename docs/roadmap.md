@@ -2881,3 +2881,274 @@ değiştirebiliyordu.
 Backend: `ruff check` temiz (`.venv/bin/ruff`), testler 181 → **185**
 (+4, yukarıdaki yeni testler) — CI'yı taklit eden temiz bir Docker
 kopyasında (`.env`'siz) doğrulandı.
+
+#### Faz 13, madde 3-4: hesap ve private erişim izolasyonu (P1-01/P1-02) ✅
+
+`docs/requirements-audit-2026-09-13.md` denetiminin bulduğu en öncelikli
+iki sorun. Faz 13'ün ilk iki maddesi kod içi bir tekrar-tarama iken, bu
+ikisi dış denetimin doğrudan işaret ettiği P1 kalemleri — buradan
+itibaren fazlar iç tarama yerine denetimin öncelik sırasını (P1 → P2 →
+P3) izliyor.
+
+**P1-01 — hesap değişiminde arama/sohbet verisi izole değildi**: tek bir
+`ProviderScope` korunduğundan, A hesabında üretilen arama sonucu ve
+sohbet mesajları B hesabına geçince bellekte kalıyordu.
+
+- `SearchController`/`ChatController` artık `currentUserIdProvider`'ı
+  dinliyor; hesap değişince (signed-out dahil) sonuçları/sohbeti
+  temizliyor.
+- `privateItemsRevealedProvider` (`AppLockGate`) artık hesap
+  değişiminde de sıfırlanıyor — önceden yalnız arka plana atılmada
+  sıfırlanıyordu.
+- Koleksiyon detay sorgusu (`watchItemsForCollection`) artık yalnız
+  `collectionId`'yi değil, koleksiyonun ve item'ların gerçekten
+  signed-in user'a ait olduğunu da doğruluyor.
+
+**P1-02 — private izolasyonu tek yerde ve kökte uygulanmıyordu**: RAG
+retrieval'ı ve bazı erişim yolları private kaydı filtrelemiyordu.
+
+- Yeni migrasyon: `match_chunks_hybrid`/`related_items` artık private
+  item'ları SQL'de varsayılan olarak hariç tutuyor (`include_private`
+  parametresi, yalnız reveal açıkken `true`) — backend bu parametreyi
+  service/schema/route katmanlarında uçtan uca taşıyor;
+  `rag_service` bunu hiç göndermiyor, yani private içerik LLM
+  bağlamına asla giremiyor.
+- Mobile: `SearchController.search()` ve `relatedItemsProvider` artık
+  `privateItemsRevealedProvider`'ı backend'e `includePrivate` olarak
+  iletiyor; offline TF-IDF arama ve koleksiyon detayı aynı kuralı
+  savunma katmanı olarak ayrıca uyguluyor.
+- `ItemByIdLoader` (deep link/route-restore erişim yolu) artık reveal
+  kapalıyken private item'ı çözümlemiyor.
+- `ItemDetailScreen`/`NoteEditorScreen`: zaten açık olan bir private
+  item'ın ekranı artık reveal arka plana geçişte kapanınca kendini
+  kilitliyor (`PrivateItemLockedView`) ve "Kilidi Aç" ile tekrar
+  biyometrik/PIN doğrulaması istiyor. Kullanıcının kendi item'ını o an
+  private yapması ekranı kilitlemiyor (mevcut davranış korundu).
+
+Backend: 188 test yeşil (185 → 188, +3). Flutter: `flutter analyze`
+temiz, 237 test yeşil (217 → 237, +20).
+
+## Faz 14 — dış denetimin öncelik sırasını izleyen ikinci tur: senkron ve iş bütünlüğü (P1-03/P1-04/P1-05/P1-06) ✅
+
+`docs/requirements-audit-2026-09-13.md`'nin Faz 2 önceliklerini
+(hesap/private izolasyonundan sonraki en yüksek risk grubu) giderir.
+
+**P1-03 — kuyruk kullanıcıya bağlı, ama işlem boyunca oturum sabit
+değildi**:
+
+- `RemoteItemDataSource.uploadFile` artık `userId`'yi tek seferde
+  sabitliyor — önceden storage path'in ve item upsert'in `user_id`'si
+  ayrı ayrı okunuyordu; arada hesap değişirse ikisi farklı kullanıcıyı
+  gösterebiliyordu. Artık tutarsızlık RLS reddiyle güvenli şekilde
+  başarısız oluyor.
+- `ItemLocalDataSource`/`CollectionLocalDataSource`'a `transaction()`
+  eklendi; `OfflineItemRepository`/`OfflineCollectionRepository`'deki
+  yerel yazma + kuyruğa ekleme çiftleri artık tek Drift
+  transaction'ında — uygulama arada kapanırsa artık kuyruksuz bir
+  yerel değişiklik kalmıyor (`SyncService._pullRemote` bunu önceden
+  "silinmiş" sayıp yerelden de siliyordu).
+
+**P1-04 — atomik RPC'ler bütün AI çıktısını kapsamıyordu**: chunk/tag/
+entity RPC'leri eski işi reddediyordu ama başlık/açıklama/EXIF,
+duplicate flag ve item status yazımları job'a bağlı değildi.
+
+- Yeni migrasyon: `update_item_status_for_job`,
+  `update_item_fields_for_job`, `replace_item_content_for_job`,
+  `mark_duplicate_for_job` — chunk/tag/entity RPC'leriyle aynı "en yeni
+  iş" kilit protokolü. Artık eski iş tamamlandıktan sonra hata verirse
+  item'ı `failed` yapamıyor; eski görsel analizi yeni açıklamayı
+  ezemiyor.
+
+**P1-05 — background iş kabulü ve kurtarma sınırlıydı**:
+
+- `create_job` artık `process_item()`'ın içinde değil, `/ai/process-item`
+  route handler'ında "202 accepted" dönmeden ÖNCE çağrılıyor —
+  `BackgroundTasks` yalnız yanıt gönderildikten sonra çalıştığından,
+  arada süreç ölürse artık iz bırakmayan değil, kurtarılabilir bir
+  `processing_jobs` satırı kalıyor. `create_job` hatası da artık
+  sessizce kaybolmuyor, normal başarısız istek olarak dönüyor (mobil
+  taraf zaten `trigger_ai`'ı kuyruğa alıp yeniden deniyor).
+- `job_recovery.py` başlangıç taraması artık yalnız `processing`
+  değil, `pending` işleri de kapsıyor.
+
+**P1-06 — URL fetch DNS rebinding açığı**:
+
+- `url_service.py` artık güvenlik kontrolünün doğruladığı IP'ye
+  doğrudan bağlanıyor (Host/SNI gerçek hostname olarak kalıyor) —
+  ikinci, bağımsız bir DNS çözümlemesi kalmadığından rebinding
+  saldırısının araya girecek bir penceresi yok.
+
+**Kapsam dışı bırakılanlar** (raporda da belirtildiği gibi ayrı bir ürün
+kararı gerektiriyor): tam kalıcı worker/queue, çoklu instance
+lease/timeout, uzun işler için ara ilerleme bildirimi.
+
+Backend: 197 test yeşil (191 → 197, +6), `ruff check` temiz. Flutter:
+`flutter analyze` temiz, 240 test yeşil (237 → 240, +3).
+
+## Faz 15 — MVP içerik/arama boşlukları (P2-01/P2-02/P2-04/P2-05/P2-06) ✅
+
+`docs/requirements-audit-2026-09-13.md`'nin Faz 3 önceliklerinden bir
+kısmını giderir — anahtar gerektirmeyen veya düşük riskli P2 kalemleri.
+
+- **P2-02 (doğal dil ayrıştırma)**: `query_parser.py` tür anahtar
+  kelimelerini artık uzundan kısaya doğru deniyor. Eski sözlük
+  sırasında "notlar" kısa anahtar kelimesi "sesli notlar" içinde de
+  `\b`-sınırlı bir kelime olarak eşleştiğinden, "sesli notlar" hiç
+  denenmeden tür yanlışlıkla "note" çıkıyor ve `cleaned_query`'de
+  "sesli" öbek hâlinde kalıyordu.
+- **P2-05 (çıkarılan metin saklanmıyordu)**: `processing_pipeline.py`
+  artık PDF ve document dallarında da `replace_item_content`
+  çağırıyor (image/audio/url zaten çağırıyordu).
+- **P2-04 (karma PDF'de taranmış sayfalara OCR yoktu)**:
+  `document_service.py`'ye `extract_pdf_text_per_page` eklendi;
+  `render_pdf_pages_to_images` artık belirli sayfa indeksleri de kabul
+  ediyor. Pipeline artık yalnız metni olmayan sayfaları OCR'lıyor —
+  önceden bütün belge boşsa OCR çalışıyordu, tek bir taranmış sayfa
+  (ör. imzalanıp geri taranmış bir sayfa) metni olan bir PDF içinde
+  sessizce kayboluyordu.
+- **P2-01 (hybrid arama)**: yeni migrasyon — `match_chunks_hybrid`
+  artık `keyword_rank=0` olan chunk'lara RRF keyword teriminde gerçek
+  bir sıfır veriyor (önceden fiziksel tarama sırasına göre rastgele
+  bir "şanslı" sıra alabiliyorlardı). `keyword_rank` artık chunk
+  içeriği VE item başlığının en iyisi (`greatest`) — yalnız chunk
+  metnine bakmıyor. Tag/entity'yi FTS'ye dahil etme ayrı, daha büyük
+  bir iş olarak bırakıldı.
+- **P2-06 (screenshot ayrımı yoktu)**: `capture_sheet.dart`'a ayrı bir
+  "Choose Screenshot" seçeneği eklendi; Library'nin screenshot filtresi
+  ve backend'in screenshot'a özel vision prompt'u artık bu akıştan da
+  gerçekten kullanılabiliyor.
+
+**Kapsam dışı bırakılanlar**: tag/entity'yi FTS'ye dahil etme, 30 sayfa
+OCR sınırı aşıldığında kullanıcıya kısmi işleme bildirimi, summary/
+language/category üretimi.
+
+Backend: 204 test yeşil (199 → 204, +5), `ruff check` temiz. Flutter:
+`flutter analyze` temiz (bu tur için özel widget testi eklenmedi —
+FilePicker'ın gerçek native çağrısı test edilebilir bir soyutlama
+arkasında değil; mevcut Choose Image/Take Photo/Record Audio akışlarının
+hiçbiri de test edilmiyor, aynı ön koşul).
+
+## Faz 16 — kalıcı tema tercihi ve Library'de türe göre sıralama (P3) ✅
+
+`docs/requirements-audit-2026-09-13.md`'nin P3 (ileri aşama/geliştirme)
+kalemlerinden ikisini giderir.
+
+- **Tema tercihi artık kalıcı**: yeni `ThemePreferenceService`
+  (`AppLockService` ile aynı desen — `flutter_secure_storage`; Drift'te
+  henüz genel bir key-value ayarlar tablosu yok).
+  `themeModeProvider` `StateProvider`'dan `AsyncNotifierProvider`'a
+  taşındı — önceden yalnız bellekte tutuluyordu, uygulama yeniden
+  açılınca her zaman sistem temasına dönüyordu.
+- **Library'de türe göre sıralama**: `LibrarySort.byType` eklendi — tür
+  adına göre alfabetik gruplama, aynı tür içinde en yeni önce. AppBar
+  sıralama menüsüne "Türe göre" seçeneği eklendi.
+
+Backend değişmedi. Flutter: `flutter analyze` temiz, 250 test yeşil
+(240 → 250, +10).
+
+## Faz 17 — RAG sohbette çok turlu bağlam (P2-03) ✅
+
+`docs/requirements-audit-2026-09-13.md`: "önceki mesajlar backend'e
+gönderilmiyor" — bir takip sorusu ("peki onun alternatifi ne?") önceki
+soru/cevap hiç yaşanmamış gibi yanıtlanıyordu.
+
+- `AiChatRepository.ask` artık conversation history'yi (yeni soru
+  hariç, eskiden yeniye) backend'e gönderiyor; hata baloncukları
+  history'ye dahil edilmiyor (bunlar modelin kendi sözü değil,
+  uygulamanın fallback metni).
+- Backend: `AskRequest.history`, `rag_service.answer_question`'a
+  taşınıyor; prompt'a "Önceki konuşma" bölümü olarak ekleniyor —
+  retrieval hâlâ yalnız yeni soru metniyle yapılıyor (bağlamı yalnız
+  modelin "onun"/"peki o" gibi ifadeleri çözmesi için kullanıyoruz,
+  embedding'i bulanıklaştırmıyoruz). En fazla son 10 tur, sunucu
+  tarafında sabit.
+
+Backend: 208 test yeşil (204 → 208, +4), `ruff check` temiz. Flutter:
+`flutter analyze` temiz, 251 test yeşil (250 → 251, +1).
+
+## P2-10 — README güncellendi ✅
+
+`docs/requirements-audit-2026-09-13.md`'nin belirttiği eski bilgileri
+düzeltir:
+
+- Durum notu artık eski (2026-09-10) denetimin çoktan giderilmiş
+  sorunlarını değil, güncel 2026-09-13 denetimini ve gerçekten kalan
+  açık kalemi (canlı iki hesap Supabase/RLS kabul testi) referans
+  alıyor.
+- Test sayısı: 208 backend + 251 mobile (eski tek "234" sayısı
+  yerine).
+- Mimari diyagramda `/rag/ask` → `/ai/ask` (gerçek yol) düzeltildi;
+  gerçekte hiç kullanılmayan Supabase Realtime düğümü kaldırıldı,
+  yerine gerçek mekanizma (`SyncService`'in pull/poll döngüsü)
+  açıklandı; `/collections/` eklendi.
+
+Kod değişmedi (yalnız README).
+
+## Faz 18 — uzak fetch-by-id ve signed URL retry (P2-09) ✅
+
+`docs/requirements-audit-2026-09-13.md`'nin P2-09 kalemini giderir:
+henüz bu cihaza hiç senkron olmamış bir item'a arama/RAG/related
+sonuçlarından tıklamak yalnızca elde bulunan "trimmed stand-in"i
+(id/title/type) gösterebiliyordu; signed URL yüklemesi başarısız
+olduğunda da buton sonsuza kadar devre dışı kalıyordu.
+
+**Uzak fetch-by-id**:
+
+- `RemoteItemDataSource.fetchById` eklendi (zaten var olan ama hiç
+  kullanılmayan `rowToItem`'ı ilk kez kullanıma sokuyor).
+- `ItemToLocalCompanionX` (`local_item_x.dart`) — `Item` →
+  `LocalItemsCompanion`, `toDomainItem`'ın tersi; `SyncService
+  ._pullRemote`'un alan eşlemesini tekrarlamadan tek bir item'ı yerel
+  önbelleğe yazabilmek için.
+- `OfflineItemRepository.findById` artık önce yerelde arıyor, bulamazsa
+  uzaktan çözüyor ve sonucu yerel önbelleğe yazıyor (bir sonraki bakış
+  ve `watchItems`/`watchItemByIdProvider` bunu ağ isteği olmadan
+  görüyor). Offline'ken veya gerçek bir hata durumunda sessizce `null`
+  dönüyor — `ItemByIdLoader` ve çağıranların zaten sahip olduğu "henüz
+  senkron değil" sözleşmesi korunuyor.
+
+**Signed URL retry**: `ItemDetailScreen`'de signed URL alma artık
+hatayı yakalıyor ve görünür bir "Tekrar Dene" durumuna dönüyor (görsel
+için kart, dosya için buton) — önceden "hâlâ yükleniyor" ile "başarısız
+oldu" ayrımı yoktu.
+
+Backend değişmedi. Flutter: `flutter analyze` temiz, 257 test yeşil
+(251 → 257, +6).
+
+---
+
+## Şu an neredeyiz (14 Eylül 2026 itibarıyla)
+
+`docs/requirements-audit-2026-09-13.md`'nin önerdiği uygulama sırasının
+ilk üç maddesi (hesap/private izolasyonu, senkron/iş bütünlüğü, MVP
+içerik/arama boşluklarının büyük kısmı) ve P3'ün iki kalemi kapatıldı.
+Son commit `ed9669e` (Faz 18, 2026-09-14). Backend 208, mobile 257 test
+yeşil.
+
+**Denetimin önerdiği sırada hâlâ açık olanlar:**
+
+- **P1-07 — gerçek MVP kabul kanıtı yok**: iki gerçek Supabase test
+  hesabıyla migrasyon/RLS/Storage izolasyonunun canlı doğrulanması;
+  dokümandaki PDF + screenshot + not → "Flutter state management
+  hakkında kaydettiğim şeyleri bul" → "Bunlara göre Riverpod neden
+  kullanılıyor?" senaryosunun gerçek bir OpenAI key ile uçtan uca
+  çalıştırılıp kaydedilmesi. Denetimin önerdiği uygulama sırasında
+  4. adım.
+- **P2-07 — offline arama hâlâ sınırlı**: etiketler yerel DB'ye
+  senkronize edilmiyor (offline'da aranamıyor); OCR/PDF/transkript
+  metni de yerel arama kapsamında değil (yalnızca not içeriği/
+  açıklama/başlık/link URL'i aranabiliyor).
+- **P2-08 — Export/Settings kapsamı eksik**: JSON export koleksiyon/
+  üyelik, entity'ler ve OCR/AI alanlarının tamamını içermiyor;
+  sorgular sayfalamasız (büyük arşivde sunucu satır limitine
+  takılabilir); AI Settings hâlâ salt-okunur bir durum metni.
+- **P3'ün geri kalanı**: entity türlerinin genişletilmesi (Product/
+  Price/Website/Technology), chunk/source metadata (sayfa/bölüm izi,
+  embedding provider/model/version), Windows hedefi ve web/macOS'ta
+  eksik kamera/dosya/giriş akışları, büyük arşiv için sync/arama
+  ölçek/gecikme ölçümü.
+
+Denetimin önerdiği 5. ve son adım (export/AI Settings/type-sort/kalıcı
+tema/README-demo tamamlama) kısmen bitti — type-sort ve kalıcı tema
+(Faz 16) ile README (P2-10) kapandı, export/AI Settings (P2-08) hâlâ
+açık.
