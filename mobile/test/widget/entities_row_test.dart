@@ -49,6 +49,30 @@ void main() {
     expect(find.byIcon(Icons.place_outlined), findsOneWidget);
   });
 
+  // P3 (docs/requirements-audit-2026-09-13.md): product/price/website/
+  // technology added to the original person/place/organization/date set.
+  testWidgets('shows a chip with a type-specific icon for each newly added type',
+      (tester) async {
+    final repo = FakeItemRepository()
+      ..entitiesByItemId['item-1'] = const [
+        ExtractedEntity(name: 'iPhone 17 Pro', type: EntityType.product),
+        ExtractedEntity(name: '1200 TL', type: EntityType.price),
+        ExtractedEntity(name: 'github.com', type: EntityType.website),
+        ExtractedEntity(name: 'Flutter', type: EntityType.technology),
+      ];
+    await tester.pumpWidget(wrap(repo));
+    await tester.pumpAndSettle();
+
+    expect(find.text('iPhone 17 Pro'), findsOneWidget);
+    expect(find.text('1200 TL'), findsOneWidget);
+    expect(find.text('github.com'), findsOneWidget);
+    expect(find.text('Flutter'), findsOneWidget);
+    expect(find.byIcon(Icons.shopping_bag_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.sell_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.link_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.memory_outlined), findsOneWidget);
+  });
+
   testWidgets('tapping an entity opens search with its name as the query', (tester) async {
     final repo = FakeItemRepository()
       ..entitiesByItemId['item-1'] = const [

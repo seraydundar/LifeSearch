@@ -7,7 +7,21 @@ asked a different question of.
 
 from .ai_provider import AIProvider
 
-_VALID_TYPES = {"person", "place", "organization", "date"}
+_VALID_TYPES = {
+    "person",
+    "place",
+    "organization",
+    "date",
+    # P3 (docs/requirements-audit-2026-09-13.md): the original four types
+    # left out anything commercial/technical — a note about a purchase or
+    # a tool couldn't tag the thing itself as a structured entity, only as
+    # a free-text tag. See 0020_entity_types_extend.sql for the matching
+    # check constraint.
+    "product",
+    "price",
+    "website",
+    "technology",
+}
 
 
 async def extract_entities(
@@ -30,11 +44,16 @@ async def extract_entities(
 
     prompt = (
         f"Aşağıdaki metinden en fazla {max_entities} varlık (entity) çıkar: "
-        "kişi adları, yer adları, kurum/organizasyon adları ve tarihler. "
-        "Her satıra bir tane olacak şekilde 'tür: ad' biçiminde yaz (tür "
-        "şunlardan biri olmalı: person, place, organization, date). Başka "
-        "hiçbir şey yazma, açıklama ekleme.\n\n"
-        "Örnek:\nperson: Ahmet Yılmaz\nplace: İstanbul\ndate: 15 Ocak 2026\n\n"
+        "kişi adları, yer adları, kurum/organizasyon adları, tarihler, "
+        "ürün adları, fiyatlar, web sitesi/URL'ler ve teknoloji/araç adları "
+        "(programlama dili, framework, kütüphane, yazılım ürünü). Her "
+        "satıra bir tane olacak şekilde 'tür: ad' biçiminde yaz (tür "
+        "şunlardan biri olmalı: person, place, organization, date, "
+        "product, price, website, technology). Başka hiçbir şey yazma, "
+        "açıklama ekleme.\n\n"
+        "Örnek:\nperson: Ahmet Yılmaz\nplace: İstanbul\ndate: 15 Ocak 2026\n"
+        "product: iPhone 17 Pro\nprice: 1200 TL\nwebsite: github.com\n"
+        "technology: Flutter\n\n"
         f"{text[:2000]}"
     )
     try:

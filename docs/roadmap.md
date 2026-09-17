@@ -3358,3 +3358,33 @@ zorunluluğu değil): entity türü genişletme, chunk/source metadata,
 Windows/web/macOS platform boşlukları, büyük arşiv için ölçek/gecikme
 benchmark'ı — ve mobil arayüzün kendisinden elle bir dokunuş turu
 (yukarıdaki kapsam-dışı notu).
+
+## Faz 22 — P3: entity türü genişletme (Product/Price/Website/Technology) ✅
+
+`docs/requirements-audit-2026-09-13.md`'nin P3 kaleminin ilki: entity
+extraction yalnızca person/place/organization/date tanıyordu — bir satın
+alma veya bir araçtan bahseden bir not, o şeyin kendisini yapılandırılmış
+bir entity olarak değil, yalnızca serbest metin bir tag olarak
+işaretleyebiliyordu.
+
+- **`0020_entity_types_extend.sql`** (yeni migrasyon): `entities.type`
+  check constraint'i `product`/`price`/`website`/`technology` ile
+  genişletildi — eski dört değer yeni sekizin bir alt kümesi olduğundan
+  düz bir `DROP CONSTRAINT` + `ADD CONSTRAINT`, veri kaybı/dönüşüm yok.
+- **`entity_extraction_service.py`**: `_VALID_TYPES` sekize çıktı,
+  prompt yeni dört türü de örnekleriyle birlikte istiyor.
+- **Mobile**: `EntityType` enum'a dört yeni değer, `EntitiesRow`'un
+  tür→ikon eşlemesine karşılıkları (`shopping_bag_outlined`,
+  `sell_outlined`, `link_outlined`, `memory_outlined`).
+- **Canlı veritabanına uygulanmadı**: bu oturumun Supabase projesine
+  doğrudan bağlantısı yalnızca `anon`/`service_role` API key'leri
+  üzerinden (PostgREST) — DDL (`ALTER TABLE`) çalıştırmak için gereken
+  doğrudan Postgres şifresi veya bir Supabase Management API token'ı
+  elde yok. Migrasyon dosyası `apply_migrations.sql`'in izlediği aynı
+  yolla (Supabase Dashboard → SQL Editor'a yapıştırıp çalıştırma) elle
+  uygulanmalı — bu proje için önceki turlarda da migrasyonların canlıya
+  uygulanma şekli hep bu oldu.
+
+Backend: `ruff check` temiz, testler 208 → **209** (+1, dört yeni türü
+ayrıştırma testi). Mobile: `flutter analyze` temiz, testler 272 →
+**273** (+1, dört yeni tür için chip/ikon testi).

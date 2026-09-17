@@ -11,6 +11,11 @@ IconData _entityTypeIcon(EntityType type) {
     EntityType.place => Icons.place_outlined,
     EntityType.organization => Icons.apartment_outlined,
     EntityType.date => Icons.event_outlined,
+    // P3 (docs/requirements-audit-2026-09-13.md):
+    EntityType.product => Icons.shopping_bag_outlined,
+    EntityType.price => Icons.sell_outlined,
+    EntityType.website => Icons.link_outlined,
+    EntityType.technology => Icons.memory_outlined,
   };
 }
 

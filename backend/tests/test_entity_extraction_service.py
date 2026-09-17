@@ -83,3 +83,25 @@ async def test_the_same_name_with_different_types_is_kept_separately():
         {"name": "Washington", "type": "organization"},
         {"name": "Washington", "type": "place"},
     ]
+
+
+# P3 (docs/requirements-audit-2026-09-13.md): product/price/website/
+# technology added to the original person/place/organization/date set —
+# see 0020_entity_types_extend.sql for the matching check constraint.
+@pytest.mark.asyncio
+async def test_parses_the_four_newly_added_types():
+    response = (
+        "product: iPhone 17 Pro\n"
+        "price: 1200 TL\n"
+        "website: github.com\n"
+        "technology: Flutter"
+    )
+
+    entities = await extract_entities("some text", FakeProvider(response))
+
+    assert entities == [
+        {"name": "iPhone 17 Pro", "type": "product"},
+        {"name": "1200 TL", "type": "price"},
+        {"name": "github.com", "type": "website"},
+        {"name": "Flutter", "type": "technology"},
+    ]
