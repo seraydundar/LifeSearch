@@ -3152,3 +3152,64 @@ Denetimin önerdiği 5. ve son adım (export/AI Settings/type-sort/kalıcı
 tema/README-demo tamamlama) kısmen bitti — type-sort ve kalıcı tema
 (Faz 16) ile README (P2-10) kapandı, export/AI Settings (P2-08) hâlâ
 açık.
+
+## Faz 19 — offline arama: etiket ve OCR/PDF/transkript metni senkronu (P2-07) ✅
+
+`docs/requirements-audit-2026-09-13.md`'nin P2-07 kalemini giderir: "Tag
+cache yok. OCR/PDF/transkript yerel cache ve aramada yok." Backend'e hiç
+dokunmadan tamamen mobil tarafta — bu iki alan zaten doğrudan Supabase'e
+(RLS'nin kendisi zaten kapsam sınırlıyor) konuşuyor, `items` tablosunun
+kendisi gibi.
+
+- **Local Drift şeması v8→v9**: `LocalItems.extractedText` (yeni sütun,
+  `item_contents.raw_text`'i yansıtıyor — taranmış bir PDF/screenshot'ın
+  OCR metni, bir PDF/DOCX/TXT'nin çıkarılan gövdesi, bir ses transkripti
+  veya kazınmış bir web sayfasının makale metni; görsellerde vision
+  açıklaması + OCR metninin birleşimi, bkz. `processing_pipeline.py`) ve
+  yeni `LocalTags` tablosu (`item_tags`/`tags`'in yansıması, `(itemId,
+  name)` birincil anahtarlı — `LocalCollectionItems` gibi kendi
+  `userId`'si yok, kapsamlama `LocalItems`'a join ile yapılıyor).
+- **`RemoteItemDataSource`**: `fetchAllItemContentRows()` ve
+  `fetchAllItemTagRows()` — `fetchAllRows()` ile aynı `fetchAllPages`
+  sayfalama deseni (PostgREST'in sessiz satır sınırı kesmesin diye).
+- **`SyncService._pullRemote`**: item satırlarını upsert etmeden önce
+  `item_contents` toplu çekiliyor ve `extractedText` olarak companion'a
+  ekleniyor; item reconciliation'ından sonra (artık kararlı olan
+  `localIds` kullanılarak) `item_tags` toplu çekilip
+  `ItemLocalDataSource.replaceTags()` ile yerel önbellek sıfırdan
+  yeniden yazılıyor. Tag'lerin `noteContent`/diğer alanların aksine hiç
+  yerel-düzenleme/`pending` durumu yok (tamamen AI pipeline'ının
+  ürettiği salt-okunur veri) — bu yüzden pending-aware bir merge yerine
+  bilinçli olarak baştan-sona bir replace.
+- **`LocalSearchDataSource`**: TF-IDF metnine artık `extractedText` ve
+  (item başına toplu tek sorguyla çekilen) tag adları da dahil;
+  `_snippetFor` de `extractedText`'i excerpt kaynaklarına ekledi, yani
+  bir eşleşme yalnızca OCR/PDF metninde olsa bile anlamlı bir alıntı
+  gösteriliyor, başlığa düşmüyor. Sınıfın kendi docstring'i güncellendi
+  — kalan bilinçli sınır artık yalnızca entity'ler ve
+  `item_contents.summary` (hiçbiri yerelde yok).
+
+Backend değişmedi. Mobile: `flutter analyze` temiz, testler 257 → **271**
+(+14: `sync_service_test.dart`'a 5 — extractedText'in doldurulması/boş
+kalması, tag'lerin önbelleğe alınması, sunucuda silinen bir tag'in bir
+sonraki pull'da yerelden de düşmesi, item'ı olmayan bir hesap için
+tag/content sorgusunun hiç atılmaması; `item_local_data_source_test.dart`'a
+3 — `replaceTags`'in taze ekleme/eski tag'i düşürme/kapsam dışı id'ye
+dokunmama davranışı; `local_search_data_source_test.dart`'a 4 —
+extractedText'te eşleşme, extractedText'ten snippet, salt tag'te eşleşme,
+tag+gövde karışık çok kelimeli sorgu, bir item'ın tag'inin başka bir
+item'ın sıralamasına sızmaması).
+
+## Şu an neredeyiz (17 Eylül 2026 itibarıyla)
+
+P2-07 kapandı. Denetimin önerdiği sırada hâlâ açık olanlar değişmedi:
+
+- **P1-07** — gerçek MVP kabul kanıtı yok (yukarıdaki 14 Eylül notuyla
+  aynı: iki gerçek Supabase test hesabı, gerçek OpenAI key ile uçtan uca
+  PDF+screenshot+not → arama → RAG senaryosu hâlâ hiç çalıştırılmadı).
+- **P2-08** — Export/Settings kapsamı eksik (koleksiyon/entity/OCR
+  alanları export'ta yok, sorgular sayfalamasız, AI Settings salt-okunur).
+- **P3'ün geri kalanı** — entity türü genişletme, chunk/source metadata,
+  Windows/web/macOS platform boşlukları, ölçek/gecikme benchmark'ı.
+
+Backend 208, mobile 271 test yeşil.

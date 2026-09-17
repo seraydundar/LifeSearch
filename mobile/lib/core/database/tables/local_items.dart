@@ -58,6 +58,20 @@ class LocalItems extends Table {
   /// switch) is even turned on.
   BoolColumn get private => boolean().withDefault(const Constant(false))();
 
+  /// Mirrors `item_contents.raw_text` (infra/supabase/migrations/0001_init.sql) —
+  /// the pipeline's one canonical "full text" per item: OCR text for a
+  /// scanned PDF/screenshot, the extracted body for a PDF/DOCX/TXT, an
+  /// audio transcript, or a scraped webpage's article text (see
+  /// backend/app/services/processing_pipeline.py). For images it's the
+  /// vision description and OCR text concatenated. Synced read-only by
+  /// `SyncService._pullRemote` — never written locally, so there's no
+  /// pending/queued-edit case to worry about the way `noteContent` has.
+  /// Added for P2-07 (docs/requirements-audit-2026-09-13.md): before this,
+  /// `LocalSearchDataSource` had no copy of this text at all, so a query
+  /// only matching a scanned page's OCR text, a PDF's body or a link's
+  /// article text found nothing offline.
+  TextColumn get extractedText => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }

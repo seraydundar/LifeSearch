@@ -36,6 +36,8 @@ void main() {
     remoteCollections = _MockRemoteCollections();
     when(() => remote.userId).thenReturn('user-1');
     when(() => remote.fetchAllRows()).thenAnswer((_) async => []);
+    when(() => remote.fetchAllItemContentRows()).thenAnswer((_) async => []);
+    when(() => remote.fetchAllItemTagRows()).thenAnswer((_) async => []);
     when(() => remoteCollections.fetchAllRows()).thenAnswer((_) async => []);
     when(() => remoteCollections.fetchAllItemRows(any())).thenAnswer((_) async => []);
     // BACKEND_URL unset -> null Dio -> triggerProcessing() is a no-op.
@@ -412,6 +414,83 @@ void main() {
 
     expect((await local.findById('user-1', 'note-1'))!.noteContent, 'body one');
     expect((await local.findById('user-1', 'note-2'))!.noteContent, 'body two');
+  });
+
+  group('P2-07 (docs/requirements-audit-2026-09-13.md) — offline search cache', () {
+    test('pulling remote state caches extractedText from item_contents.raw_text', () async {
+      when(() => remote.fetchAllRows()).thenAnswer((_) async => [noteRow('note-1')]);
+      when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'body');
+      when(() => remote.fetchAllItemContentRows()).thenAnswer(
+        (_) async => [
+          {'item_id': 'note-1', 'raw_text': "OCR'd or transcribed text"},
+        ],
+      );
+
+      await sync.syncNow();
+
+      final row = await local.findById('user-1', 'note-1');
+      expect(row!.extractedText, "OCR'd or transcribed text");
+    });
+
+    test('an item with no item_contents row leaves extractedText null', () async {
+      when(() => remote.fetchAllRows()).thenAnswer((_) async => [noteRow('note-1')]);
+      when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'body');
+      // Default setup already stubs fetchAllItemContentRows() -> [].
+
+      await sync.syncNow();
+
+      final row = await local.findById('user-1', 'note-1');
+      expect(row!.extractedText, null);
+    });
+
+    test('pulling remote state caches tags into LocalTags', () async {
+      when(() => remote.fetchAllRows()).thenAnswer(
+        (_) async => [noteRow('note-1'), noteRow('note-2')],
+      );
+      when(() => remote.fetchNoteContent(any())).thenAnswer((_) async => 'body');
+      when(() => remote.fetchAllItemTagRows()).thenAnswer(
+        (_) async => [
+          {'item_id': 'note-1', 'tags': {'name': 'docker'}},
+          {'item_id': 'note-1', 'tags': {'name': 'flutter'}},
+          {'item_id': 'note-2', 'tags': {'name': 'flutter'}},
+        ],
+      );
+
+      await sync.syncNow();
+
+      final note1Tags = await (db.select(db.localTags)..where((t) => t.itemId.equals('note-1'))).get();
+      expect(note1Tags.map((t) => t.name).toSet(), {'docker', 'flutter'});
+      final note2Tags = await (db.select(db.localTags)..where((t) => t.itemId.equals('note-2'))).get();
+      expect(note2Tags.map((t) => t.name), ['flutter']);
+    });
+
+    test('a tag removed on the server disappears from the local cache on the next pull',
+        () async {
+      when(() => remote.fetchAllRows()).thenAnswer((_) async => [noteRow('note-1')]);
+      when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'body');
+      when(() => remote.fetchAllItemTagRows()).thenAnswer(
+        (_) async => [
+          {'item_id': 'note-1', 'tags': {'name': 'stale-tag'}},
+        ],
+      );
+      await sync.syncNow();
+      expect(await (db.select(db.localTags)).get(), hasLength(1));
+
+      when(() => remote.fetchAllItemTagRows()).thenAnswer((_) async => []);
+      await sync.syncNow();
+
+      expect(await (db.select(db.localTags)).get(), isEmpty);
+    });
+
+    test('never fetches item_contents/tags for a brand new account with no items', () async {
+      // remote.fetchAllRows() already stubbed to [] by the default setUp.
+      await sync.syncNow();
+
+      // fetchAllItemContentRows() is unconditional (cheap, no items to key
+      // off yet) but the tag replace is guarded on localIds — nothing to
+      // scope a delete/insert to.
+      verifyNever(() => remote.fetchAllItemTagRows());
+    });
   });
 
   test('pulling remote notes fetches their content concurrently, not one at a time', () async {

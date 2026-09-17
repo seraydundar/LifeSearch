@@ -4,20 +4,28 @@ import 'package:drift_flutter/drift_flutter.dart';
 import 'tables/local_collection_items.dart';
 import 'tables/local_collections.dart';
 import 'tables/local_items.dart';
+import 'tables/local_tags.dart';
 import 'tables/recent_searches.dart';
 import 'tables/sync_queue_entries.dart';
 
 part 'app_database.g.dart';
 
 @DriftDatabase(
-  tables: [LocalItems, SyncQueueEntries, RecentSearches, LocalCollections, LocalCollectionItems],
+  tables: [
+    LocalItems,
+    SyncQueueEntries,
+    RecentSearches,
+    LocalCollections,
+    LocalCollectionItems,
+    LocalTags,
+  ],
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
   AppDatabase.forTesting(super.connection);
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -81,6 +89,15 @@ class AppDatabase extends _$AppDatabase {
           // infra/supabase/migrations/0014_item_private.sql.
           if (from < 8) {
             await m.addColumn(localItems, localItems.private);
+          }
+          // v9 (P2-07, docs/requirements-audit-2026-09-13.md — offline
+          // search): tags and OCR/PDF/transcript/webpage text were never
+          // synced to Drift, so `LocalSearchDataSource` couldn't match a
+          // query against either. `extractedText` mirrors
+          // `item_contents.raw_text`; `LocalTags` mirrors `item_tags`/`tags`.
+          if (from < 9) {
+            await m.addColumn(localItems, localItems.extractedText);
+            await m.createTable(localTags);
           }
         },
       );

@@ -25,6 +25,7 @@ void main() {
     String? description,
     String? noteContent,
     String? sourceUrl,
+    String? extractedText,
     DateTime? createdAt,
     bool private = false,
   }) {
@@ -36,9 +37,14 @@ void main() {
           description: Value(description),
           noteContent: Value(noteContent),
           sourceUrl: Value(sourceUrl),
+          extractedText: Value(extractedText),
           createdAt: createdAt ?? DateTime(2026, 1, 1),
           private: Value(private),
         ));
+  }
+
+  Future<void> insertTag(String itemId, String name) {
+    return db.into(db.localTags).insert(LocalTagsCompanion.insert(itemId: itemId, name: name));
   }
 
   test('a blank query never matches anything', () async {
@@ -189,6 +195,61 @@ void main() {
       final results = await dataSource.search('user-1', 'docker');
 
       expect(results.single.similarity, greaterThan(0));
+    });
+  });
+
+  group('P2-07 (docs/requirements-audit-2026-09-13.md) — tags and extractedText', () {
+    test('matches a query that only appears in extractedText (OCR/PDF/transcript text)',
+        () async {
+      await insertItem(
+        id: 'a',
+        title: 'Fotoğraf',
+        extractedText: 'Bu görselde bir Docker container diyagramı var.',
+      );
+
+      final results = await dataSource.search('user-1', 'docker container');
+
+      expect(results.map((r) => r.itemId), ['a']);
+    });
+
+    test('the snippet excerpts extractedText when that\'s where the match actually is',
+        () async {
+      await insertItem(id: 'a', title: 'Taranmış sayfa', extractedText: 'Sözleşme madde 5: fesih koşulları.');
+
+      final results = await dataSource.search('user-1', 'fesih');
+
+      expect(results.single.snippet, contains('fesih koşulları'));
+    });
+
+    test('matches a query that only appears in a tag', () async {
+      await insertItem(id: 'a', title: 'Untitled note');
+      await insertTag('a', 'flutter');
+      await insertItem(id: 'b', title: 'Alakasız');
+
+      final results = await dataSource.search('user-1', 'flutter');
+
+      expect(results.map((r) => r.itemId), ['a']);
+    });
+
+    test('a multi-word query matches when one word is a tag and the other is in the body',
+        () async {
+      await insertItem(id: 'a', noteContent: 'state management üzerine notlar');
+      await insertTag('a', 'riverpod');
+
+      final results = await dataSource.search('user-1', 'riverpod state management');
+
+      expect(results.map((r) => r.itemId), ['a']);
+    });
+
+    test('a stale item\'s tags in LocalTags never leak into another item\'s ranking',
+        () async {
+      await insertItem(id: 'a', title: 'A');
+      await insertItem(id: 'b', title: 'B');
+      await insertTag('a', 'docker');
+
+      final results = await dataSource.search('user-1', 'docker');
+
+      expect(results.map((r) => r.itemId), ['a']);
     });
   });
 }

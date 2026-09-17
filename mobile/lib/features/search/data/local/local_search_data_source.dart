@@ -21,11 +21,14 @@ import 'tfidf_ranker.dart';
 /// vocabulary (after lowercasing and Unicode-aware tokenizing) — see
 /// `tfidf_ranker.dart`'s own docstring for why that trade-off was made.
 ///
-/// Matches only what's actually cached locally: title, description, a
-/// note's own body, and a link's URL/filename. OCR text and AI-generated
-/// descriptions for images/PDFs live in Supabase's `item_contents`,
-/// never synced to Drift, so those aren't searchable offline — a real
-/// but bounded limitation of "the phone has no copy of that text".
+/// Matches title, description, a note's own body, a link's URL/filename,
+/// an item's tags, and — since P2-07 (docs/requirements-audit-2026-09-13.md)
+/// — its `extractedText` (`item_contents.raw_text`: OCR text for a scanned
+/// PDF/screenshot, a PDF/DOCX/TXT's extracted body, an audio transcript, or
+/// a scraped webpage's article text; see `LocalItems.extractedText`'s own
+/// docstring). Entities and `item_contents.summary` still aren't synced to
+/// Drift, so those remain unsearchable offline — a real but narrower
+/// bounded limitation than before.
 class LocalSearchDataSource {
   LocalSearchDataSource(this._db);
 
@@ -65,8 +68,10 @@ class LocalSearchDataSource {
     final rows = await q.get();
     if (rows.isEmpty) return [];
 
+    final tagsByItemId = await _tagsForItems(rows.map((r) => r.id).toList());
     final documents = [
-      for (final row in rows) TfidfDocument(id: row.id, text: _combinedText(row)),
+      for (final row in rows)
+        TfidfDocument(id: row.id, text: _combinedText(row, tagsByItemId[row.id] ?? const [])),
     ];
     final ranked = rankByTfidf(query: trimmedQuery, documents: documents);
     if (ranked.isEmpty) return [];
@@ -86,14 +91,35 @@ class LocalSearchDataSource {
     ];
   }
 
-  String _combinedText(LocalItem item) {
-    return [item.noteContent, item.description, item.title, item.sourceUrl]
+  /// [itemIds] -> its tag names, for [_combinedText]. A single `WHERE
+  /// item_id IN (...)` rather than one query per item — the local
+  /// equivalent of `fetchAllItemTagRows`' bulk-fetch-then-map shape on the
+  /// sync side.
+  Future<Map<String, List<String>>> _tagsForItems(List<String> itemIds) async {
+    if (itemIds.isEmpty) return {};
+    final rows = await (_db.select(_db.localTags)..where((t) => t.itemId.isIn(itemIds))).get();
+    final tagsByItemId = <String, List<String>>{};
+    for (final row in rows) {
+      tagsByItemId.putIfAbsent(row.itemId, () => []).add(row.name);
+    }
+    return tagsByItemId;
+  }
+
+  String _combinedText(LocalItem item, List<String> tags) {
+    final fields = [item.noteContent, item.description, item.title, item.sourceUrl, item.extractedText]
         .where((field) => field != null && field.isNotEmpty)
-        .join(' ');
+        .cast<String>();
+    return [...fields, ...tags].join(' ');
   }
 
   String _snippetFor(LocalItem item, String query, List<String> queryTokens) {
-    final fields = [item.noteContent, item.description, item.title, item.sourceUrl];
+    final fields = [
+      item.noteContent,
+      item.description,
+      item.title,
+      item.sourceUrl,
+      item.extractedText,
+    ];
     final needle = query.toLowerCase();
 
     for (final field in fields) {

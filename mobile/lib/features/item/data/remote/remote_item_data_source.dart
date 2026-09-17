@@ -115,6 +115,37 @@ class RemoteItemDataSource {
     return rows.map((row) => (row['tags'] as Map<String, dynamic>)['name'] as String).toList();
   }
 
+  /// Every (item id, tag name) pair across the caller's whole archive, for
+  /// `SyncService` to cache offline (P2-07, docs/requirements-audit-2026-09-13.md)
+  /// — same join shape as `fetchTags`, minus the `item_id` filter, and
+  /// paginated like `fetchAllRows` for the same reason (a plain `.select()`
+  /// silently truncates past PostgREST's row cap).
+  Future<List<Map<String, dynamic>>> fetchAllItemTagRows() {
+    return fetchAllPages((from, to) {
+      return _client
+          .from('item_tags')
+          .select('item_id, tags(name)')
+          .order('item_id')
+          .order('tag_id')
+          .range(from, to);
+    });
+  }
+
+  /// `item_id` -> `item_contents.raw_text` for the caller's whole archive
+  /// (P2-07) — the OCR/PDF/transcript/webpage text `LocalSearchDataSource`
+  /// couldn't search offline before this existed. `item_id` is unique per
+  /// row (infra/supabase/migrations/0012_item_contents_unique.sql), so
+  /// ordering by it alone is already deterministic for pagination.
+  Future<List<Map<String, dynamic>>> fetchAllItemContentRows() {
+    return fetchAllPages((from, to) {
+      return _client
+          .from('item_contents')
+          .select('item_id, raw_text')
+          .order('item_id')
+          .range(from, to);
+    });
+  }
+
   /// Same join-through-the-junction-table shape as `fetchTags`.
   Future<List<ExtractedEntity>> fetchEntities(String itemId) async {
     final rows =

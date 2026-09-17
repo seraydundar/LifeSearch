@@ -205,6 +205,16 @@ class SyncService {
           : Future<String?>.value();
     }));
 
+    // P2-07 (docs/requirements-audit-2026-09-13.md): item_contents.raw_text
+    // (OCR/PDF/transcript/webpage text) synced into LocalItems alongside
+    // everything else, so LocalSearchDataSource can search it offline. One
+    // bulk fetch (like fetchAllRows itself) rather than per-row, and keyed
+    // by item_id since it's a separate table from items.
+    final extractedTextByItemId = {
+      for (final row in await _remote.fetchAllItemContentRows())
+        row['item_id'] as String: row['raw_text'] as String?,
+    };
+
     for (var i = 0; i < rowsToUpsert.length; i++) {
       final row = rowsToUpsert[i];
       final id = row['id'] as String;
@@ -232,6 +242,7 @@ class SyncService {
         ),
         fileSizeBytes: Value((row['file_size_bytes'] as num?)?.toInt()),
         private: Value(row['private'] as bool? ?? false),
+        extractedText: Value(extractedTextByItemId[id]),
         syncStatus: const Value('synced'),
       ));
     }
@@ -241,6 +252,21 @@ class SyncService {
     final localIds = await _local.allIds(userId);
     final staleIds = localIds.where((id) => !remoteIds.contains(id) && !pendingIds.contains(id));
     if (staleIds.isNotEmpty) await _local.deleteMany(staleIds.toList());
+
+    // P2-07: tags synced the same way, into their own table (LocalTags)
+    // since an item can have several. See LocalTags/ItemLocalDataSource
+    // .replaceTags's docstrings for why this is a wholesale replace rather
+    // than a pending-aware merge — tags have no local-edit state to protect.
+    if (localIds.isNotEmpty) {
+      final tagRows = await _remote.fetchAllItemTagRows();
+      await _local.replaceTags(localIds, [
+        for (final row in tagRows)
+          (
+            itemId: row['item_id'] as String,
+            name: (row['tags'] as Map<String, dynamic>)['name'] as String,
+          ),
+      ]);
+    }
   }
 
   Future<void> _pullRemoteCollections(String userId) async {

@@ -143,4 +143,27 @@ class ItemLocalDataSource {
   Future<void> deleteMany(List<String> ids) {
     return (_db.delete(_db.localItems)..where((t) => t.id.isIn(ids))).go();
   }
+
+  /// Replaces the local `LocalTags` cache for every id in [itemIds] with
+  /// [tagRows] (P2-07, docs/requirements-audit-2026-09-13.md) — called by
+  /// `SyncService._pullRemote` each sync with the server's current
+  /// (item, tag) pairs. A wholesale replace rather than a diff: tags have
+  /// no pending/queued-edit state the way item fields do (see
+  /// `LocalTags`'s own docstring), so there's nothing local to clobber.
+  /// [itemIds] scopes the delete to this user's own rows (`LocalTags`
+  /// carries no `userId` of its own — same reasoning as
+  /// `LocalCollectionItems`), and is assumed non-empty by the caller.
+  Future<void> replaceTags(
+    List<String> itemIds,
+    List<({String itemId, String name})> tagRows,
+  ) {
+    return _db.batch((batch) {
+      batch.deleteWhere(_db.localTags, (t) => t.itemId.isIn(itemIds));
+      batch.insertAll(
+        _db.localTags,
+        [for (final row in tagRows) LocalTagsCompanion.insert(itemId: row.itemId, name: row.name)],
+        mode: InsertMode.insertOrIgnore,
+      );
+    });
+  }
 }

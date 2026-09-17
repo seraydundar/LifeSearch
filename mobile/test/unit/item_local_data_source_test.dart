@@ -112,6 +112,38 @@ void main() {
       expect(await queue.pendingEntries('user-a'), isEmpty);
     });
   });
+
+  group('replaceTags (P2-07, docs/requirements-audit-2026-09-13.md)', () {
+    test('inserts fresh rows for ids that had none before', () async {
+      await dataSource.replaceTags(
+        ['item-1'],
+        [(itemId: 'item-1', name: 'docker'), (itemId: 'item-1', name: 'flutter')],
+      );
+
+      final rows = await (db.select(db.localTags)..where((t) => t.itemId.equals('item-1'))).get();
+      expect(rows.map((r) => r.name).toSet(), {'docker', 'flutter'});
+    });
+
+    test('drops a tag no longer present for an id that is in scope', () async {
+      await dataSource.replaceTags(['item-1'], [(itemId: 'item-1', name: 'old-tag')]);
+
+      await dataSource.replaceTags(['item-1'], [(itemId: 'item-1', name: 'new-tag')]);
+
+      final rows = await (db.select(db.localTags)..where((t) => t.itemId.equals('item-1'))).get();
+      expect(rows.map((r) => r.name), ['new-tag']);
+    });
+
+    test('leaves an id outside the scoped itemIds list untouched', () async {
+      await dataSource.replaceTags(['item-1'], [(itemId: 'item-1', name: 'docker')]);
+
+      // A sync for a different account (or a partial resync) — item-2 was
+      // never in scope, so its tags must survive.
+      await dataSource.replaceTags(['item-2'], [(itemId: 'item-2', name: 'flutter')]);
+
+      final item1Tags = await (db.select(db.localTags)..where((t) => t.itemId.equals('item-1'))).get();
+      expect(item1Tags.map((t) => t.name), ['docker']);
+    });
+  });
 }
 
 /// Stands in for a crash/error between the local write and the enqueue
