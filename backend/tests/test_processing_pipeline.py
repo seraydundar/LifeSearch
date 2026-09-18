@@ -68,6 +68,13 @@ class FakeProvider(AIProvider):
 
     provider_name = "fake"
 
+    def __init__(self):
+        # P2-06 (docs/requirements-audit-2026-09-13.md): records what the
+        # pipeline actually passed, so a test can confirm a "screenshot"
+        # item requests the screenshot-tuned vision prompt and a plain
+        # "image" item doesn't.
+        self.received_is_screenshot: bool | None = None
+
     @property
     def embedding_model(self):
         return "fake-embedding-model"
@@ -81,7 +88,8 @@ class FakeProvider(AIProvider):
     async def generate_embeddings(self, texts):
         return [[0.1, 0.2, 0.3] for _ in texts]
 
-    async def analyze_image(self, image_bytes, mime_type):
+    async def analyze_image(self, image_bytes, mime_type, *, is_screenshot=False):
+        self.received_is_screenshot = is_screenshot
         return {
             "title": "Dell G2724D Monitor",
             "description": "A screenshot of an online shopping page for a gaming monitor.",
@@ -352,10 +360,14 @@ async def test_processes_an_image_end_to_end():
             "mime_type": "image/png",
         },
     )
+    provider = FakeProvider()
 
-    await process_item("item-5", "job-1", repo, lambda: FakeProvider())
+    await process_item("item-5", "job-1", repo, lambda: provider)
 
     assert repo.status_history == ["processing", "completed"]
+    # P2-06: a "screenshot" item requests the screenshot-tuned prompt,
+    # not the generic photo one.
+    assert provider.received_is_screenshot is True
     # AI-generated title/description overwrite the filename placeholder.
     # `image_bytes` here is fake (not a real JPEG), so EXIF fields are None
     # — that path is covered separately in test_exif_service.py and the
@@ -773,13 +785,16 @@ async def test_a_photo_with_gps_exif_gets_its_location_and_capture_time_saved():
         },
         image_bytes=photo,
     )
+    provider = FakeProvider()
 
-    await process_item("item-20", "job-1", repo, lambda: FakeProvider())
+    await process_item("item-20", "job-1", repo, lambda: provider)
 
     update = repo.metadata_updates[0]
     assert update["latitude"] == pytest.approx(39.9334, abs=1e-3)
     assert update["longitude"] == pytest.approx(32.8597, abs=1e-3)
     assert update["captured_at"] == datetime(2026, 3, 15, 10, 30, 0)
+    # P2-06: a plain "image" item must not get the screenshot-tuned prompt.
+    assert provider.received_is_screenshot is False
 
 
 @pytest.mark.asyncio

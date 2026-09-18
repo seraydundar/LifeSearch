@@ -11,6 +11,7 @@ from app.services.ai_provider import (
     LocalProvider,
     OpenAIProvider,
     _pad_embedding,
+    _vision_system_prompt,
     get_ai_provider,
 )
 
@@ -98,6 +99,32 @@ class TestPadEmbedding:
         after = cosine(_pad_embedding(a, 10), _pad_embedding(b, 10))
 
         assert after == pytest.approx(before)
+
+
+class TestVisionSystemPrompt:
+    """P2-06 (docs/requirements-audit-2026-09-13.md): all three providers
+    share this one prompt-selection helper instead of each hand-copying
+    two near-identical prompt strings — tested once here rather than
+    three times per provider.
+    """
+
+    def test_screenshot_and_photo_prompts_differ(self):
+        assert _vision_system_prompt(is_screenshot=True) != _vision_system_prompt(
+            is_screenshot=False
+        )
+
+    def test_screenshot_prompt_asks_for_verbatim_full_text(self):
+        prompt = _vision_system_prompt(is_screenshot=True).lower()
+        assert "screenshot" in prompt
+        assert "every piece of visible text" in prompt
+
+    def test_both_variants_still_specify_the_same_json_contract(self):
+        for prompt in (
+            _vision_system_prompt(is_screenshot=True),
+            _vision_system_prompt(is_screenshot=False),
+        ):
+            assert '"ocr_text"' in prompt
+            assert '"tags"' in prompt
 
 
 def _local_provider_with_transport(handler) -> LocalProvider:
@@ -204,6 +231,35 @@ class TestLocalProviderOllamaCalls:
             "ocr_text": "",
             "tags": ["cat", "couch"],
         }
+
+    @pytest.mark.asyncio
+    async def test_analyze_image_forwards_is_screenshot_into_the_prompt(self):
+        """P2-06: confirms the flag actually reaches the request Ollama
+        sees, not just that `_vision_system_prompt` itself branches
+        correctly (covered separately in `TestVisionSystemPrompt`).
+        """
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content)["messages"][0]["content"])
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {"title": "", "description": "", "ocr_text": "", "tags": []}
+                        ),
+                    }
+                },
+            )
+
+        provider = _local_provider_with_transport(handler)
+        await provider.analyze_image(b"fake-bytes", "image/png", is_screenshot=True)
+        await provider.analyze_image(b"fake-bytes", "image/png", is_screenshot=False)
+
+        assert "screenshot" in seen[0].lower()
+        assert seen[0] != seen[1]
 
     @pytest.mark.asyncio
     async def test_connect_error_becomes_a_clear_runtime_error(self):

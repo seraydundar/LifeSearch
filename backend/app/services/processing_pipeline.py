@@ -143,7 +143,9 @@ async def process_item(
             image_bytes = await repo.download_file(storage_path)
             mime_type = item.get("mime_type") or "image/jpeg"
 
-            analysis = await analyze_image(image_bytes, mime_type, provider)
+            analysis = await analyze_image(
+                image_bytes, mime_type, provider, is_screenshot=item_type == "screenshot"
+            )
             ocr_text = extract_ocr_text(analysis)
             description = analysis["description"]
             image_tags = analysis.get("tags") or []

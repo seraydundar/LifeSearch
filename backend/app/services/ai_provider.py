@@ -20,6 +20,47 @@ from openai import AsyncOpenAI
 
 from ..core.config import Settings
 
+# Shared JSON-contract instructions for `analyze_image` — identical across
+# all three providers below, so it's factored out once instead of being
+# hand-copied a third and fourth time now that a screenshot gets its own
+# variant of the rest of the prompt.
+_IMAGE_ANALYSIS_JSON_CONTRACT = (
+    'Respond with strict JSON: {"title": string, "description": string, '
+    '"ocr_text": string, "tags": [string, ...]}. title is under 8 words. '
+    "tags are 3-6 short lowercase keywords."
+)
+
+
+def _vision_system_prompt(*, is_screenshot: bool) -> str:
+    """P2-06 (docs/requirements-audit-2026-09-13.md): a screenshot isn't a
+    photo of the physical world — it's a picture of a screen (an app,
+    website, chat, error message, document), and what makes it useful to
+    find later is usually the text on it, not a scene description. The
+    generic "photo" prompt used to be reused verbatim for screenshots too
+    (Faz 15 added the *item type*, `ItemType.screenshot`, but never a
+    distinct prompt to go with it), so `ocr_text` on a screenshot was only
+    ever as complete as a "describe this photo" prompt happened to make it.
+    """
+    if is_screenshot:
+        return (
+            "You analyze a screenshot for a personal search app — a "
+            "picture of a screen (an app, website, chat, error message, "
+            "document, etc.), not a photo of the physical world. "
+            f"{_IMAGE_ANALYSIS_JSON_CONTRACT} description names the app/"
+            "site/screen and what it's showing, in 1-2 sentences. ocr_text "
+            "is the most important field here: transcribe EVERY piece of "
+            "visible text, in reading order, as completely and accurately "
+            'as possible, or "" only if there truly is none — a screenshot '
+            "is usually looked up again for its text. Include the app or "
+            "site name among the tags if it's identifiable."
+        )
+    return (
+        "You analyze a photo for a personal search app. "
+        f"{_IMAGE_ANALYSIS_JSON_CONTRACT} description is 1-2 sentences "
+        "describing what's shown. ocr_text is every piece of visible text "
+        'transcribed as-is, or "" if there is none.'
+    )
+
 
 class AIProvider(ABC):
     #: Matches `Settings.ai_provider`'s own values ("openai" | "gemini" |
@@ -51,11 +92,19 @@ class AIProvider(ABC):
     async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Batch embed — what the chunking pipeline actually uses."""
 
-    async def analyze_image(self, image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+    async def analyze_image(
+        self, image_bytes: bytes, mime_type: str, *, is_screenshot: bool = False
+    ) -> dict[str, Any]:
         """Returns `{"title", "description", "ocr_text", "tags"}` — see
         requirements doc, section 14. `ocr_text` is every piece of visible
         text transcribed as-is; `description` is what the image actually
         shows. Both feed the same chunk/embed pipeline as notes and PDFs.
+
+        `is_screenshot` (P2-06, docs/requirements-audit-2026-09-13.md)
+        switches to a prompt tuned for a picture of a screen rather than a
+        photo — see `_vision_system_prompt`. Defaults to `False` so a
+        caller with no opinion (e.g. OCR-ing a scanned PDF page) keeps the
+        original photo-description behavior.
         """
         raise NotImplementedError("Image analysis lands in Phase 6 (Image Intelligence).")
 
@@ -112,7 +161,9 @@ class OpenAIProvider(AIProvider):
         ordered = sorted(response.data, key=lambda d: d.index)
         return [item.embedding for item in ordered]
 
-    async def analyze_image(self, image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+    async def analyze_image(
+        self, image_bytes: bytes, mime_type: str, *, is_screenshot: bool = False
+    ) -> dict[str, Any]:
         data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"
         response = await self._client.chat.completions.create(
             model=self._text_model,  # gpt-4o-mini reads images too, no separate vision model
@@ -120,15 +171,7 @@ class OpenAIProvider(AIProvider):
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You analyze a photo or screenshot for a personal search app. "
-                        "Respond with strict JSON: "
-                        '{"title": string, "description": string, "ocr_text": string, '
-                        '"tags": [string, ...]}. title is under 8 words. description is '
-                        "1-2 sentences describing what's shown. ocr_text is every piece "
-                        'of visible text transcribed as-is, or "" if there is none. tags '
-                        "are 3-6 short lowercase keywords."
-                    ),
+                    "content": _vision_system_prompt(is_screenshot=is_screenshot),
                 },
                 {
                     "role": "user",
@@ -252,18 +295,14 @@ class GeminiProvider(AIProvider):
         )
         return [_pad_embedding(e.values, self._EMBEDDING_DIMENSIONS) for e in response.embeddings]
 
-    async def analyze_image(self, image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+    async def analyze_image(
+        self, image_bytes: bytes, mime_type: str, *, is_screenshot: bool = False
+    ) -> dict[str, Any]:
         response = await self._client.aio.models.generate_content(
             model=self._text_model,
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                "You analyze a photo or screenshot for a personal search app. "
-                "Respond with strict JSON: "
-                '{"title": string, "description": string, "ocr_text": string, '
-                '"tags": [string, ...]}. title is under 8 words. description is '
-                "1-2 sentences describing what's shown. ocr_text is every piece "
-                'of visible text transcribed as-is, or "" if there is none. tags '
-                "are 3-6 short lowercase keywords.",
+                _vision_system_prompt(is_screenshot=is_screenshot),
             ],
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
@@ -359,22 +398,16 @@ class LocalProvider(AIProvider):
         data = await self._post("/api/embed", {"model": self._embedding_model, "input": texts})
         return [_pad_embedding(e, self._EMBEDDING_DIMENSIONS) for e in data["embeddings"]]
 
-    async def analyze_image(self, image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+    async def analyze_image(
+        self, image_bytes: bytes, mime_type: str, *, is_screenshot: bool = False
+    ) -> dict[str, Any]:
         # Ollama's chat API takes images as a list of base64 strings on
         # the message itself (no separate content-parts structure like
         # OpenAI/Gemini) — mime_type isn't needed, the model infers format.
         messages = [
             {
                 "role": "user",
-                "content": (
-                    "You analyze a photo or screenshot for a personal search app. "
-                    "Respond with strict JSON: "
-                    '{"title": string, "description": string, "ocr_text": string, '
-                    '"tags": [string, ...]}. title is under 8 words. description is '
-                    "1-2 sentences describing what's shown. ocr_text is every piece "
-                    'of visible text transcribed as-is, or "" if there is none. tags '
-                    "are 3-6 short lowercase keywords."
-                ),
+                "content": _vision_system_prompt(is_screenshot=is_screenshot),
                 "images": [base64.b64encode(image_bytes).decode()],
             }
         ]

@@ -3531,8 +3531,51 @@ diye reddedilmediğini doğrulayan testler; 1 test yeniden adlandırıldı/
 davranışı güncellendi, 1 test yeni `_MAX_CANDIDATES` doğrulama yanıtına
 uyarlandı). Mobile: değişmedi (bu tamamen backend arama/reranking).
 
-**Manuel doğrulama (henüz yapılmadı)**: `0024` canlı Supabase'e
-uygulandıktan sonra gerçek bir hesapla iki örnek sorgu denenmeli — (a)
-sadece bir etikette/entity'de geçen bir kelime → o item artık
-bulunmalı, (b) arşivle hiç ilgisi olmayan bir sorgu → sonuç listesi
-artık zorla `limit` kadar doldurulmamalı.
+**Manuel doğrulama**: `0024`, kullanıcı tarafından canlı Supabase'e
+uygulandı; RPC'nin (anon key ile, `auth.uid()` olmadan) 500 vermeden
+200 döndüğü bu oturumda doğrulandı. Gerçek bir hesapla tag/entity
+eşleşmesinin ve alaka eşiğinin uçtan uca (sadece bir etikette geçen bir
+kelime, arşivle ilgisiz bir sorgu) örnek sorgu değerlendirmesi henüz
+yapılmadı.
+
+## Faz 26 — P2-06: screenshot'a özel vision prompt'u (⚠️ önceki bulgu düzeltmesi)
+
+Faz 15'in "Choose Screenshot" seçeneği (`capture_sheet.dart`) ve kendi
+yorumundaki "backend'in screenshot'a özel vision prompt'u" iddiası
+incelenirken şu ortaya çıktı: bu iddia **yanlıştı** —
+`processing_pipeline.py`/`ai_provider.py`'de `image` ve `screenshot`
+birebir aynı jenerik "photo or screenshot" prompt'unu kullanıyordu,
+aralarında davranış farkı yoktu. `ItemType.screenshot` sadece tür
+etiketi olarak var oluyordu (doğal dil aramada "ekran görüntüsü" gibi
+ifadeler için), vision analizine hiç yansımıyordu.
+
+- **`ai_provider.py`**: yeni bir paylaşılan `_vision_system_prompt
+  (is_screenshot: bool)` — üç sağlayıcının (`OpenAIProvider`,
+  `GeminiProvider`, `LocalProvider`) daha önce birbirinin birebir
+  kopyası olan prompt string'lerini tek yerden üretiyor. Screenshot
+  varyantı: bir ekran görüntüsünün fiziksel dünyanın fotoğrafı
+  olmadığını, uygulama/site/sohbet/hata ekranı olabileceğini belirtiyor;
+  `description`'ı "ne gösteriyor" yerine "hangi uygulama/site ve ne
+  gösteriyor"a çeviriyor; `ocr_text`'i EN önemli alan olarak işaretleyip
+  görünen HER metni okuma sırasıyla eksiksiz çıkarmasını istiyor (bir
+  screenshot genelde metni için tekrar aranır); tespit edilebiliyorsa
+  uygulama/site adını `tags`'e ekletiyor.
+- **`AIProvider.analyze_image`** (abstract) + üç alt sınıf: yeni
+  `is_screenshot: bool = False` keyword-only parametresi. Varsayılan
+  `False`, mevcut davranışı (genel foto prompt'u) hiçbir çağıran
+  güncellenmeden korur.
+- **`vision_service.analyze_image`**: aynı parametreyi şeffafca
+  `provider.analyze_image`'e geçiriyor.
+- **`processing_pipeline.py`**: item/görsel işleme dalında artık
+  `is_screenshot=item_type == "screenshot"` gönderiyor. PDF sayfa OCR
+  yolu (`_ocr_missing_pdf_pages`) kasıtlı olarak dokunulmadı — taranmış
+  bir PDF sayfası screenshot değil, varsayılan `False` doğru.
+
+Backend: `ruff check` temiz, testler 226 → **230** (+4: paylaşılan
+prompt fonksiyonunun screenshot/foto varyantlarının farklı olduğunu ve
+JSON sözleşmesinin ikisinde de korunduğunu doğrulayan 3, `LocalProvider`
+üzerinden bayrağın gerçekten Ollama'ya giden isteğe kadar ulaştığını
+doğrulayan 1; ayrıca `test_processing_pipeline.py`'deki iki mevcut teste
+—screenshot item'ın `is_screenshot=True`, düz image item'ın `False`
+aldığını doğrulayan— birer assertion eklendi). Mobile: değişmedi (bu
+tamamen backend vision prompt'u, mobile tarafı zaten Faz 15'te tamdı).
