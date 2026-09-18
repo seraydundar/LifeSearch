@@ -193,23 +193,23 @@ class SyncService {
     // A local edit is still queued for these — don't overwrite them.
     final rowsToUpsert = rows.where((row) => !pendingIds.contains(row['id'] as String)).toList();
 
-    // Every note's content fetched as one concurrent batch instead of one
-    // round trip at a time inside the loop below — a library with many
-    // notes used to pull them in strictly sequentially. Still one extra
-    // request per note (no backend join yet — fine at demo scale, worth
-    // revisiting if libraries grow large), just no longer paid for one
-    // after another.
-    final noteContents = await Future.wait(rowsToUpsert.map((row) {
-      return row['type'] == 'note'
-          ? _remote.fetchNoteContent(row['id'] as String)
-          : Future<String?>.value();
-    }));
-
     // P2-07 (docs/requirements-audit-2026-09-13.md): item_contents.raw_text
     // (OCR/PDF/transcript/webpage text) synced into LocalItems alongside
     // everything else, so LocalSearchDataSource can search it offline. One
     // bulk fetch (like fetchAllRows itself) rather than per-row, and keyed
     // by item_id since it's a separate table from items.
+    //
+    // P3 (docs/requirements-audit-2026-09-13.md, "Ölçek/ölçüm"): a note's
+    // body *is* its item_contents.raw_text (see RemoteItemDataSource
+    // .createNote/.updateNote — a note's `content` is written straight
+    // into that column, no transformation), so this same bulk fetch also
+    // covers `noteContent` below. A separate `fetchNoteContent` call per
+    // note used to run here too — concurrently, not sequentially, but
+    // still one extra request per note on every sync — duplicating data
+    // this bulk fetch already had. `RemoteItemDataSource.fetchNoteContent`
+    // itself is unchanged and still used for the one thing it's actually
+    // needed for: opening a single note in the editor on demand (see
+    // `OfflineItemRepository.fetchNoteContent`'s cold-start fallback).
     final extractedTextByItemId = {
       for (final row in await _remote.fetchAllItemContentRows())
         row['item_id'] as String: row['raw_text'] as String?,
@@ -231,7 +231,7 @@ class SyncService {
         processingStatus: Value(row['processing_status'] as String? ?? 'pending'),
         favorite: Value(row['favorite'] as bool? ?? false),
         createdAt: DateTime.parse(row['created_at'] as String),
-        noteContent: Value(noteContents[i]),
+        noteContent: Value(row['type'] == 'note' ? extractedTextByItemId[id] : null),
         duplicateOfItemId: Value(row['duplicate_of_item_id'] as String?),
         duplicateSimilarity: Value((row['duplicate_similarity'] as num?)?.toDouble()),
         duplicateDismissed: Value(row['duplicate_dismissed'] as bool? ?? false),

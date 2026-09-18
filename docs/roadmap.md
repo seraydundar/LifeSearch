@@ -3642,3 +3642,28 @@ Madde kapatılmadı, yalnızca ertelendi: arşiv gerçekten büyüyüp (audit'in
 kendi ifadesiyle) "büyük arşiv" ölçeğine ulaştığında bu benchmark'ı
 tekrarlamak ve o zaman gerekiyorsa optimize etmek gerekiyor. Kod
 değişikliği yok.
+
+## Faz 29 — P3: her sync'te not başına ayrı içerik isteğini kaldır
+
+Audit'in "not başına ayrı içerik isteği var" maddesini incelerken şu
+çıktı: `SyncService._pullRemote` her notun içeriğini `fetchNoteContent`
+ile (eşzamanlı olsa da) tek tek çekiyordu — ama zaten aynı metodun
+birkaç satır altında, `fetchAllItemContentRows()` ile TÜM item'ların
+`item_contents.raw_text`'ini bir kerede (P2-07, offline arama için)
+çekiyordu. Bir notun `content`'i tam olarak `item_contents.raw_text`
+(bkz. `RemoteItemDataSource.createNote`/`updateNote`) — yani bu iki
+fetch aynı veriyi iki kere çekiyordu, biri N ayrı istekle.
+
+- `sync_service.dart`: `noteContents`/`fetchNoteContent` döngüsü
+  tamamen kaldırıldı; `noteContent` artık zaten çekilen
+  `extractedTextByItemId` map'inden okunuyor (`type == 'note'` ise).
+  Yeni bir backend endpoint'i gerekmedi — veri zaten oradaydı.
+- `RemoteItemDataSource.fetchNoteContent` **dokunulmadı** — hâlâ
+  `OfflineItemRepository`'nin not editörü açılırken kullandığı tek-item
+  cold-start fallback'i için gerekli, sync döngüsünden ayrı bir kullanım.
+
+Mobile: `flutter analyze` temiz, `sync_service_test.dart` güncellendi
+(eski "eşzamanlı, sıralı değil" regresyon testi artık anlamsız —
+`fetchNoteContent`'in sync sırasında HİÇ çağrılmadığını doğrulayan bir
+teste dönüştürüldü; not içeriğinin `fetchAllItemContentRows()`'tan
+geldiğini doğrulayan yeni bir test eklendi) — tüm suite yeşil.

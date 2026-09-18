@@ -396,30 +396,38 @@ void main() {
         {...noteRow('note-1', title: 'Secret'), 'private': true},
       ],
     );
-    when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'shh');
 
     await sync.syncNow();
 
     expect((await local.findById('user-1', 'note-1'))!.private, isTrue);
   });
 
-  test('pulling remote notes fetches and stores each one\'s content', () async {
+  test(
+      'a note\'s content comes from the same bulk item_contents fetch as '
+      'extractedText, not a per-note request', () async {
+    // P3 (docs/requirements-audit-2026-09-13.md, "Ölçek/ölçüm"): a note's
+    // body *is* its item_contents.raw_text — no separate fetchNoteContent
+    // round trip per note during sync any more.
     when(() => remote.fetchAllRows()).thenAnswer(
       (_) async => [noteRow('note-1', title: 'First'), noteRow('note-2', title: 'Second')],
     );
-    when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'body one');
-    when(() => remote.fetchNoteContent('note-2')).thenAnswer((_) async => 'body two');
+    when(() => remote.fetchAllItemContentRows()).thenAnswer(
+      (_) async => [
+        {'item_id': 'note-1', 'raw_text': 'body one'},
+        {'item_id': 'note-2', 'raw_text': 'body two'},
+      ],
+    );
 
     await sync.syncNow();
 
     expect((await local.findById('user-1', 'note-1'))!.noteContent, 'body one');
     expect((await local.findById('user-1', 'note-2'))!.noteContent, 'body two');
+    verifyNever(() => remote.fetchNoteContent(any()));
   });
 
   group('P2-07 (docs/requirements-audit-2026-09-13.md) — offline search cache', () {
     test('pulling remote state caches extractedText from item_contents.raw_text', () async {
       when(() => remote.fetchAllRows()).thenAnswer((_) async => [noteRow('note-1')]);
-      when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'body');
       when(() => remote.fetchAllItemContentRows()).thenAnswer(
         (_) async => [
           {'item_id': 'note-1', 'raw_text': "OCR'd or transcribed text"},
@@ -430,11 +438,13 @@ void main() {
 
       final row = await local.findById('user-1', 'note-1');
       expect(row!.extractedText, "OCR'd or transcribed text");
+      // Same source, same value — a note's noteContent and extractedText
+      // are never two different requests for the same underlying text.
+      expect(row.noteContent, "OCR'd or transcribed text");
     });
 
     test('an item with no item_contents row leaves extractedText null', () async {
       when(() => remote.fetchAllRows()).thenAnswer((_) async => [noteRow('note-1')]);
-      when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'body');
       // Default setup already stubs fetchAllItemContentRows() -> [].
 
       await sync.syncNow();
@@ -447,7 +457,6 @@ void main() {
       when(() => remote.fetchAllRows()).thenAnswer(
         (_) async => [noteRow('note-1'), noteRow('note-2')],
       );
-      when(() => remote.fetchNoteContent(any())).thenAnswer((_) async => 'body');
       when(() => remote.fetchAllItemTagRows()).thenAnswer(
         (_) async => [
           {'item_id': 'note-1', 'tags': {'name': 'docker'}},
@@ -467,7 +476,6 @@ void main() {
     test('a tag removed on the server disappears from the local cache on the next pull',
         () async {
       when(() => remote.fetchAllRows()).thenAnswer((_) async => [noteRow('note-1')]);
-      when(() => remote.fetchNoteContent('note-1')).thenAnswer((_) async => 'body');
       when(() => remote.fetchAllItemTagRows()).thenAnswer(
         (_) async => [
           {'item_id': 'note-1', 'tags': {'name': 'stale-tag'}},
@@ -493,26 +501,21 @@ void main() {
     });
   });
 
-  test('pulling remote notes fetches their content concurrently, not one at a time', () async {
-    // Regression guard: this used to await fetchNoteContent() inside the
-    // per-row loop, so a library with N notes paid for N round trips in
-    // series. If that ever comes back, active never exceeds 1 here.
-    var active = 0;
-    var maxActive = 0;
-    when(() => remote.fetchNoteContent(any())).thenAnswer((invocation) async {
-      active++;
-      maxActive = active > maxActive ? active : maxActive;
-      await Future<void>.delayed(Duration.zero); // yield so calls actually overlap
-      active--;
-      return 'content for ${invocation.positionalArguments[0]}';
-    });
+  test(
+      'pulling remote notes never makes a per-note fetchNoteContent request '
+      '(P3, docs/requirements-audit-2026-09-13.md, "Ölçek/ölçüm")', () async {
+    // Regression guard: this used to await fetchNoteContent() once per note
+    // inside the per-row loop (concurrently after an earlier fix, but still
+    // one request per note either way) — a library with N notes paid for N
+    // extra round trips on every single sync, duplicating data
+    // fetchAllItemContentRows() already pulls in bulk.
     when(() => remote.fetchAllRows()).thenAnswer(
       (_) async => [noteRow('note-1'), noteRow('note-2'), noteRow('note-3')],
     );
 
     await sync.syncNow();
 
-    expect(maxActive, greaterThanOrEqualTo(2));
+    verifyNever(() => remote.fetchNoteContent(any()));
   });
 
   group('trigger_ai', () {
