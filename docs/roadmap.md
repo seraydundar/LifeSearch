@@ -3614,3 +3614,31 @@ negatif offset senaryoları). Mobile: `flutter analyze` temiz, yeni test
 dosyası `api_search_repository_test.dart` (+3: dateFrom/dateTo'nun `Z`
 ile biten doğru UTC anına çevrildiğini ve her isteğin timezone
 offset'ini içerdiğini doğrulayan) — tüm mobile suite yeşil.
+
+## Faz 28 — P3: hybrid arama sorgu planı — ölçüldü, şimdilik kapatılmadı
+
+`docs/requirements-audit-2026-09-13.md`'nin "Ölçek/ölçüm" maddesi
+`match_chunks_hybrid`'in kullanıcının TÜM eşleşen chunk'larını
+materialize edip sıraladığını, pgvector'ın ivfflat index'ini gerçek bir
+top-K kısayolu olarak kullanmadığını işaret ediyordu. Audit'in kendi
+önerdiği sıra "önce benchmark, sonra optimize" olduğu için, iki aşamalı
+top-K + RRF birleştirme gibi karmaşık (ve recall'ı riske atabilecek) bir
+SQL rewrite'a girmeden önce gerçek verideki maliyeti ölçüldü:
+
+- Canlı Supabase projesinde `explain (analyze, buffers)` ile gerçek bir
+  `match_chunks_hybrid` çağrısı çalıştırıldı (kullanıcının kendi
+  hesabıyla, `set_config('request.jwt.claims', ...)` ile `auth.uid()`
+  taklit edilerek).
+- Sonuç: **11.389 ms** çalışma süresi, `buffers: shared hit=1154`
+  (~9MB, tamamı cache'ten, disk I/O yok). SQL fonksiyonu planlayıcı
+  tarafından inline edilmediği için ("Function Scan on
+  match_chunks_hybrid" — iç CTE'lerin detay planı görünmüyor) index
+  kullanımı doğrudan doğrulanamadı, ama toplam süre zaten kullanıcı
+  için fark edilmeyecek kadar hızlı.
+
+**Karar**: bu ölçekte (kişisel, tek kullanıcılı arşiv) ölçülebilir bir
+performans sorunu yok — riskli bir rewrite'ın karşılığı şu an yok.
+Madde kapatılmadı, yalnızca ertelendi: arşiv gerçekten büyüyüp (audit'in
+kendi ifadesiyle) "büyük arşiv" ölçeğine ulaştığında bu benchmark'ı
+tekrarlamak ve o zaman gerekiyorsa optimize etmek gerekiyor. Kod
+değişikliği yok.
