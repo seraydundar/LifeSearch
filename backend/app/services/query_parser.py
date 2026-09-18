@@ -167,11 +167,30 @@ def _extract_date(text: str, *, now: datetime) -> tuple[str, datetime | None, da
     return text, None, None
 
 
-def parse_query(text: str, *, now: datetime | None = None) -> ParsedQuery:
+def parse_query(
+    text: str, *, now: datetime | None = None, timezone_offset_minutes: int = 0
+) -> ParsedQuery:
+    """`timezone_offset_minutes` (P2-02, docs/requirements-audit-2026-09-13.md):
+    all the calendar-boundary logic above (`_date_range_for_phrase` and its
+    helpers) works purely in whatever `now` it's handed — it has no idea
+    that "now" here is UTC. Shifting `now` forward by the client's own UTC
+    offset before resolving a date phrase, then shifting the two results
+    back by the same amount, gets a *local* calendar day/week/month/year
+    boundary out of code that never needs to know timezones exist. Without
+    this, "bugün" always meant "today in UTC" — wrong by the client's
+    offset for everyone not on UTC (e.g. up to 3 hours early/late for a
+    request near local midnight in Turkey, UTC+3).
+    """
     now = now or datetime.now(UTC)
+    offset = timedelta(minutes=timezone_offset_minutes)
+    local_now = now + offset
 
     remaining, item_types = _extract_types(text)
-    remaining, date_from, date_to = _extract_date(remaining, now=now)
+    remaining, date_from, date_to = _extract_date(remaining, now=local_now)
+    if date_from is not None:
+        date_from -= offset
+    if date_to is not None:
+        date_to -= offset
     cleaned = re.sub(r"\s+", " ", remaining).strip()
 
     return ParsedQuery(

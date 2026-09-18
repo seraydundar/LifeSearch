@@ -57,7 +57,7 @@ async def search_endpoint(
     # type/date filter out of the query text itself, e.g. "geçen ay
     # baktığım PDF'ler". Anything the client already sent explicitly (the
     # Search tab's filter chips) wins — this only fills in the gaps.
-    parsed = parse_query(body.query)
+    parsed = parse_query(body.query, timezone_offset_minutes=body.timezone_offset_minutes)
     item_types = body.item_types or parsed.item_types
     date_from = body.date_from or parsed.date_from
     # Previously always `body.date_to` — silently dropping the parser's

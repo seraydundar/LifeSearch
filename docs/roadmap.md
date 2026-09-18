@@ -3579,3 +3579,38 @@ doğrulayan 1; ayrıca `test_processing_pipeline.py`'deki iki mevcut teste
 —screenshot item'ın `is_screenshot=True`, düz image item'ın `False`
 aldığını doğrulayan— birer assertion eklendi). Mobile: değişmedi (bu
 tamamen backend vision prompt'u, mobile tarafı zaten Faz 15'te tamdı).
+
+## Faz 27 — P2-02: arama tarih filtrelerinde timezone düzeltmesi
+
+Audit'in "Takvim UTC; kullanıcının yerel gün sınırı ayrıca taşınmıyor"
+maddesi incelenirken düşünülenden daha geniş çıktı — aynı kök sebepli
+**iki** bug:
+
+- **Mobile (daha kritik, günlük tetiklenen bug)**:
+  `api_search_repository.dart`'taki arama tarih filtreleri (Bugün/Geçen
+  hafta/Geçen ay chip'leri, özel aralık seçici — hepsi `search_tab.dart`'ta
+  yerel `DateTime.now()` ile hesaplanıyor) `.toIso8601String()` ile
+  gönderiliyordu. Dart bu metotta yerel (UTC olmayan) bir `DateTime`'a
+  timezone eki eklemiyor — backend offset'siz string'i UTC gibi
+  yorumluyordu, yani Türkiye'de (UTC+3) her filtre chip'i ~3 saat kaymış
+  çalışıyordu. Düzeltme: `.toUtc().toIso8601String()` — tek nokta,
+  `SearchFilters`/`search_tab.dart` dokunulmadı.
+- **Backend (audit'in orijinal işaret ettiği kısım)**: serbest metinde
+  yazılan "bugün"/"dün" gibi ifadeler (`query_parser.py`) sunucunun
+  `datetime.now(UTC)`'sini referans alıyordu, kullanıcının saat dilimini
+  hiç bilmiyordu. `SearchRequest`'e `timezone_offset_minutes` (Dart'ın
+  `DateTime.now().timeZoneOffset.inMinutes`'ı, -720..840 sınırlı) eklendi;
+  `parse_query`, `now`'ı bu offset'le kayarak "yerel" hâle getirip gün/
+  hafta/ay sınırını hesaplıyor, sonra sonucu aynı miktarda geri kaydırıp
+  gerçek UTC anına dönüyor — `_date_range_for_phrase` ve yardımcılarının
+  hiçbiri değişmedi, kayma yalnızca `parse_query`'nin giriş/çıkışında.
+  Varsayılan offset `0` — mevcut hiçbir test/davranış bozulmuyor.
+
+Migrasyon yok, geriye dönük uyumlu (yeni alan varsayılan `0`, eski
+mobile client hâlâ çalışır).
+
+Backend: `ruff check` temiz, testler 230 → **233** (+3: sıfır/pozitif/
+negatif offset senaryoları). Mobile: `flutter analyze` temiz, yeni test
+dosyası `api_search_repository_test.dart` (+3: dateFrom/dateTo'nun `Z`
+ile biten doğru UTC anına çevrildiğini ve her isteğin timezone
+offset'ini içerdiğini doğrulayan) — tüm mobile suite yeşil.

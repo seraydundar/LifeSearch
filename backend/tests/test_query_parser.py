@@ -153,3 +153,43 @@ def test_is_case_insensitive():
 
     assert result.item_types == ["note"]
     assert result.date_from == datetime(2026, 8, 31)
+
+
+def test_timezone_offset_of_zero_matches_the_default_behavior():
+    """Same phrase, same `now`, offset made explicit rather than omitted
+    — must be a no-op, since every other test in this file relies on the
+    implicit default staying UTC-equivalent.
+    """
+    result = parse_query("bugün eklediğim not", now=_NOW, timezone_offset_minutes=0)
+
+    assert result.date_from == datetime(2026, 9, 7)
+    assert result.date_to is None
+
+
+def test_bugun_with_a_positive_timezone_offset_uses_the_local_day_boundary():
+    """P2-02 (docs/requirements-audit-2026-09-13.md): `now` is 22:30 UTC —
+    already past local midnight for a UTC+3 client (01:30 local, into
+    the *next* calendar day locally). Without the offset, "bugün" would
+    resolve to UTC's still-current Sept 7th; a UTC+3 user actually means
+    Sept 8th.
+    """
+    now = datetime(2026, 9, 7, 22, 30, 0)
+
+    result = parse_query("bugün eklediğim not", now=now, timezone_offset_minutes=180)
+
+    # Local midnight (Sept 8, 00:00 +03:00) expressed as its UTC instant.
+    assert result.date_from == datetime(2026, 9, 7, 21, 0, 0)
+    assert result.date_to is None
+
+
+def test_a_negative_timezone_offset_shifts_the_other_direction():
+    """US Pacific, UTC-8: `now` is 03:00 UTC — already the *previous*
+    calendar day locally (19:00 the day before).
+    """
+    now = datetime(2026, 9, 7, 3, 0, 0)
+
+    result = parse_query("bugün eklediğim not", now=now, timezone_offset_minutes=-480)
+
+    # Local midnight (Sept 6, 00:00 -08:00) expressed as its UTC instant.
+    assert result.date_from == datetime(2026, 9, 6, 8, 0, 0)
+    assert result.date_to is None

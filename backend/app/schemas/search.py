@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SearchRequest(BaseModel):
@@ -12,6 +12,14 @@ class SearchRequest(BaseModel):
     item_types: list[str] | None = None
     date_from: datetime | None = None
     date_to: datetime | None = None
+    # P2-02 (docs/requirements-audit-2026-09-13.md): the client's own UTC
+    # offset in minutes (Dart's `DateTime.now().timeZoneOffset.inMinutes`
+    # — positive when local time is ahead of UTC, e.g. +180 for Turkey),
+    # so `query_parser.parse_query` can resolve a free-text date phrase
+    # ("bugün", "dün") against the user's actual local calendar day
+    # instead of a UTC one. Bounded to the real range of UTC offsets
+    # (-12:00..+14:00) as basic input validation at this request boundary.
+    timezone_offset_minutes: int = Field(default=0, ge=-720, le=840)
     # True only once the device's own private reveal (biometric/PIN) is
     # unlocked — see `privateItemsRevealedProvider` — so private items are
     # excluded in SQL by default (P1-02, docs/requirements-audit-2026-09-13.md)
