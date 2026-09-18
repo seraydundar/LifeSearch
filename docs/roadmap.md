@@ -3488,3 +3488,51 @@ Backend: `ruff check` temiz, testler 213 → **224** (+11: `reembedding_service`
 için 6, yeni route için 4, `search_service`'in provider/model'i
 geçirdiğini doğrulayan 1). Mobile: `flutter analyze` temiz, testler 273 →
 **275** (+2, "Reprocess" butonunun backend yokken/varken görünürlüğü).
+
+## Faz 25 — P2-01: hybrid arama alaka eksiklerini kapat (⚠️ canlıya migrasyon uygulanmadan pushlanmamalı)
+
+Faz 15'in kapsam dışı bıraktığı iki kalem: tag/entity'nin keyword
+aramasına dahil edilmesi, ve "alakasız içerik için eşik yok" (LLM
+reranker adayları yalnızca yeniden sıralıyor, hiçbirini asla elemiyordu).
+
+- **`0024_hybrid_search_tag_entity_keywords.sql`**: `match_chunks_hybrid`'e
+  yeni bir `item_keywords` CTE — item'ın tag + entity adlarını
+  `string_agg` ile tek bir metne indirger, `keyword_rank`'ın
+  `greatest(...)`'ine content/title'la aynı `ts_rank` ölçeğinde üçüncü
+  bir terim olarak katılır. İmza değişmedi (0023'teki 10 parametre),
+  kod tarafında (`search_repository.py`/`search_service.py`) hiçbir
+  değişiklik gerekmedi.
+- **`reranking_service.py`**: prompt artık modelden adayları yeniden
+  sıralamasını DEĞİL, sorguyla gerçekten alakalı olanları sıralamasını
+  ve alakasızları listeye hiç yazmamasını istiyor (hiçbiri alakalı
+  değilse `YOK`). `_parse_order` yeniden yazıldı — eski "adayların en
+  az yarısı bahsedilmeli, yoksa kullanılamaz" sayım eşiği tamamen
+  kaldırıldı; yerine yanıtın biçimine bakan bir kontrol geldi (yalnızca
+  rakam/virgül/yeni satırdan oluşuyor mu). Bahsedilmeyen bir aday artık
+  sona eklenmiyor, doğrudan elenıyor — modül docstring'indeki "reorder
+  or narrow" cümlesi ilk kez gerçekten "narrow" da yapıyor. Bu,
+  `semantic_search` ve `answer_question` (RAG, aynı fonksiyonu
+  kullanıyor) için tek alaka eşiği — ayrı bir sayısal cosine/skor eşiği
+  eklenmedi, LLM'in kendi okuduğu içerik üzerindeki kararı genişletildi.
+
+**⚠️ Önemli — Faz 24'teki gibi, bu migrasyon da geciktirmeden
+uygulanmalı değil ama neden farklı bir risk taşıyor**: `0024`
+`match_chunks_hybrid`'in imzasını değiştirmiyor (Faz 24'ün 500 riski
+burada yok), yalnızca fonksiyon gövdesini değiştiriyor — migrasyon
+uygulanmadan pushlanan kod hâlâ eski (tag/entity'siz) keyword_rank'la
+çalışır durumda kalır, kırılmaz. Asıl risk `reranking_service.py`
+tarafında: LLM sağlayıcısı yanıt formatına uymazsa (örn. beklenmedik
+bir prova/markdown eklerse) `_parse_order` `None` döner ve eski
+davranışa (sırala ama eleme) düşülür — best-effort sözleşmesi korunuyor.
+
+Backend: `ruff check` temiz, testler 224 → **226** (+2: `YOK` yanıtının
+tüm adayları elediğini ve kısa-ama-temiz bir listenin artık "yarıdan az"
+diye reddedilmediğini doğrulayan testler; 1 test yeniden adlandırıldı/
+davranışı güncellendi, 1 test yeni `_MAX_CANDIDATES` doğrulama yanıtına
+uyarlandı). Mobile: değişmedi (bu tamamen backend arama/reranking).
+
+**Manuel doğrulama (henüz yapılmadı)**: `0024` canlı Supabase'e
+uygulandıktan sonra gerçek bir hesapla iki örnek sorgu denenmeli — (a)
+sadece bir etikette/entity'de geçen bir kelime → o item artık
+bulunmalı, (b) arşivle hiç ilgisi olmayan bir sorgu → sonuç listesi
+artık zorla `limit` kadar doldurulmamalı.

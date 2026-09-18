@@ -19,9 +19,21 @@ Best-effort by design — same contract as `tagging_service`/
 that doesn't parse into anything usable) falls back to the order the
 caller already had. Reranking can only reorder or narrow candidates
 `search_service` already found; it must never be the reason search
-itself breaks or returns nothing.
+itself breaks.
+
+P2-01 (docs/requirements-audit-2026-09-13.md): "narrow" used to be
+theoretical — the LLM only ever reordered the full candidate list, so a
+genuinely irrelevant candidate always survived into the final `limit`
+results. The prompt now asks the model to actually drop candidates that
+don't answer the query at all (or say `YOK` if none of them do), and
+`_parse_order` no longer pads a partial ranking back up to the full
+candidate count — an index the model didn't mention is excluded, not
+"probably still relevant, just forgotten." This doubles as `semantic_
+search`'s and `answer_question`'s (RAG) only relevance threshold: no
+numeric similarity/score cutoff exists anywhere else in this pipeline.
 """
 
+import re
 from typing import Any
 
 from .ai_provider import AIProvider
@@ -31,6 +43,13 @@ from .ai_provider import AIProvider
 # many candidates, reordering stops being worth the extra tokens.
 _MAX_CANDIDATES = 30
 _MAX_SNIPPET_CHARS = 300
+
+_NONE_RELEVANT = "yok"
+# The only two shapes we trust as a deliberate answer: the none-relevant
+# sentinel, or a comma/newline-separated list of bare numbers. Anything
+# else (prose, a number embedded in a sentence) reads as a misfire, not
+# a genuine ranking — see _parse_order.
+_CLEAN_LIST_RE = re.compile(r"^\d+(\s*,\s*\d+)*$")
 
 
 async def rerank_matches(
@@ -61,9 +80,11 @@ async def rerank_matches(
     )
     prompt = (
         f"Sorgu: {query}\n\nAdaylar:\n{listing}\n\n"
-        "Yukarıdaki adayları sorguyla EN alakalıdan EN az alakalıya doğru "
-        "sırala. Sadece numaraları virgülle ayırarak yaz (ör. 3,1,4,2), "
-        "başka hiçbir şey yazma. Her numara tam olarak bir kez geçmeli."
+        "Yukarıdaki adaylardan sorguyla GERÇEKTEN alakalı olanları EN "
+        "alakalıdan EN az alakalıya doğru sırala. Sorguyla hiçbir ilgisi "
+        "olmayan adayları listeye YAZMA. Sadece numaraları virgülle "
+        "ayırarak yaz (ör. 3,1,4), başka hiçbir şey yazma. Hiçbir aday "
+        "sorguyla alakalı değilse, sadece 'YOK' yaz."
     )
 
     try:
@@ -79,33 +100,34 @@ async def rerank_matches(
 
 
 def _parse_order(response: str, *, count: int) -> list[int] | None:
-    """Parses "3,1,4,2" (1-based, as asked in the prompt) into a list of
-    0-based indices. Delimiter-tolerant rather than requiring strict
-    JSON/CSV — same reasoning as `tagging_service`/`entity_extraction_service`:
-    one stray character in the model's response shouldn't discard the
-    whole ranking.
+    """Parses "3,1,4" (1-based, as asked in the prompt) into a list of
+    0-based indices — the candidates to keep, in relevance order. An
+    index the model never mentions is dropped, not appended: omission is
+    now the model's way of rejecting a candidate as irrelevant (P2-01).
 
-    Returns `None` (meaning "unusable, fall back") if the response
-    mentions fewer than half the candidates — a response that's mostly
-    prose instead of a ranking is more likely a misfire than a real
-    partial ranking. Any index outside `range(count)`, or a repeat, is
-    silently dropped rather than treated as a hard parse failure.
+    Returns `[]` if the response is the explicit "nothing is relevant"
+    sentinel (`YOK`). Returns `None` (meaning "unusable, fall back to
+    the caller's original order") if the response isn't a clean
+    comma-separated list of bare numbers — a reply mixed with prose (a
+    number embedded in a sentence, an explanation) is more likely a
+    misfire than a deliberate short list, regardless of how many
+    candidates it does or doesn't mention. Whether it's a clean list is
+    checked on the *whole* response — no digit-count heuristic, since a
+    short but well-formed list (most candidates genuinely rejected) is
+    just as trustworthy as a long one.
     """
+    cleaned = response.strip()
+    if cleaned.casefold() == _NONE_RELEVANT:
+        return []
+
+    normalized = cleaned.replace("\n", ",")
+    if not _CLEAN_LIST_RE.match(normalized):
+        return None
+
     seen: list[int] = []
-    for token in response.replace("\n", ",").split(","):
-        token = token.strip()
-        if not token.isdigit():
-            continue
-        index = int(token) - 1
+    for token in normalized.split(","):
+        index = int(token.strip()) - 1
         if 0 <= index < count and index not in seen:
             seen.append(index)
 
-    if len(seen) < max(1, count // 2):
-        return None
-
-    # Anything the model never mentioned keeps its original relative
-    # order, appended after everything it did rank — a partial ranking
-    # is still strictly better than discarding candidates it simply
-    # didn't call out.
-    seen.extend(i for i in range(count) if i not in seen)
-    return seen
+    return seen or None

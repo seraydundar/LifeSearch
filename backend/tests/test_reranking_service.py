@@ -80,9 +80,10 @@ async def test_unparseable_response_falls_back_to_the_original_order():
 
 
 @pytest.mark.asyncio
-async def test_a_ranking_that_only_mentions_one_of_several_is_treated_as_unusable():
-    """Mentioning far fewer candidates than it was given reads as a
-    misfire (stray digit in prose), not a genuine partial ranking.
+async def test_a_response_mixed_with_prose_falls_back_despite_containing_a_digit():
+    """A digit embedded in a sentence isn't the instructed clean list
+    format, so it reads as a misfire regardless of how many candidates
+    it happens to mention.
     """
     matches = [_match(str(i)) for i in range(6)]
     provider = _StubProvider("Number 1 looks best.")
@@ -93,13 +94,40 @@ async def test_a_ranking_that_only_mentions_one_of_several_is_treated_as_unusabl
 
 
 @pytest.mark.asyncio
-async def test_a_partial_ranking_appends_unmentioned_candidates_in_original_order():
+async def test_a_partial_ranking_drops_unmentioned_candidates_as_irrelevant():
+    """P2-01: an index the model doesn't mention is now excluded, not
+    assumed relevant-but-forgotten.
+    """
     matches = [_match("a"), _match("b"), _match("c"), _match("d")]
-    provider = _StubProvider("3,1")  # only mentions half — exactly the cutoff, still usable
+    provider = _StubProvider("3,1")  # only c and a are relevant
 
     result = await rerank_matches("q", matches, provider, limit=4)
 
-    assert [m["item_id"] for m in result] == ["c", "a", "b", "d"]
+    assert [m["item_id"] for m in result] == ["c", "a"]
+
+
+@pytest.mark.asyncio
+async def test_a_short_but_well_formed_list_is_trusted_even_if_most_are_unmentioned():
+    """Unlike the old count-based heuristic, a clean list mentioning only
+    one of several candidates is trusted as-is — few genuinely relevant
+    candidates is a legitimate outcome, not a parse failure.
+    """
+    matches = [_match(str(i)) for i in range(6)]
+    provider = _StubProvider("2")
+
+    result = await rerank_matches("q", matches, provider, limit=6)
+
+    assert [m["item_id"] for m in result] == ["1"]
+
+
+@pytest.mark.asyncio
+async def test_yok_response_rejects_every_candidate():
+    matches = [_match("a"), _match("b"), _match("c")]
+    provider = _StubProvider("YOK")
+
+    result = await rerank_matches("q", matches, provider, limit=3)
+
+    assert result == []
 
 
 @pytest.mark.asyncio
@@ -116,9 +144,12 @@ async def test_duplicate_and_out_of_range_numbers_in_the_response_are_ignored():
 async def test_more_than_the_internal_candidate_cap_only_reranks_the_head():
     from app.services import reranking_service
 
-    matches = [_match(str(i)) for i in range(reranking_service._MAX_CANDIDATES + 10)]
-    provider = _StubProvider("1,2,3")
+    n = reranking_service._MAX_CANDIDATES
+    matches = [_match(str(i)) for i in range(n + 10)]
+    # Mentions every one of the capped candidates, so the result length
+    # verifies the cap itself, not the new "unmentioned = dropped" rule.
+    provider = _StubProvider(",".join(str(i) for i in range(1, n + 1)))
 
     result = await rerank_matches("q", matches, provider, limit=100)
 
-    assert len(result) == reranking_service._MAX_CANDIDATES
+    assert len(result) == n
