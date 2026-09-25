@@ -1,0 +1,37 @@
+name: Supabase keep-alive
+
+# Supabase's free tier pauses a project after 7 days with no API
+# activity (see the "Your Supabase Project lifesearch has been paused"
+# email) — a paused project can't be reached by the backend or the
+# mobile app until someone manually resumes it from the dashboard.
+# This just makes one real, harmless request every 3 days (safety
+# margin well under the 7-day threshold) so that timer never elapses.
+# Runs on GitHub's own runners rather than as a Claude Code cloud
+# routine — this repo's org policy blocks outbound requests to
+# arbitrary third-party domains from that environment, GitHub Actions
+# has no such restriction.
+
+on:
+  schedule:
+    - cron: "0 12 */3 * *"
+  workflow_dispatch: {} # lets you trigger a one-off run from the Actions tab to test
+
+jobs:
+  ping:
+    name: Ping Supabase's REST endpoint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request the PostgREST root endpoint
+        run: |
+          status=$(curl -sS -o /dev/null -w "%{http_code}" "$SUPABASE_URL/rest/v1/" -H "apikey: $SUPABASE_ANON_KEY")
+          echo "HTTP status: $status"
+          # Any response at all (even a non-2xx one) means the request
+          # reached Supabase's edge and counts as real API activity —
+          # that's the only thing this needs to do. A completely failed
+          # connection (curl's own non-zero exit) is the one real problem.
+        env:
+          SUPABASE_URL: https://pxijbpvllpgtyqbrnoii.supabase.co
+          # Supabase's anon key is meant to be public — it's the same
+          # key already embedded in the mobile app itself, protected by
+          # each table's RLS policy rather than by being secret.
+          SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB4aWpicHZsbHBndHlxYnJub2lpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzNjAxMjgsImV4cCI6MjEwMzkzNjEyOH0.YfhWrOY5TMEtsEKcjF1Fixodl4PIq_R5HMe2W4f3_Ts
