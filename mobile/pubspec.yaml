@@ -52,6 +52,11 @@ dependencies:
   connectivity_plus: ^7.3.1
   drift_flutter: ^0.3.1
   camera: ^0.12.0+2
+  # macOS-only: the `camera` package above has no macOS implementation
+  # at all (see capture_platform_support.dart's own docstring) — this
+  # is a separate, macOS-specific AVKit-based package used only from
+  # camera_screen.dart's `_MacOSCameraScreen`.
+  camera_macos: ^0.1.1
   record: ^6.2.1
   share_plus: ^13.3.0
   local_auth: ^3.0.2

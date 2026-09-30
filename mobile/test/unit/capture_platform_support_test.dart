@@ -4,11 +4,10 @@ import 'package:lifesearch/features/capture/presentation/widgets/capture_platfor
 void main() {
   // Faz 11, madde 6c (masaüstü/web istemci — see docs/roadmap.md): which
   // capture tiles are disabled on which platform, and why. These take
-  // isWeb/isMacOS as plain arguments rather than reading kIsWeb/
-  // Platform.isMacOS directly so every platform combination is
-  // deterministically testable regardless of which machine actually
-  // runs `flutter test` — kIsWeb is always false in a VM test run, and
-  // Platform.isMacOS reflects whatever machine happens to run it.
+  // isWeb as a plain argument rather than reading kIsWeb directly so
+  // every platform combination is deterministically testable regardless
+  // of which machine actually runs `flutter test` — kIsWeb is always
+  // false in a VM test run.
   group('fileCaptureSupportedFor', () {
     // P3 (docs/requirements-audit-2026-09-13.md, "Platformlar"):
     // file_picker natively supports bytes on web — the old blanket web
@@ -26,15 +25,15 @@ void main() {
 
   group('cameraSupportedFor', () {
     test('unsupported on web — CameraScreen still relies on a real file path', () {
-      expect(cameraSupportedFor(isWeb: true, isMacOS: false), isFalse);
+      expect(cameraSupportedFor(isWeb: true), isFalse);
     });
 
-    test('unsupported on macOS — the camera plugin has no macOS backend', () {
-      expect(cameraSupportedFor(isWeb: false, isMacOS: true), isFalse);
-    });
-
-    test('supported on a native, non-macOS platform (mobile, Windows, Linux)', () {
-      expect(cameraSupportedFor(isWeb: false, isMacOS: false), isTrue);
+    // P3 (docs/requirements-audit-2026-09-13.md, "Platformlar"):
+    // CameraScreen now routes macOS through camera_macos (a separate
+    // AVKit-based plugin) instead of excluding it — the `camera`
+    // package's own lack of a macOS backend no longer matters here.
+    test('supported everywhere native, including macOS', () {
+      expect(cameraSupportedFor(isWeb: false), isTrue);
     });
   });
 
@@ -59,17 +58,12 @@ void main() {
   });
 
   group('cameraUnavailableReasonFor', () {
-    test('the web reason and the macOS reason are worded differently', () {
-      final webReason = cameraUnavailableReasonFor(isWeb: true, isMacOS: false);
-      final macReason = cameraUnavailableReasonFor(isWeb: false, isMacOS: true);
-
-      expect(webReason, isNotNull);
-      expect(macReason, isNotNull);
-      expect(webReason, isNot(equals(macReason)));
+    test('gives a reason on web', () {
+      expect(cameraUnavailableReasonFor(isWeb: true), isNotNull);
     });
 
-    test('gives no reason when actually supported', () {
-      expect(cameraUnavailableReasonFor(isWeb: false, isMacOS: false), isNull);
+    test('gives no reason when actually supported, including on macOS', () {
+      expect(cameraUnavailableReasonFor(isWeb: false), isNull);
     });
   });
 

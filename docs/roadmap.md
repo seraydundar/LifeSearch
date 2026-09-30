@@ -3769,3 +3769,53 @@ fırlatıldığını doğrulayan) — tüm suite yeşil, tek bir ilgisiz
 başarısızlık dışında (`search_tab_test.dart`'ın özel tarih aralığı
 testi — bugünün ayın 1'i olmasıyla ilgili, bu değişiklikten önce de
 `main`'de zaten başarısız, doğrulandı).
+
+## Faz 32 — P3: macOS'ta kamera desteği (camera_macos)
+
+`docs/requirements-audit-2026-09-13.md`'nin "Platformlar" maddesinin
+kalan parçalarından biri: "macOS kamera yok." `camera` paketinin kendi
+`pubspec.yaml`'ı yalnızca android/ios/web'i destekliyor — macOS'ta hiç
+implementasyonu yok.
+
+Araştırınca [`camera_macos`](https://pub.dev/packages/camera_macos)
+bulundu — macOS'a özel, `AVKit` tabanlı, aktif bakımlı (pub.dev:
+160/160 puan, MIT lisans) bir paket. Fotoğraf çekiminin sonucu
+doğrudan `CameraMacOSFile.bytes` (`Uint8List`) — bu da onu
+`audio_recorder_screen.dart`'ın zaten kullandığı "bytes'ı
+`path_provider`'ın geçici dizinine yaz, path'i döndür" desenine kolayca
+oturttu. Bu sayede `capture_sheet.dart`/`uploadFile`/repository
+katmanlarının HİÇBİRİNE dokunmak gerekmedi — `CameraScreen` bugünkü
+gibi bir dosya yolu döndürmeye devam ediyor.
+
+- **`camera_screen.dart`**: `CameraScreen` ince bir sarmalayıcıya
+  dönüştü — `Platform.isMacOS` ise yeni `_MacOSCameraScreen`
+  (`camera_macos`), değilse bugünkü mantığın taşındığı
+  `_MobileCameraScreen` (`camera`). İki ayrı `StatefulWidget` — kontrolör
+  tipleri ve init/capture/hata akışları gerçekten farklı, tek bir state
+  sınıfında birleştirmek koşullu dallanmayı her yere yayardı. Ortak
+  çekim düğmesi görsel tasarımı `_ShutterButton` olarak paylaşıldı.
+- **`macos/Runner/Info.plist`**: `NSCameraUsageDescription` +
+  `NSMicrophoneUsageDescription` eklendi. İkincisi aslında örtük bir
+  gerçek cihaz kabulü boşluğunu da kapattı: `audioRecordingSupportedFor`
+  macOS'ta `record` paketini zaten "destekleniyor" sayıyordu ama bu
+  açıklama olmadan mikrofon isteği App Sandbox'ta sessizce
+  reddedilebilirdi.
+- **`DebugProfile.entitlements`/`Release.entitlements`**:
+  `com.apple.security.device.camera`/`audio-input` eklendi — App
+  Sandbox altında zorunlu.
+- **`capture_platform_support.dart`**: `cameraSupportedFor`'un
+  `isMacOS` parametresi kaldırıldı, artık yalnızca `!isWeb`.
+
+Backend değişikliği yok, migrasyon yok.
+
+**Doğrulama**: `flutter build macos --debug` başarıyla derlendi
+(`✓ Built .../LifeSearch.app`), uygulama açılıp 8 saniye boyunca
+çökmeden çalıştı, temiz kapatıldı — hiç crash log oluşmadı. Kamera
+izni diyaloğuna basıp gerçek görüntüyü GÖRSEL olarak doğrulamak
+(interaktif UI etkileşimi gerektiriyor) bu oturumda yapılamadı — bu,
+kullanıcının kendisinin bir kere denemesi gereken tek adım.
+
+Mobile: `flutter analyze` temiz, `capture_platform_support_test.dart`
+güncellendi (macOS'a özel ayrı test dalı kaldırıldı, "her native
+platformda destekleniyor, macOS dahil" tek testle birleşti), tüm suite
+yeşil (aynı ilgisiz `search_tab_test.dart` başarısızlığı dışında).

@@ -1,17 +1,39 @@
+import 'dart:io';
+
 import 'package:camera/camera.dart';
+import 'package:camera_macos/camera_macos.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// A minimal full-screen camera capture flow (requirements doc, section
 /// 4: "Kamera: Flutter camera package"). Pops with the captured photo's
 /// local file path, or `null` if the user backs out.
-class CameraScreen extends StatefulWidget {
+///
+/// Two genuinely different implementations behind one public contract
+/// (P3, docs/requirements-audit-2026-09-13.md, "Platformlar"): the
+/// `camera` package has no macOS implementation at all (see
+/// `capture_platform_support.dart`'s own docstring), so macOS goes
+/// through `camera_macos` instead — a different plugin with a different
+/// controller/capture API, kept as its own widget rather than one state
+/// class juggling two controller types, since the init/capture/error
+/// flows genuinely diverge, not just the plugin underneath.
+class CameraScreen extends StatelessWidget {
   const CameraScreen({super.key});
 
   @override
-  State<CameraScreen> createState() => _CameraScreenState();
+  Widget build(BuildContext context) {
+    return Platform.isMacOS ? const _MacOSCameraScreen() : const _MobileCameraScreen();
+  }
 }
 
-class _CameraScreenState extends State<CameraScreen> {
+class _MobileCameraScreen extends StatefulWidget {
+  const _MobileCameraScreen();
+
+  @override
+  State<_MobileCameraScreen> createState() => _MobileCameraScreenState();
+}
+
+class _MobileCameraScreenState extends State<_MobileCameraScreen> {
   CameraController? _controller;
   String? _error;
   bool _isCapturing = false;
@@ -112,33 +134,136 @@ class _CameraScreenState extends State<CameraScreen> {
       fit: StackFit.expand,
       children: [
         CameraPreview(controller),
-        Align(
-          alignment: Alignment.bottomCenter,
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 40),
-            child: GestureDetector(
-              onTap: _capture,
-              child: Container(
-                width: 74,
-                height: 74,
+        _ShutterButton(isCapturing: _isCapturing, onTap: _capture),
+      ],
+    );
+  }
+}
+
+class _MacOSCameraScreen extends StatefulWidget {
+  const _MacOSCameraScreen();
+
+  @override
+  State<_MacOSCameraScreen> createState() => _MacOSCameraScreenState();
+}
+
+class _MacOSCameraScreenState extends State<_MacOSCameraScreen> {
+  CameraMacOSController? _controller;
+  bool _isCapturing = false;
+
+  @override
+  void dispose() {
+    _controller?.destroy();
+    super.dispose();
+  }
+
+  Future<void> _capture() async {
+    final controller = _controller;
+    if (controller == null || _isCapturing) return;
+
+    setState(() => _isCapturing = true);
+    try {
+      final bytes = (await controller.takePicture())?.bytes;
+      if (bytes == null) throw CameraMacOSException(message: 'no bytes returned');
+
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/photo-${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await File(path).writeAsBytes(bytes);
+
+      if (mounted) Navigator.of(context).pop(path);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isCapturing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fotoğraf çekilemedi. Tekrar dene.')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      extendBodyBehindAppBar: true,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          CameraMacOSView(
+            cameraMode: CameraMacOSMode.photo,
+            enableAudio: false,
+            pictureFormat: PictureFormat.jpg,
+            fit: BoxFit.cover,
+            onCameraInizialized: (controller) => setState(() => _controller = controller),
+            // The package's own FutureBuilder hands its init error (a
+            // denied permission, no camera present, etc.) straight
+            // through here instead of throwing somewhere unreachable —
+            // no separate `_error` state needed the way the mobile
+            // screen has one.
+            onCameraLoading: (error) {
+              if (error == null) {
+                return const Center(child: CircularProgressIndicator(color: Colors.white));
+              }
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'Kameraya erişilemedi. Ayarlardan izin verildiğinden emin ol.',
+                    style: TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              );
+            },
+          ),
+          if (_controller != null) _ShutterButton(isCapturing: _isCapturing, onTap: _capture),
+        ],
+      ),
+    );
+  }
+}
+
+/// The capture button both camera screens show — same design, same
+/// "greyed out mid-capture" affordance, just wired to whichever
+/// controller the caller actually has.
+class _ShutterButton extends StatelessWidget {
+  const _ShutterButton({required this.isCapturing, required this.onTap});
+
+  final bool isCapturing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 40),
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 74,
+            height: 74,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 4),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: DecoratedBox(
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 4),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _isCapturing ? Colors.white38 : Colors.white,
-                    ),
-                  ),
+                  color: isCapturing ? Colors.white38 : Colors.white,
                 ),
               ),
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 }

@@ -22,15 +22,15 @@ library;
 bool fileCaptureSupportedFor({required bool isWeb}) => true;
 
 /// The `camera` plugin has no macOS implementation at all — its own
-/// `pubspec.yaml` declares only android/ios/web — so "Take Photo" needs
-/// its own check. It *does* declare web support (via `camera_web`), but
-/// `CameraScreen`'s use of `XFile.path` (a blob: URL on web, not usable
-/// with `dart:io.File`) is a separate, unaddressed gap — checked
-/// directly against `isWeb` here rather than composed from
-/// [fileCaptureSupportedFor] (which no longer excludes web at all) for
-/// exactly that reason.
-bool cameraSupportedFor({required bool isWeb, required bool isMacOS}) =>
-    !isWeb && !isMacOS;
+/// `pubspec.yaml` declares only android/ios/web — but `CameraScreen`
+/// (P3, docs/requirements-audit-2026-09-13.md, "Platformlar") now
+/// routes macOS through `camera_macos`, a separate AVKit-based plugin,
+/// instead. `camera`'s web support (via `camera_web`) is still
+/// unaddressed — `CameraScreen`'s use of `XFile.path` (a blob: URL on
+/// web, not usable with `dart:io.File`) is a separate gap — so this
+/// stays its own check rather than composing from
+/// [fileCaptureSupportedFor] (which no longer excludes web at all).
+bool cameraSupportedFor({required bool isWeb}) => !isWeb;
 
 /// `Record Audio` needs its own check for the same reason `Take Photo`
 /// does: `AudioRecorderScreen` asks `path_provider` for a real directory
@@ -46,9 +46,8 @@ String? fileCaptureUnavailableReasonFor({required bool isWeb}) {
   return fileCaptureSupportedFor(isWeb: isWeb) ? null : 'Web\'de henüz desteklenmiyor';
 }
 
-String? cameraUnavailableReasonFor({required bool isWeb, required bool isMacOS}) {
-  if (isWeb) return 'Web\'de henüz desteklenmiyor';
-  return cameraSupportedFor(isWeb: isWeb, isMacOS: isMacOS) ? null : 'Bu platformda desteklenmiyor';
+String? cameraUnavailableReasonFor({required bool isWeb}) {
+  return cameraSupportedFor(isWeb: isWeb) ? null : 'Web\'de henüz desteklenmiyor';
 }
 
 String? audioRecordingUnavailableReasonFor({required bool isWeb}) {

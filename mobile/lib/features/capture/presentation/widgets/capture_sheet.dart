@@ -1,5 +1,3 @@
-import 'dart:io' show Platform;
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -35,25 +33,22 @@ class _CaptureSheet extends ConsumerWidget {
   const _CaptureSheet();
 
   // The actual per-platform decision lives in capture_platform_support.dart
-  // as plain functions of `isWeb`/`isMacOS` booleans, not `kIsWeb`/
-  // `Platform.isMacOS` reads buried inside this widget — that's what
-  // lets a test exercise every platform combination deterministically,
-  // regardless of which machine actually runs `flutter test` (Faz 11,
-  // madde 6c, see docs/roadmap.md). `kIsWeb` is still checked *before*
-  // `Platform.isMacOS` here so this short-circuits without ever
-  // touching `dart:io` on web, where referencing `Platform` at all is
-  // unsafe.
+  // as plain functions of an `isWeb` boolean, not a `kIsWeb` read buried
+  // inside this widget — that's what lets a test exercise every platform
+  // combination deterministically, regardless of which machine actually
+  // runs `flutter test` (Faz 11, madde 6c, see docs/roadmap.md). macOS
+  // no longer needs its own check here — `CameraScreen` now routes it
+  // through `camera_macos` instead of excluding it (P3, docs/requirements-
+  // audit-2026-09-13.md, "Platformlar").
   bool get _fileCaptureSupported => fileCaptureSupportedFor(isWeb: kIsWeb);
 
-  bool get _cameraSupported =>
-      cameraSupportedFor(isWeb: kIsWeb, isMacOS: !kIsWeb && Platform.isMacOS);
+  bool get _cameraSupported => cameraSupportedFor(isWeb: kIsWeb);
 
   bool get _audioRecordingSupported => audioRecordingSupportedFor(isWeb: kIsWeb);
 
   String? get _fileCaptureUnavailableReason => fileCaptureUnavailableReasonFor(isWeb: kIsWeb);
 
-  String? get _cameraUnavailableReason =>
-      cameraUnavailableReasonFor(isWeb: kIsWeb, isMacOS: !kIsWeb && Platform.isMacOS);
+  String? get _cameraUnavailableReason => cameraUnavailableReasonFor(isWeb: kIsWeb);
 
   String? get _audioRecordingUnavailableReason =>
       audioRecordingUnavailableReasonFor(isWeb: kIsWeb);

@@ -11,5 +11,13 @@
 	     guidance: https://docs.flutter.dev/platform-integration/macos/building -->
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- P3 (docs/requirements-audit-2026-09-13.md, "Platformlar"): App
+	     Sandbox blocks camera/mic access without these, regardless of
+	     Info.plist's usage descriptions — camera_macos (Take Photo) and
+	     record (Record Audio) both need them. -->
+	<key>com.apple.security.device.camera</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
 </dict>
 </plist>
