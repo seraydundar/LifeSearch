@@ -3711,3 +3711,61 @@ sunucu-silmesinin yakalandığını, içerik/tag fetch'lerinin scope'landığın
 ve cursor'ın kullanıcı bazlı olduğunu doğrulayan testler) — tüm suite
 yeşil (bu süreçte `noteRow`/`pendingRow` test fixture'larına eksik olan
 `updated_at` alanı da eklendi, gerçek satır şeklini daha doğru yansıtıyor).
+
+## Faz 31 — P3: web'de dosya/görsel/belge yükleme (bytes tabanlı)
+
+`docs/requirements-audit-2026-09-13.md`'nin "Platformlar" maddesi: "web
+dosya/görsel/kamera/ses ... akışları tamamlanmamış." Kök sebep:
+`OfflineItemRepository.uploadFile()` seçilen dosyayı `path_provider`
+ile kendi dizinine kopyalayıp bu yol string'ini hem yerel DB'ye hem
+`sync_queue`'ya yazıyordu — web'de gerçek bir dosya sistemi yok,
+`file_picker` web'de yalnızca bytes veriyor. Tek bir paylaşılan bayrak
+(`fileCaptureSupportedFor`) "Choose Image"/"Upload Document"/"Record
+Audio" üçünü birden web'de kapatıyordu.
+
+İncelerken üçünün aslında farklı kapsamda olduğu ortaya çıktı — yalnız
+**Choose Image + Upload Document** (`file_picker`, web'de bytes'ı
+native destekliyor) bu turda düzeltildi. **Take Photo** (`camera`
+paketi — web desteği var ama `CameraScreen`'in `XFile.path`'e
+bağımlılığı ayrı bir sorun) ve **Record Audio** (`AudioRecorderScreen`'in
+`path_provider`'a bağımlılığı) kapsam dışı bırakıldı — kendi bağımsız
+gatekeeper'larıyla (`cameraSupportedFor`, yeni `audioRecordingSupportedFor`)
+web'de kapalı kalmaya devam ediyor, artık paylaşılan bayrağın yan etkisi
+olarak değil.
+
+- **`capture_platform_support.dart`**: `fileCaptureSupportedFor` artık
+  koşulsuz `true`; `cameraSupportedFor` paylaşılan bayraktan ayrıştırılıp
+  doğrudan `!isWeb && !isMacOS` kontrolü yapıyor (davranış aynı); yeni
+  `audioRecordingSupportedFor`/`audioRecordingUnavailableReasonFor`.
+- **Offline kuyruk kararı**: web yüklemesi kuyruğa alınmadan, anında
+  yapılıyor — sayfa yenilenince bytes bellekte kaybolacağından, native'deki
+  gibi bir dosya kopyası kalıcı olarak saklanamıyor. Başarısız olursa
+  hata direkt kullanıcıya gösteriliyor (`ItemRepository`'nin zaten var
+  olan "not cached locally yet, needs a connection" sözleşmesiyle aynı
+  desen — `fetchTags`/`fetchEntities` de böyle).
+- **`item_repository.dart`**/`offline_item_repository.dart`/`item_providers.dart`:
+  yeni `uploadFileBytes` — `RemoteItemDataSource.uploadFileBytes`'i
+  (yeni, `storage_client`'ın web-safe `uploadBinary`'sini kullanıyor)
+  doğrudan awaitler, başarılı olursa yerel satırı `syncStatus: synced`
+  ile yazar, sonra `SyncService.triggerAiNow` (yeni public wrapper —
+  `_flushQueue`'nun upload_file sonrası yaptığı AI tetiklemeyle
+  paritede) ile AI pipeline'ı tetikler.
+- **`capture_sheet.dart`**: `file_picker` 12.x'in API'si beklenenden
+  farklı çıktı — `PlatformFile.bytes` diye bir alan yok, `path` artık
+  `uri.scheme == 'file'`e bağlı bir getter, bytes için `await
+  file.readAsBytes()` (cross-platform, yalnız web'e özel değil)
+  gerekiyor. `kIsWeb` ise `uploadFileBytes`'e, değilse mevcut
+  `uploadFile`'a gidiyor.
+
+Backend değişikliği yok, migrasyon yok.
+
+Mobile: `flutter analyze` temiz, `capture_platform_support_test.dart`
+güncellendi (+4: web'de artık dosya seçiminin desteklendiğini, yeni
+audio-recording gate'inin web'de false/diğerlerinde true olduğunu
+doğrulayan testler), `offline_item_repository_test.dart`'a yeni bir
+`uploadFileBytes` grubu (+2: anında yüklenip kuyruğa hiçbir şey
+eklenmediğini, uzak çağrı başarısız olursa hatanın olduğu gibi
+fırlatıldığını doğrulayan) — tüm suite yeşil, tek bir ilgisiz
+başarısızlık dışında (`search_tab_test.dart`'ın özel tarih aralığı
+testi — bugünün ayın 1'i olmasıyla ilgili, bu değişiklikten önce de
+`main`'de zaten başarısız, doğrulandı).

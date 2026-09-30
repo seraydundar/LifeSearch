@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:drift/drift.dart' show Value;
 import 'package:path_provider/path_provider.dart';
@@ -198,6 +199,67 @@ class OfflineItemRepository implements ItemRepository {
       favorite: false,
       createdAt: now,
       fileSizeBytes: fileSizeBytes,
+    );
+  }
+
+  @override
+  Future<Item> uploadFileBytes({
+    required Uint8List bytes,
+    required String originalFilename,
+    required String mimeType,
+    required ItemType type,
+  }) async {
+    final id = _uuid.v4();
+    final now = DateTime.now();
+    final userId = _userId;
+
+    // Unlike uploadFile(), no local-first/queue step — this reaches the
+    // server immediately and throws straight to the caller if it can't
+    // (see ItemRepository.uploadFileBytes's own docstring for why: no
+    // persistent local copy of these bytes exists to replay a queued
+    // attempt from later).
+    await _remote.uploadFileBytes(
+      id: id,
+      bytes: bytes,
+      originalFilename: originalFilename,
+      mimeType: mimeType,
+      type: type,
+      fileSizeBytes: bytes.length,
+    );
+
+    await _local.upsert(LocalItemsCompanion.insert(
+      id: id,
+      userId: userId,
+      type: type.dbValue,
+      title: Value(originalFilename),
+      originalFilename: Value(originalFilename),
+      mimeType: Value(mimeType),
+      processingStatus: const Value('pending'),
+      createdAt: now,
+      fileSizeBytes: Value(bytes.length),
+      // The remote write above already succeeded — this row is exactly
+      // as synced as one `SyncService._pullRemote` would have pulled in.
+      syncStatus: const Value('synced'),
+    ));
+
+    // Parity with the native `upload_file` queue op (see
+    // SyncService._flushQueue's own `_shouldTriggerAi`/`_triggerAi`
+    // call) — nothing else will ever kick this off for an upload that
+    // bypassed the queue entirely.
+    if (aiSupportedUploadTypes.contains(type.dbValue)) {
+      await _syncService.triggerAiNow(userId, id);
+    }
+
+    return Item(
+      id: id,
+      type: type,
+      title: originalFilename,
+      originalFilename: originalFilename,
+      mimeType: mimeType,
+      processingStatus: 'pending',
+      favorite: false,
+      createdAt: now,
+      fileSizeBytes: bytes.length,
     );
   }
 

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/database/database_provider.dart';
@@ -179,6 +181,25 @@ class CaptureController extends AsyncNotifier<void> {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() => ref.read(itemRepositoryProvider).uploadFile(
           localFilePath: localFilePath,
+          originalFilename: originalFilename,
+          mimeType: mimeType,
+          type: type,
+        ));
+    return !state.hasError;
+  }
+
+  /// Same contract as [uploadFile], for web's bytes-based picker flow
+  /// (P3, docs/requirements-audit-2026-09-13.md, "Platformlar") — see
+  /// `ItemRepository.uploadFileBytes`'s own docstring.
+  Future<bool> uploadFileBytes({
+    required Uint8List bytes,
+    required String originalFilename,
+    required String mimeType,
+    required ItemType type,
+  }) async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() => ref.read(itemRepositoryProvider).uploadFileBytes(
+          bytes: bytes,
           originalFilename: originalFilename,
           mimeType: mimeType,
           type: type,

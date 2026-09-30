@@ -18,7 +18,12 @@ import 'sync_cursor_storage.dart';
 /// `upload_file` op — see backend/app/services/processing_pipeline.py
 /// SUPPORTED_TYPES. `create_url` items are triggered unconditionally
 /// instead (see `_shouldTriggerAi`), since a link has no upload step.
-const _aiSupportedUploadTypes = {'pdf', 'image', 'screenshot', 'audio', 'document'};
+///
+/// Public (not `_`-prefixed): `OfflineItemRepository.uploadFileBytes`
+/// (P3, docs/requirements-audit-2026-09-13.md, "Platformlar") needs the
+/// exact same check for its own, queue-bypassing upload path — one
+/// source of truth instead of a second, driftable copy.
+const aiSupportedUploadTypes = {'pdf', 'image', 'screenshot', 'audio', 'document'};
 
 /// Sync-queue operation types that target a collection itself (as opposed
 /// to an item, or a collection's membership). Kept as a Set rather than a
@@ -531,6 +536,15 @@ class SyncService {
     await _local.markFailed(queuedId);
   }
 
+  /// Public wrapper for [_triggerAi] — `OfflineItemRepository.uploadFileBytes`
+  /// (P3, docs/requirements-audit-2026-09-13.md, "Platformlar") calls
+  /// this directly for a web upload, which bypasses `sync_queue`
+  /// entirely (no persistent local file to replay from later, unlike a
+  /// native `upload_file` entry) and so never reaches `_flushQueue`'s own
+  /// call to it — this is the only way that upload's AI kickoff ever
+  /// gets triggered at all.
+  Future<void> triggerAiNow(String userId, String itemId) => _triggerAi(userId, itemId);
+
   /// Best-effort but not silent: if the backend can't be reached right now,
   /// queues a `trigger_ai` retry — persisted in `sync_queue` (survives an
   /// app restart) and drained by every future `_flushQueue()` call, unlike
@@ -551,7 +565,7 @@ class SyncService {
   bool _shouldTriggerAi(String operationType, Map<String, dynamic> payload) {
     return switch (operationType) {
       'create_note' || 'update_note' || 'create_url' => true,
-      'upload_file' => _aiSupportedUploadTypes.contains(payload['type']),
+      'upload_file' => aiSupportedUploadTypes.contains(payload['type']),
       _ => false,
     };
   }

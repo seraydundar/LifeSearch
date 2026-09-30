@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../entities/extracted_entity.dart';
 import '../entities/item.dart';
 
@@ -51,6 +53,21 @@ abstract interface class ItemRepository {
 
   Future<Item> uploadFile({
     required String localFilePath,
+    required String originalFilename,
+    required String mimeType,
+    required ItemType type,
+  });
+
+  /// Same contract as [uploadFile], for a caller that only has the
+  /// file's bytes in memory, not a real filesystem path (P3, docs/
+  /// requirements-audit-2026-09-13.md, "Platformlar" — web's
+  /// `file_picker` gives bytes, never a path). Uploads immediately and
+  /// doesn't queue a retry on failure the way [uploadFile] does — there's
+  /// no persistent local copy of these bytes to replay from later once
+  /// the in-memory ones are gone (an app restart, on web, loses them
+  /// completely) — the caller surfaces a failure directly instead.
+  Future<Item> uploadFileBytes({
+    required Uint8List bytes,
     required String originalFilename,
     required String mimeType,
     required ItemType type,

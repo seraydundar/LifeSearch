@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:lifesearch/features/item/domain/entities/extracted_entity.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
@@ -107,6 +108,30 @@ class FakeItemRepository implements ItemRepository {
       processingStatus: 'pending',
       favorite: false,
       createdAt: DateTime.now(),
+    );
+    _items.insert(0, item);
+    _notify();
+    return item;
+  }
+
+  @override
+  Future<Item> uploadFileBytes({
+    required Uint8List bytes,
+    required String originalFilename,
+    required String mimeType,
+    required ItemType type,
+  }) async {
+    final item = Item(
+      id: 'file-${_items.length}',
+      type: type,
+      title: originalFilename,
+      originalFilename: originalFilename,
+      mimeType: mimeType,
+      storagePath: 'fake/$originalFilename',
+      processingStatus: 'pending',
+      favorite: false,
+      createdAt: DateTime.now(),
+      fileSizeBytes: bytes.length,
     );
     _items.insert(0, item);
     _notify();

@@ -48,10 +48,15 @@ class _CaptureSheet extends ConsumerWidget {
   bool get _cameraSupported =>
       cameraSupportedFor(isWeb: kIsWeb, isMacOS: !kIsWeb && Platform.isMacOS);
 
+  bool get _audioRecordingSupported => audioRecordingSupportedFor(isWeb: kIsWeb);
+
   String? get _fileCaptureUnavailableReason => fileCaptureUnavailableReasonFor(isWeb: kIsWeb);
 
   String? get _cameraUnavailableReason =>
       cameraUnavailableReasonFor(isWeb: kIsWeb, isMacOS: !kIsWeb && Platform.isMacOS);
+
+  String? get _audioRecordingUnavailableReason =>
+      audioRecordingUnavailableReasonFor(isWeb: kIsWeb);
 
   Future<void> _pickAndUpload(
     BuildContext context,
@@ -65,21 +70,36 @@ class _CaptureSheet extends ConsumerWidget {
       allowedExtensions: allowedExtensions,
     );
     final file = files.isEmpty ? null : files.single;
-    if (file?.path == null) return; // user cancelled
+    if (file == null) return; // user cancelled
 
     if (!context.mounted) return;
     Navigator.of(
       context,
     ).pop(); // close the sheet, show progress on the screen behind it
 
-    final ok = await ref
-        .read(captureControllerProvider.notifier)
-        .uploadFile(
-          localFilePath: file!.path!,
-          originalFilename: file.name,
-          mimeType: _guessMimeType(file.extension),
-          type: itemTypeFor(file.extension),
-        );
+    // P3 (docs/requirements-audit-2026-09-13.md, "Platformlar"): `.path`
+    // is derived from the file's own `uri` (`PlatformFile`, file_picker
+    // 12.x) and is only ever non-null for a `file:` URI — web never
+    // gives one (no real filesystem to point a path into), so it reads
+    // the bytes directly off the file instead, the same way on every
+    // platform (`readAsBytes()` is cross-platform, not a web-only API).
+    final ok = kIsWeb
+        ? await ref
+            .read(captureControllerProvider.notifier)
+            .uploadFileBytes(
+              bytes: await file.readAsBytes(),
+              originalFilename: file.name,
+              mimeType: _guessMimeType(file.extension),
+              type: itemTypeFor(file.extension),
+            )
+        : await ref
+            .read(captureControllerProvider.notifier)
+            .uploadFile(
+              localFilePath: file.path!,
+              originalFilename: file.name,
+              mimeType: _guessMimeType(file.extension),
+              type: itemTypeFor(file.extension),
+            );
 
     if (!context.mounted) return;
     if (!ok) {
@@ -275,8 +295,8 @@ class _CaptureSheet extends ConsumerWidget {
               _CaptureTile(
                 icon: Icons.mic_none_outlined,
                 label: 'Record Audio',
-                enabled: !isUploading && _fileCaptureSupported,
-                unavailableReason: _fileCaptureUnavailableReason,
+                enabled: !isUploading && _audioRecordingSupported,
+                unavailableReason: _audioRecordingUnavailableReason,
                 onTap: () => _recordAudio(context, ref),
               ),
               _CaptureTile(

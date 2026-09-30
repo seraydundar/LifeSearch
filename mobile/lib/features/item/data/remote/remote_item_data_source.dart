@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -271,6 +272,59 @@ class RemoteItemDataSource {
       });
     } catch (e) {
       await _client.storage.from(_bucket).remove([storagePath]); // don't leave an orphan file
+      throw UnexpectedFailure('İçerik kaydedilemedi. Lütfen tekrar dene.');
+    }
+  }
+
+  /// Same two-step contract as [uploadFile] (storage upload, then the
+  /// `items` row — rolling the file back if that second step fails), for
+  /// a caller that only has the file's bytes in memory, not a real
+  /// filesystem path (P3, docs/requirements-audit-2026-09-13.md,
+  /// "Platformlar" — `file_picker` on web gives `PlatformFile.bytes`,
+  /// never a usable `.path`). `uploadBinary` is `storage_client`'s own
+  /// web-safe equivalent of [uploadFile]'s `.upload(path, File(...))`.
+  ///
+  /// No offline-queue counterpart the way [uploadFile] has one (see
+  /// `SyncService`'s `upload_file` op replay): there's no persistent
+  /// local file these bytes could be re-read from after an app restart
+  /// on web, so this is called directly, immediately — a failure here is
+  /// surfaced to the caller right away rather than queued for a later
+  /// retry.
+  Future<void> uploadFileBytes({
+    required String id,
+    required Uint8List bytes,
+    required String originalFilename,
+    required String mimeType,
+    required ItemType type,
+    int? fileSizeBytes,
+  }) async {
+    final ownerId = userId;
+    final storagePath = '$ownerId/$id/$originalFilename';
+
+    try {
+      await _client.storage.from(_bucket).uploadBinary(
+            storagePath,
+            bytes,
+            fileOptions: const FileOptions(upsert: true),
+          );
+    } on StorageException catch (e) {
+      throw UnexpectedFailure('Dosya yüklenemedi: ${e.message}');
+    }
+
+    try {
+      await _client.from('items').upsert({
+        'id': id,
+        'user_id': ownerId,
+        'type': type.dbValue,
+        'title': originalFilename,
+        'original_filename': originalFilename,
+        'mime_type': mimeType,
+        'storage_path': storagePath,
+        'file_size_bytes': fileSizeBytes,
+        'processing_status': 'pending',
+      });
+    } catch (e) {
+      await _client.storage.from(_bucket).remove([storagePath]);
       throw UnexpectedFailure('İçerik kaydedilemedi. Lütfen tekrar dene.');
     }
   }

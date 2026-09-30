@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,16 +16,19 @@ import 'package:lifesearch/features/item/data/remote/remote_item_data_source.dar
 import 'package:lifesearch/features/item/data/repositories/offline_item_repository.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 
-/// Stands in for `RemoteItemDataSource` in these tests — only `userId`
-/// and `fetchById` are ever exercised by `OfflineItemRepository.findById`,
-/// the rest is never called. Same subclassing pattern as
-/// `item_providers_account_switch_test.dart`'s `_AccountAwareRemoteItemDataSource`.
+/// Stands in for `RemoteItemDataSource` in these tests — only `userId`,
+/// `fetchById` and `uploadFileBytes` are ever exercised by
+/// `OfflineItemRepository`, the rest is never called. Same subclassing
+/// pattern as `item_providers_account_switch_test.dart`'s
+/// `_AccountAwareRemoteItemDataSource`.
 class _FakeRemoteItemDataSource extends RemoteItemDataSource {
   _FakeRemoteItemDataSource(super.client);
 
   Item? itemToReturn;
   Object? error;
   int fetchByIdCallCount = 0;
+  Object? uploadError;
+  int uploadFileBytesCallCount = 0;
 
   @override
   String get userId => 'user-a';
@@ -34,22 +39,37 @@ class _FakeRemoteItemDataSource extends RemoteItemDataSource {
     if (error != null) throw error!;
     return itemToReturn;
   }
+
+  @override
+  Future<void> uploadFileBytes({
+    required String id,
+    required Uint8List bytes,
+    required String originalFilename,
+    required String mimeType,
+    required ItemType type,
+    int? fileSizeBytes,
+  }) async {
+    uploadFileBytesCallCount++;
+    if (uploadError != null) throw uploadError!;
+  }
 }
 
 void main() {
   late AppDatabase db;
   late ItemLocalDataSource local;
+  late SyncQueueDataSource queue;
   late _FakeRemoteItemDataSource remote;
   late OfflineItemRepository repo;
 
   setUp(() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     local = ItemLocalDataSource(db);
+    queue = SyncQueueDataSource(db);
     remote = _FakeRemoteItemDataSource(SupabaseClient('https://example.invalid', 'dummy-anon-key'));
     repo = OfflineItemRepository(
       local: local,
       remote: remote,
-      queue: SyncQueueDataSource(db),
+      queue: queue,
       syncService: SyncService(
         local: local,
         remote: remote,
@@ -57,7 +77,7 @@ void main() {
         remoteCollections: RemoteCollectionDataSource(
           SupabaseClient('https://example.invalid', 'dummy-anon-key'),
         ),
-        queue: SyncQueueDataSource(db),
+        queue: queue,
         aiTrigger: AiProcessingTrigger(null),
       ),
     );
@@ -130,6 +150,41 @@ void main() {
       remote.error = Exception('no connection');
 
       expect(await repo.findById('item-1'), isNull);
+    });
+  });
+
+  // P3 (docs/requirements-audit-2026-09-13.md, "Platformlar"): web's
+  // file_picker only ever gives bytes, never a real filesystem path —
+  // uploadFileBytes() is the bytes-based counterpart to uploadFile(),
+  // deliberately with no offline queue (see its own docstring).
+  group('uploadFileBytes (P3)', () {
+    test('uploads immediately and marks the local row synced, not queued', () async {
+      final item = await repo.uploadFileBytes(
+        bytes: Uint8List.fromList([1, 2, 3]),
+        originalFilename: 'photo.png',
+        mimeType: 'image/png',
+        type: ItemType.image,
+      );
+
+      expect(remote.uploadFileBytesCallCount, 1);
+      final local = await repo.findById(item.id);
+      expect(local?.processingStatus, 'pending'); // still awaits AI processing
+      expect(await queue.pendingEntries('user-a'), isEmpty);
+    });
+
+    test('the remote call failing surfaces the error directly, no retry queued', () async {
+      remote.uploadError = Exception('network down');
+
+      await expectLater(
+        repo.uploadFileBytes(
+          bytes: Uint8List.fromList([1, 2, 3]),
+          originalFilename: 'photo.png',
+          mimeType: 'image/png',
+          type: ItemType.image,
+        ),
+        throwsException,
+      );
+      expect(await queue.pendingEntries('user-a'), isEmpty);
     });
   });
 }
