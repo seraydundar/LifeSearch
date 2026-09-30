@@ -12,6 +12,7 @@ import '../../features/item/data/remote/remote_item_data_source.dart';
 import '../../features/item/domain/entities/item.dart';
 import '../database/app_database.dart';
 import '../error/failure.dart';
+import 'sync_cursor_storage.dart';
 
 /// Upload item types the backend's AI pipeline actually supports for the
 /// `upload_file` op — see backend/app/services/processing_pipeline.py
@@ -53,6 +54,7 @@ class SyncService {
     required RemoteCollectionDataSource remoteCollections,
     required SyncQueueDataSource queue,
     required AiProcessingTrigger aiTrigger,
+    SyncCursorStorage? syncCursor,
     Duration pollInterval = const Duration(seconds: 5),
     int maxPollAttempts = 12,
   })  : _local = local,
@@ -61,6 +63,7 @@ class SyncService {
         _remoteCollections = remoteCollections,
         _queue = queue,
         _aiTrigger = aiTrigger,
+        _syncCursor = syncCursor ?? SyncCursorStorage(),
         _pollInterval = pollInterval,
         _maxPollAttempts = maxPollAttempts,
         _pollAttemptsLeft = maxPollAttempts;
@@ -71,6 +74,7 @@ class SyncService {
   final RemoteCollectionDataSource _remoteCollections;
   final SyncQueueDataSource _queue;
   final AiProcessingTrigger _aiTrigger;
+  final SyncCursorStorage _syncCursor;
   final Duration _pollInterval;
   final int _maxPollAttempts;
 
@@ -186,10 +190,22 @@ class SyncService {
   }
 
   Future<void> _pullRemote(String userId) async {
-    final rows = await _remote.fetchAllRows();
+    // P3 (docs/requirements-audit-2026-09-13.md, "Ölçek/ölçüm"): `since`
+    // is `null` the very first time this account syncs on this device —
+    // every call after that only asks the server for what actually
+    // changed, instead of re-downloading the whole archive every time.
+    final since = await _syncCursor.read(userId);
+    final rows = await _remote.fetchAllRows(since: since);
     final pendingIds = (await _queue.pendingEntries(userId)).map((e) => e.itemId).toSet();
 
-    final remoteIds = <String>{for (final row in rows) row['id'] as String};
+    final changedIds = <String>{for (final row in rows) row['id'] as String};
+    // An incremental `rows` is only the *changed* ones — it can't tell
+    // "unchanged" apart from "deleted on the server" on its own, so
+    // deletion detection below needs the full id set from a separate,
+    // much cheaper request. A first-ever sync's `rows` already IS the
+    // full set (see `fetchAllRows`'s own docstring).
+    final remoteIds = since == null ? changedIds : await _remote.fetchAllIds();
+
     // A local edit is still queued for these — don't overwrite them.
     final rowsToUpsert = rows.where((row) => !pendingIds.contains(row['id'] as String)).toList();
 
@@ -199,21 +215,33 @@ class SyncService {
     // bulk fetch (like fetchAllRows itself) rather than per-row, and keyed
     // by item_id since it's a separate table from items.
     //
-    // P3 (docs/requirements-audit-2026-09-13.md, "Ölçek/ölçüm"): a note's
-    // body *is* its item_contents.raw_text (see RemoteItemDataSource
-    // .createNote/.updateNote — a note's `content` is written straight
-    // into that column, no transformation), so this same bulk fetch also
-    // covers `noteContent` below. A separate `fetchNoteContent` call per
-    // note used to run here too — concurrently, not sequentially, but
-    // still one extra request per note on every sync — duplicating data
-    // this bulk fetch already had. `RemoteItemDataSource.fetchNoteContent`
-    // itself is unchanged and still used for the one thing it's actually
-    // needed for: opening a single note in the editor on demand (see
+    // P3: a note's body *is* its item_contents.raw_text (see
+    // RemoteItemDataSource.createNote/.updateNote — a note's `content` is
+    // written straight into that column, no transformation), so this same
+    // bulk fetch also covers `noteContent` below. A separate
+    // `fetchNoteContent` call per note used to run here too — concurrently,
+    // not sequentially, but still one extra request per note on every
+    // sync — duplicating data this bulk fetch already had.
+    // `RemoteItemDataSource.fetchNoteContent` itself is unchanged and still
+    // used for the one thing it's actually needed for: opening a single
+    // note in the editor on demand (see
     // `OfflineItemRepository.fetchNoteContent`'s cold-start fallback).
-    final extractedTextByItemId = {
-      for (final row in await _remote.fetchAllItemContentRows())
-        row['item_id'] as String: row['raw_text'] as String?,
-    };
+    //
+    // Scoped to just `rowsToUpsert`'s ids on an incremental sync — the
+    // upsert loop below never looks at any other item's content, so
+    // there's nothing to gain by fetching it. `null` (the whole archive)
+    // on a first sync, same as always.
+    final contentScope =
+        since == null ? null : rowsToUpsert.map((row) => row['id'] as String).toList();
+    Map<String, String?> extractedTextByItemId;
+    if (contentScope != null && contentScope.isEmpty) {
+      extractedTextByItemId = const {};
+    } else {
+      final contentRows = await _remote.fetchAllItemContentRows(itemIds: contentScope);
+      extractedTextByItemId = {
+        for (final row in contentRows) row['item_id'] as String: row['raw_text'] as String?,
+      };
+    }
 
     for (var i = 0; i < rowsToUpsert.length; i++) {
       final row = rowsToUpsert[i];
@@ -257,15 +285,38 @@ class SyncService {
     // since an item can have several. See LocalTags/ItemLocalDataSource
     // .replaceTags's docstrings for why this is a wholesale replace rather
     // than a pending-aware merge — tags have no local-edit state to protect.
-    if (localIds.isNotEmpty) {
-      final tagRows = await _remote.fetchAllItemTagRows();
-      await _local.replaceTags(localIds, [
+    //
+    // P3: `replaceTags`'s first argument is also its *delete* scope — on
+    // an incremental sync, `tagRows` was only ever fetched for
+    // `changedIds`, so the delete scope must be exactly `changedIds` too,
+    // not the full `localIds`. Passing `localIds` here while `tagRows`
+    // only covers the changed subset would wipe every *unchanged* local
+    // item's tags with nothing fetched to reinsert them.
+    final tagDeleteScope = since == null ? localIds : changedIds.toList();
+    if (tagDeleteScope.isNotEmpty) {
+      final tagRows = await _remote.fetchAllItemTagRows(
+        itemIds: since == null ? null : tagDeleteScope,
+      );
+      await _local.replaceTags(tagDeleteScope, [
         for (final row in tagRows)
           (
             itemId: row['item_id'] as String,
             name: (row['tags'] as Map<String, dynamic>)['name'] as String,
           ),
       ]);
+    }
+
+    // P3: the new cursor is the latest `updated_at` actually *seen* among
+    // this sync's changed rows — not `DateTime.now()`. This device's
+    // clock and the server's aren't guaranteed to agree, and the next
+    // sync compares against a server-side column, so the cursor needs to
+    // be a server-side timestamp too. Nothing to advance past if nothing
+    // changed this time.
+    if (rows.isNotEmpty) {
+      final latestUpdatedAt = rows
+          .map((row) => DateTime.parse(row['updated_at'] as String))
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      await _syncCursor.write(userId, latestUpdatedAt);
     }
   }
 

@@ -4,6 +4,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lifesearch/core/database/app_database.dart';
 import 'package:lifesearch/core/error/failure.dart';
+import 'package:lifesearch/core/sync/sync_cursor_storage.dart';
 import 'package:lifesearch/core/sync/sync_service.dart';
 import 'package:lifesearch/features/collections/data/local/collection_local_data_source.dart';
 import 'package:lifesearch/features/collections/data/remote/remote_collection_data_source.dart';
@@ -18,6 +19,22 @@ class _MockRemote extends Mock implements RemoteItemDataSource {}
 
 class _MockRemoteCollections extends Mock implements RemoteCollectionDataSource {}
 
+/// In-memory stand-in for `SyncCursorStorage` — the real one talks to
+/// `flutter_secure_storage`'s platform channel, which has no handler
+/// registered in a plain `flutter test` run (P3, docs/requirements-
+/// audit-2026-09-13.md).
+class _FakeSyncCursorStorage implements SyncCursorStorage {
+  final Map<String, DateTime> _cursors = {};
+
+  @override
+  Future<DateTime?> read(String userId) async => _cursors[userId];
+
+  @override
+  Future<void> write(String userId, DateTime at) async {
+    _cursors[userId] = at;
+  }
+}
+
 void main() {
   late AppDatabase db;
   late ItemLocalDataSource local;
@@ -25,6 +42,7 @@ void main() {
   late SyncQueueDataSource queue;
   late _MockRemote remote;
   late _MockRemoteCollections remoteCollections;
+  late _FakeSyncCursorStorage syncCursor;
   late SyncService sync;
 
   setUp(() {
@@ -34,10 +52,18 @@ void main() {
     queue = SyncQueueDataSource(db);
     remote = _MockRemote();
     remoteCollections = _MockRemoteCollections();
+    syncCursor = _FakeSyncCursorStorage();
     when(() => remote.userId).thenReturn('user-1');
-    when(() => remote.fetchAllRows()).thenAnswer((_) async => []);
-    when(() => remote.fetchAllItemContentRows()).thenAnswer((_) async => []);
-    when(() => remote.fetchAllItemTagRows()).thenAnswer((_) async => []);
+    when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async => []);
+    when(() => remote.fetchAllItemContentRows(itemIds: any(named: 'itemIds'))).thenAnswer((_) async => []);
+    when(() => remote.fetchAllItemTagRows(itemIds: any(named: 'itemIds'))).thenAnswer((_) async => []);
+    // Deliberately no default stub for fetchAllIds() here: it's only ever
+    // called on an *incremental* sync (see its own docstring), which none
+    // of these default stubs (all returning `[]`/empty) ever triggers on
+    // their own — a test that advances past a first, non-empty sync needs
+    // to stub this itself, with whatever ids should still count as
+    // existing (an unconditional empty default here would make every
+    // such test's items look server-deleted the moment it did).
     when(() => remoteCollections.fetchAllRows()).thenAnswer((_) async => []);
     when(() => remoteCollections.fetchAllItemRows(any())).thenAnswer((_) async => []);
     // BACKEND_URL unset -> null Dio -> triggerProcessing() is a no-op.
@@ -48,6 +74,7 @@ void main() {
       remoteCollections: remoteCollections,
       queue: queue,
       aiTrigger: AiProcessingTrigger(null),
+      syncCursor: syncCursor,
     );
   });
 
@@ -64,7 +91,7 @@ void main() {
 
     await sync.syncNow();
 
-    verifyNever(() => remote.fetchAllRows());
+    verifyNever(() => remote.fetchAllRows(since: any(named: 'since')));
     verifyNever(() => remoteCollections.fetchAllRows());
   });
 
@@ -351,7 +378,7 @@ void main() {
       itemId: 'note-1',
       payload: {'title': 'Local edit', 'content': 'unsynced body'},
     );
-    when(() => remote.fetchAllRows()).thenAnswer((_) async => [
+    when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async => [
           {
             'id': 'note-1',
             'type': 'note',
@@ -388,10 +415,14 @@ void main() {
         'processing_status': 'completed',
         'favorite': false,
         'created_at': DateTime(2026, 1, 1).toIso8601String(),
+        // Real rows always have this (not-null column, see
+        // infra/supabase/migrations/0001_init.sql) — SyncService's cursor
+        // (P3, docs/requirements-audit-2026-09-13.md) depends on it.
+        'updated_at': DateTime(2026, 1, 1).toIso8601String(),
       };
 
   test("pulling remote state carries a row's private flag into the local cache", () async {
-    when(() => remote.fetchAllRows()).thenAnswer(
+    when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer(
       (_) async => [
         {...noteRow('note-1', title: 'Secret'), 'private': true},
       ],
@@ -408,10 +439,10 @@ void main() {
     // P3 (docs/requirements-audit-2026-09-13.md, "Ölçek/ölçüm"): a note's
     // body *is* its item_contents.raw_text — no separate fetchNoteContent
     // round trip per note during sync any more.
-    when(() => remote.fetchAllRows()).thenAnswer(
+    when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer(
       (_) async => [noteRow('note-1', title: 'First'), noteRow('note-2', title: 'Second')],
     );
-    when(() => remote.fetchAllItemContentRows()).thenAnswer(
+    when(() => remote.fetchAllItemContentRows(itemIds: any(named: 'itemIds'))).thenAnswer(
       (_) async => [
         {'item_id': 'note-1', 'raw_text': 'body one'},
         {'item_id': 'note-2', 'raw_text': 'body two'},
@@ -427,8 +458,8 @@ void main() {
 
   group('P2-07 (docs/requirements-audit-2026-09-13.md) — offline search cache', () {
     test('pulling remote state caches extractedText from item_contents.raw_text', () async {
-      when(() => remote.fetchAllRows()).thenAnswer((_) async => [noteRow('note-1')]);
-      when(() => remote.fetchAllItemContentRows()).thenAnswer(
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async => [noteRow('note-1')]);
+      when(() => remote.fetchAllItemContentRows(itemIds: any(named: 'itemIds'))).thenAnswer(
         (_) async => [
           {'item_id': 'note-1', 'raw_text': "OCR'd or transcribed text"},
         ],
@@ -444,7 +475,7 @@ void main() {
     });
 
     test('an item with no item_contents row leaves extractedText null', () async {
-      when(() => remote.fetchAllRows()).thenAnswer((_) async => [noteRow('note-1')]);
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async => [noteRow('note-1')]);
       // Default setup already stubs fetchAllItemContentRows() -> [].
 
       await sync.syncNow();
@@ -454,10 +485,10 @@ void main() {
     });
 
     test('pulling remote state caches tags into LocalTags', () async {
-      when(() => remote.fetchAllRows()).thenAnswer(
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer(
         (_) async => [noteRow('note-1'), noteRow('note-2')],
       );
-      when(() => remote.fetchAllItemTagRows()).thenAnswer(
+      when(() => remote.fetchAllItemTagRows(itemIds: any(named: 'itemIds'))).thenAnswer(
         (_) async => [
           {'item_id': 'note-1', 'tags': {'name': 'docker'}},
           {'item_id': 'note-1', 'tags': {'name': 'flutter'}},
@@ -475,16 +506,20 @@ void main() {
 
     test('a tag removed on the server disappears from the local cache on the next pull',
         () async {
-      when(() => remote.fetchAllRows()).thenAnswer((_) async => [noteRow('note-1')]);
-      when(() => remote.fetchAllItemTagRows()).thenAnswer(
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async => [noteRow('note-1')]);
+      when(() => remote.fetchAllItemTagRows(itemIds: any(named: 'itemIds'))).thenAnswer(
         (_) async => [
           {'item_id': 'note-1', 'tags': {'name': 'stale-tag'}},
         ],
       );
+      // Only reached on the second (incremental) sync below — note-1
+      // still exists on the server throughout this test, only its tags
+      // change.
+      when(() => remote.fetchAllIds()).thenAnswer((_) async => {'note-1'});
       await sync.syncNow();
       expect(await (db.select(db.localTags)).get(), hasLength(1));
 
-      when(() => remote.fetchAllItemTagRows()).thenAnswer((_) async => []);
+      when(() => remote.fetchAllItemTagRows(itemIds: any(named: 'itemIds'))).thenAnswer((_) async => []);
       await sync.syncNow();
 
       expect(await (db.select(db.localTags)).get(), isEmpty);
@@ -497,7 +532,7 @@ void main() {
       // fetchAllItemContentRows() is unconditional (cheap, no items to key
       // off yet) but the tag replace is guarded on localIds — nothing to
       // scope a delete/insert to.
-      verifyNever(() => remote.fetchAllItemTagRows());
+      verifyNever(() => remote.fetchAllItemTagRows(itemIds: any(named: 'itemIds')));
     });
   });
 
@@ -509,13 +544,117 @@ void main() {
     // one request per note either way) — a library with N notes paid for N
     // extra round trips on every single sync, duplicating data
     // fetchAllItemContentRows() already pulls in bulk.
-    when(() => remote.fetchAllRows()).thenAnswer(
+    when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer(
       (_) async => [noteRow('note-1'), noteRow('note-2'), noteRow('note-3')],
     );
 
     await sync.syncNow();
 
     verifyNever(() => remote.fetchNoteContent(any()));
+  });
+
+  group('P3 (docs/requirements-audit-2026-09-13.md, "Ölçek/ölçüm") — incremental sync', () {
+    test('the first sync ever asks the server for everything (since: null)', () async {
+      when(() => remote.fetchAllRows(since: any(named: 'since')))
+          .thenAnswer((_) async => [noteRow('note-1')]);
+
+      await sync.syncNow();
+
+      final captured =
+          verify(() => remote.fetchAllRows(since: captureAny(named: 'since'))).captured;
+      expect(captured.single, null);
+    });
+
+    test('a later sync asks only for what changed since the last one', () async {
+      await syncCursor.write('user-1', DateTime(2026, 3, 1));
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async => []);
+
+      await sync.syncNow();
+
+      final captured =
+          verify(() => remote.fetchAllRows(since: captureAny(named: 'since'))).captured;
+      expect(captured.single, DateTime(2026, 3, 1));
+    });
+
+    test('the cursor advances to the latest updated_at actually seen, not DateTime.now()',
+        () async {
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer(
+        (_) async => [
+          {...noteRow('note-1'), 'updated_at': DateTime(2026, 3, 1).toIso8601String()},
+          {...noteRow('note-2'), 'updated_at': DateTime(2026, 3, 5).toIso8601String()},
+        ],
+      );
+
+      await sync.syncNow();
+
+      expect(await syncCursor.read('user-1'), DateTime(2026, 3, 5));
+    });
+
+    test('nothing changed leaves the cursor untouched', () async {
+      await syncCursor.write('user-1', DateTime(2026, 3, 1));
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async => []);
+
+      await sync.syncNow();
+
+      expect(await syncCursor.read('user-1'), DateTime(2026, 3, 1));
+    });
+
+    test('a server-side deletion is still detected on an incremental sync', () async {
+      // note-1 already exists locally, from an earlier sync this test
+      // doesn't replay — only the cursor and the local row matter here.
+      await local.upsert(LocalItemsCompanion.insert(
+        id: 'note-1',
+        userId: 'user-1',
+        type: ItemType.note.dbValue,
+        title: const Value('gone'),
+        processingStatus: const Value('completed'),
+        createdAt: DateTime(2026, 1, 1),
+        syncStatus: const Value('synced'),
+      ));
+      await syncCursor.write('user-1', DateTime(2026, 3, 1));
+      // Nothing *changed* since the cursor — but note-1 doesn't exist on
+      // the server at all any more. An incremental fetchAllRows alone
+      // can't tell "unchanged" apart from "deleted"; fetchAllIds is what
+      // has to catch this.
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async => []);
+      when(() => remote.fetchAllIds()).thenAnswer((_) async => <String>{});
+
+      await sync.syncNow();
+
+      expect(await local.findById('user-1', 'note-1'), null);
+    });
+
+    test('content/tag fetches are scoped to just the changed ids on an incremental sync',
+        () async {
+      await syncCursor.write('user-1', DateTime(2026, 3, 1));
+      when(() => remote.fetchAllRows(since: any(named: 'since')))
+          .thenAnswer((_) async => [noteRow('note-1')]);
+      when(() => remote.fetchAllIds()).thenAnswer((_) async => {'note-1'});
+
+      await sync.syncNow();
+
+      final contentCall =
+          verify(() => remote.fetchAllItemContentRows(itemIds: captureAny(named: 'itemIds')))
+              .captured;
+      expect(contentCall.single, ['note-1']);
+      final tagCall =
+          verify(() => remote.fetchAllItemTagRows(itemIds: captureAny(named: 'itemIds')))
+              .captured;
+      expect(tagCall.single, ['note-1']);
+    });
+
+    test('the cursor is scoped per user — a different account starts a fresh full sync',
+        () async {
+      await syncCursor.write('user-1', DateTime(2026, 3, 1));
+      when(() => remote.userId).thenReturn('user-2');
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async => []);
+
+      await sync.syncNow();
+
+      final captured =
+          verify(() => remote.fetchAllRows(since: captureAny(named: 'since'))).captured;
+      expect(captured.single, null); // user-2 has no cursor of its own yet
+    });
   });
 
   group('trigger_ai', () {
@@ -534,6 +673,7 @@ void main() {
         remoteCollections: remoteCollections,
         queue: queue,
         aiTrigger: AiProcessingTrigger(failingDio),
+        syncCursor: syncCursor,
       );
       await local.upsert(LocalItemsCompanion.insert(
         id: 'link-1',
@@ -575,6 +715,7 @@ void main() {
         remoteCollections: remoteCollections,
         queue: queue,
         aiTrigger: AiProcessingTrigger(failingDio),
+        syncCursor: syncCursor,
       );
       await queue.enqueue(
         userId: 'user-1',
@@ -626,13 +767,22 @@ void main() {
           'processing_status': status,
           'favorite': false,
           'created_at': DateTime(2026, 1, 1).toIso8601String(),
+          'updated_at': DateTime(2026, 1, 1).toIso8601String(),
         };
+
+    // Every test in this group polls `syncNow()` repeatedly — after the
+    // first, non-empty pull advances the sync cursor, every poll after
+    // that is an incremental one, which needs fetchAllIds() to confirm
+    // item-1 (the only item any of these tests ever have) still exists.
+    setUp(() {
+      when(() => remote.fetchAllIds()).thenAnswer((_) async => {'item-1'});
+    });
 
     test('keeps re-syncing while an item is still pending, and stops once it '
         'turns up completed', () async {
       var status = 'pending';
       var fetchCount = 0;
-      when(() => remote.fetchAllRows()).thenAnswer((_) async {
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async {
         fetchCount++;
         return [pendingRow(status)];
       });
@@ -644,6 +794,7 @@ void main() {
         remoteCollections: remoteCollections,
         queue: queue,
         aiTrigger: AiProcessingTrigger(null),
+        syncCursor: syncCursor,
         pollInterval: const Duration(milliseconds: 10),
         maxPollAttempts: 50, // comfortably more than this test needs
       );
@@ -666,7 +817,7 @@ void main() {
 
     test('never polls at all when nothing is pending to begin with', () async {
       var fetchCount = 0;
-      when(() => remote.fetchAllRows()).thenAnswer((_) async {
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async {
         fetchCount++;
         return [pendingRow('completed')];
       });
@@ -678,6 +829,7 @@ void main() {
         remoteCollections: remoteCollections,
         queue: queue,
         aiTrigger: AiProcessingTrigger(null),
+        syncCursor: syncCursor,
         pollInterval: const Duration(milliseconds: 10),
       );
 
@@ -692,7 +844,7 @@ void main() {
     test('gives up after maxPollAttempts rather than polling a hung job forever',
         () async {
       var fetchCount = 0;
-      when(() => remote.fetchAllRows()).thenAnswer((_) async {
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async {
         fetchCount++;
         return [pendingRow('pending')]; // never resolves
       });
@@ -704,6 +856,7 @@ void main() {
         remoteCollections: remoteCollections,
         queue: queue,
         aiTrigger: AiProcessingTrigger(null),
+        syncCursor: syncCursor,
         pollInterval: const Duration(milliseconds: 10),
         maxPollAttempts: 3,
       );
@@ -726,7 +879,7 @@ void main() {
         'docs/roadmap.md)', () async {
       var item2IsPending = false;
       var fetchCount = 0;
-      when(() => remote.fetchAllRows()).thenAnswer((_) async {
+      when(() => remote.fetchAllRows(since: any(named: 'since'))).thenAnswer((_) async {
         fetchCount++;
         return [
           pendingRow('pending'), // item-1 — never resolves, exhausts the budget alone
@@ -742,10 +895,17 @@ void main() {
               'processing_status': 'pending',
               'favorite': false,
               'created_at': DateTime(2026, 1, 1).toIso8601String(),
+              'updated_at': DateTime(2026, 1, 1).toIso8601String(),
             },
         ];
       });
       when(() => remote.fetchNoteContent(any())).thenAnswer((_) async => 'body');
+      // Overrides this group's default {'item-1'} stub — once item-2
+      // exists it must count as "still on the server" too, or the very
+      // next incremental sync would see it as freshly deleted the moment
+      // after it was inserted.
+      when(() => remote.fetchAllIds())
+          .thenAnswer((_) async => item2IsPending ? {'item-1', 'item-2'} : {'item-1'});
       final pollingSync = SyncService(
         local: local,
         remote: remote,
@@ -753,6 +913,7 @@ void main() {
         remoteCollections: remoteCollections,
         queue: queue,
         aiTrigger: AiProcessingTrigger(null),
+        syncCursor: syncCursor,
         pollInterval: const Duration(milliseconds: 10),
         maxPollAttempts: 3,
       );

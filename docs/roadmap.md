@@ -3667,3 +3667,47 @@ Mobile: `flutter analyze` temiz, `sync_service_test.dart` güncellendi
 `fetchNoteContent`'in sync sırasında HİÇ çağrılmadığını doğrulayan bir
 teste dönüştürüldü; not içeriğinin `fetchAllItemContentRows()`'tan
 geldiğini doğrulayan yeni bir test eklendi) — tüm suite yeşil.
+
+## Faz 30 — P3: artımlı sync (items pull)
+
+`docs/requirements-audit-2026-09-13.md`'nin "Ölçek/ölçüm" maddesinin
+kalan tek alt kalemi: `SyncService._pullRemote` her `syncNow()`'da
+kullanıcının TÜM item'larını çekiyordu, tek bir şey değişmemiş olsa
+bile. Bunu mümkün kılan altyapı zaten vardı: `items.updated_at`,
+Faz 1'den beri her UPDATE'te bir trigger'la (`set_updated_at()`)
+otomatik güncelleniyordu, hiç kullanılmıyordu.
+
+- **`sync_cursor_storage.dart`** (yeni): kullanıcı bazlı "son senkron
+  zamanı" — `flutter_secure_storage`'da, `ThemePreferenceService` ile
+  aynı desen. Kullanıcı bazlı scope'lanması bilinçli: yerel Drift DB
+  zaten birden fazla hesabı `userId` kolonuyla tuttuğundan, paylaşılan
+  tek bir cursor, yeni giriş yapan ikinci bir hesabın ilk sync'ini
+  yanlışlıkla "artımlı" sayıp her şeyini atlardı.
+- **`RemoteItemDataSource`**: `fetchAllRows({since})` artık
+  `items.updated_at >= since` filtresi uyguluyor; yeni `fetchAllIds()`
+  (tek kolon, ucuz) — artımlı bir fetch "değişmedi" ile "sunucuda
+  silindi"yi ayırt edemediği için silme tespiti bunu ayrıca kullanıyor.
+  `fetchAllItemContentRows`/`fetchAllItemTagRows` artık opsiyonel bir
+  `itemIds` filtresi alıyor — artımlı sync'te yalnızca değişen id'lere
+  scope'lanıyor.
+- **`SyncService._pullRemote`**: ilk sync (`since=null`) bugünküyle
+  birebir aynı — tam fetch, ekstra istek yok. Sonraki her sync,
+  değişenler + ucuz bir id listesi (silme tespiti için). Cursor,
+  `DateTime.now()` değil, gelen satırların en büyük `updated_at`'i
+  olarak güncelleniyor (cihaz/sunucu saat farkı riskini ortadan
+  kaldırmak için). `replaceTags`'ın delete-scope'u, fetch edilen
+  `tagRows`'ın scope'uyla birebir eşleşecek şekilde dikkatle ayarlandı
+  — aksi hâlde artımlı bir sync, değişmeyen item'ların tag'lerini
+  hiçbir şey yeniden eklemeden silerdi.
+
+Migrasyon yok (`items.updated_at` zaten vardı) — geriye dönük uyumlu.
+
+Backend: değişmedi. Mobile: `flutter analyze` temiz, `sync_service_test.dart`'a
+yeni bir "incremental sync" grubu (+7: ilk sync'in `since: null`
+gönderdiğini, sonraki sync'in cursor'ı `since` olarak geçirdiğini,
+cursor'ın en büyük `updated_at`'e ilerlediğini, hiçbir şey
+değişmediğinde cursor'ın sabit kaldığını, artımlı sync'te bile
+sunucu-silmesinin yakalandığını, içerik/tag fetch'lerinin scope'landığını
+ve cursor'ın kullanıcı bazlı olduğunu doğrulayan testler) — tüm suite
+yeşil (bu süreçte `noteRow`/`pendingRow` test fixture'larına eksik olan
+`updated_at` alanı da eklendi, gerçek satır şeklini daha doğru yansıtıyor).

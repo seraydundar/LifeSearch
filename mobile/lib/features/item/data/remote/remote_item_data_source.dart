@@ -51,8 +51,13 @@ class RemoteItemDataSource {
         private: row['private'] as bool? ?? false,
       );
 
-  /// One-shot snapshot of every item the user has — used by `SyncService`
-  /// to reconcile the local cache, not by the UI directly.
+  /// Every item the user has, or — with [since] — only those changed
+  /// since that instant (P3, docs/requirements-audit-2026-09-13.md,
+  /// "Ölçek/ölçüm"): `SyncService` uses the unfiltered form for a
+  /// device's very first sync of this account and the filtered form for
+  /// every one after, against `items.updated_at` (auto-maintained by the
+  /// `set_updated_at` trigger — infra/supabase/migrations/0001_init.sql
+  /// — since Faz 1, unused for this until now). Not by the UI directly.
   ///
   /// Paginated (Faz 12, madde 9, denetim düzeltmesi — see
   /// docs/roadmap.md): a plain `.select()` with no `.range()` silently
@@ -64,16 +69,30 @@ class RemoteItemDataSource {
   /// keeps paging deterministic even when many rows share the exact same
   /// timestamp (e.g. a bulk import) — without it, a tied ordering could
   /// vary between page requests and skip or repeat rows across pages.
-  Future<List<Map<String, dynamic>>> fetchAllRows() {
+  ///
+  /// [since]-filtered results alone can't tell "unchanged" apart from
+  /// "deleted on the server" — see [fetchAllIds], which `SyncService`
+  /// calls separately to tell those apart on an incremental sync.
+  Future<List<Map<String, dynamic>>> fetchAllRows({DateTime? since}) {
     return fetchAllPages((from, to) {
-      return _client
-          .from('items')
-          .select()
-          .eq('user_id', userId)
-          .order('created_at')
-          .order('id')
-          .range(from, to);
+      final query = _client.from('items').select().eq('user_id', userId);
+      final filtered =
+          since == null ? query : query.gte('updated_at', since.toUtc().toIso8601String());
+      return filtered.order('created_at').order('id').range(from, to);
     });
+  }
+
+  /// Every item id the user currently has on the server — nothing else.
+  /// `SyncService`'s only use for this: telling a server-side deletion
+  /// apart from "just didn't change" during an incremental
+  /// (`fetchAllRows(since: ...)`) sync, where the changed-rows list
+  /// alone can't make that distinction. Much cheaper than a full
+  /// [fetchAllRows] — one column, no content/tags to join.
+  Future<Set<String>> fetchAllIds() async {
+    final rows = await fetchAllPages((from, to) {
+      return _client.from('items').select('id').eq('user_id', userId).order('id').range(from, to);
+    });
+    return {for (final row in rows) row['id'] as String};
   }
 
   /// A single row by id, or `null` if it doesn't exist (or isn't this
@@ -120,14 +139,19 @@ class RemoteItemDataSource {
   /// — same join shape as `fetchTags`, minus the `item_id` filter, and
   /// paginated like `fetchAllRows` for the same reason (a plain `.select()`
   /// silently truncates past PostgREST's row cap).
-  Future<List<Map<String, dynamic>>> fetchAllItemTagRows() {
+  ///
+  /// [itemIds] (P3, "Ölçek/ölçüm"): on an incremental sync there's
+  /// nothing to refresh for an item that didn't change, so `SyncService`
+  /// scopes this to just the changed ids instead of the whole archive.
+  /// Left `null` (the whole archive, unfiltered) on a device's first
+  /// sync — `itemIds` could be every id the account has there, and a
+  /// `.inFilter` with that many values risks the request URL itself
+  /// getting too large.
+  Future<List<Map<String, dynamic>>> fetchAllItemTagRows({List<String>? itemIds}) {
     return fetchAllPages((from, to) {
-      return _client
-          .from('item_tags')
-          .select('item_id, tags(name)')
-          .order('item_id')
-          .order('tag_id')
-          .range(from, to);
+      final query = _client.from('item_tags').select('item_id, tags(name)');
+      final filtered = itemIds == null ? query : query.inFilter('item_id', itemIds);
+      return filtered.order('item_id').order('tag_id').range(from, to);
     });
   }
 
@@ -136,13 +160,13 @@ class RemoteItemDataSource {
   /// couldn't search offline before this existed. `item_id` is unique per
   /// row (infra/supabase/migrations/0012_item_contents_unique.sql), so
   /// ordering by it alone is already deterministic for pagination.
-  Future<List<Map<String, dynamic>>> fetchAllItemContentRows() {
+  ///
+  /// [itemIds]: same incremental-sync scoping as [fetchAllItemTagRows].
+  Future<List<Map<String, dynamic>>> fetchAllItemContentRows({List<String>? itemIds}) {
     return fetchAllPages((from, to) {
-      return _client
-          .from('item_contents')
-          .select('item_id, raw_text')
-          .order('item_id')
-          .range(from, to);
+      final query = _client.from('item_contents').select('item_id, raw_text');
+      final filtered = itemIds == null ? query : query.inFilter('item_id', itemIds);
+      return filtered.order('item_id').range(from, to);
     });
   }
 
