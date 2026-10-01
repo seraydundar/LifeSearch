@@ -3819,3 +3819,32 @@ Mobile: `flutter analyze` temiz, `capture_platform_support_test.dart`
 güncellendi (macOS'a özel ayrı test dalı kaldırıldı, "her native
 platformda destekleniyor, macOS dahil" tek testle birleşti), tüm suite
 yeşil (aynı ilgisiz `search_tab_test.dart` başarısızlığı dışında).
+
+## Faz 33 — entity extraction prompt'u halüsinasyon üretiyordu (bulgu + düzeltme)
+
+Kullanıcı kendi elleriyle test ederken bir çiçek bahçesi fotoğrafına
+AI'ın "12345" (tarih), "İstanbul" (yer), "İstanbul Şehri" (kurum),
+"Cemil Kaya" (kişi) varlıkları eklediğini fark etti — fotoğrafın
+görsel açıklamasında ("lush garden filled with flowers... urban
+environment, building in background") bunların hiçbiri geçmiyor.
+
+Kök sebep: `entity_extraction_service.py`'nin prompt'u bir few-shot
+örnekle bitiyordu — `"Örnek:\nperson: Ahmet Yılmaz\nplace: İstanbul\n
+date: 15 Ocak 2026..."` — gerçekçi görünen değerler. Kullanıcının
+yerel modeli (llama3.2, küçük/zayıf bir model) bu örneği saf bir biçim
+şablonu değil, gerçek bir veri kaynağı gibi algılayıp örnekteki
+değerleri (veya onlara yakın uydurma değerler) çıktıya kopyalıyordu —
+tam da yaşanan "İstanbul" ve "Ahmet Yılmaz"a benzer "Cemil Kaya" ile
+örtüşüyor.
+
+Düzeltme: few-shot örneği tamamen kaldırıldı (`generate_tags`'in kendi,
+daha basit formatı için zaten örneksiz çalıştığı aynı desen) ve açık
+bir halüsinasyon-karşıtı talimat eklendi: "Yalnızca metinde GERÇEKTEN
+geçen varlıkları yaz ... Metinde hiçbir varlık geçmiyorsa ... tamamen
+boş bırak." Örneği kaldırmak, modeli daha sert biçimde uyarmaktan daha
+güvenilir — kopyalanacak bir şey artık hiç yok.
+
+Backend: `ruff check` temiz, testler 233 → **234** (+1: prompt'ta artık
+"İstanbul"/"Ahmet Yılmaz" geçmediğini ve halüsinasyon-karşıtı talimatın
+var olduğunu doğrulayan). Mobile değişmedi. Migrasyon yok — backend
+yeniden başlatılınca anında etkili.

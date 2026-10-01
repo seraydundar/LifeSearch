@@ -10,12 +10,14 @@ class FakeProvider(AIProvider):
     def __init__(self, response: str = "person: Ahmet Yılmaz", *, fails: bool = False):
         self._response = response
         self._fails = fails
+        self.last_prompt: str | None = None
 
     @property
     def embedding_model(self):
         return "fake-embedding-model"
 
     async def generate_text(self, prompt, *, system=None):
+        self.last_prompt = prompt
         if self._fails:
             raise RuntimeError("provider down")
         return self._response
@@ -111,3 +113,21 @@ async def test_parses_the_four_newly_added_types():
         {"name": "github.com", "type": "website"},
         {"name": "Flutter", "type": "technology"},
     ]
+
+
+# P3 (docs/requirements-audit-2026-09-13.md): the prompt used to end with
+# a few-shot example whose realistic-looking values ("İstanbul", "Ahmet
+# Yılmaz", a date) a weaker/local model could echo back as if they'd
+# actually been extracted from the input — confirmed live on a flower
+# photo with none of those things anywhere in its description.
+@pytest.mark.asyncio
+async def test_prompt_has_no_example_values_a_weak_model_could_echo():
+    provider = FakeProvider()
+
+    await extract_entities("some text", provider)
+
+    assert provider.last_prompt is not None
+    assert "İstanbul" not in provider.last_prompt
+    assert "Ahmet Yılmaz" not in provider.last_prompt
+    assert "uydurma" in provider.last_prompt
+    assert "boş" in provider.last_prompt

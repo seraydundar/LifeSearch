@@ -42,6 +42,18 @@ async def extract_entities(
     if not text.strip():
         return []
 
+    # P3 (docs/requirements-audit-2026-09-13.md): this used to end with a
+    # few-shot example ("Örnek:\nperson: Ahmet Yılmaz\nplace: İstanbul...")
+    # — realistic-looking values a weaker/local model could echo back as
+    # if they were extracted from the actual input, instead of treating
+    # them as a pure format illustration. Confirmed live: a flower-garden
+    # photo (nothing resembling a person, date, or city anywhere in its
+    # description) still came back tagged with "Cemil Kaya", a date, and
+    # "İstanbul" — values that trace straight back to this example, not
+    # the image. No example at all (same choice `generate_tags` already
+    # made for its own, simpler format) plus an explicit anti-hallucination
+    # instruction removes the thing being echoed, rather than just asking
+    # the model more firmly not to echo it.
     prompt = (
         f"Aşağıdaki metinden en fazla {max_entities} varlık (entity) çıkar: "
         "kişi adları, yer adları, kurum/organizasyon adları, tarihler, "
@@ -51,9 +63,11 @@ async def extract_entities(
         "şunlardan biri olmalı: person, place, organization, date, "
         "product, price, website, technology). Başka hiçbir şey yazma, "
         "açıklama ekleme.\n\n"
-        "Örnek:\nperson: Ahmet Yılmaz\nplace: İstanbul\ndate: 15 Ocak 2026\n"
-        "product: iPhone 17 Pro\nprice: 1200 TL\nwebsite: github.com\n"
-        "technology: Flutter\n\n"
+        "Yalnızca metinde GERÇEKTEN geçen varlıkları yaz — metinde "
+        "bulunmayan hiçbir ismi, tarihi, yeri ya da kurumu uydurma. "
+        "Metinde hiçbir varlık geçmiyorsa (örneğin yalnızca bir manzara "
+        "ya da nesne açıklamasıysa) hiçbir satır yazma, tamamen boş "
+        "bırak.\n\n"
         f"{text[:2000]}"
     )
     try:
