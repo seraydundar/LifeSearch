@@ -3877,3 +3877,47 @@ end'i de set ediyor).
 
 Mobile: `flutter analyze` temiz, tüm suite yeşil — artık **hiçbir**
 ilgisiz/flaky başarısızlık kalmadı.
+
+## Faz 35 — Ask AI: cevap tarafından gerçekten atıfta bulunulmayan kaynaklar artık listelenmiyor
+
+Kullanıcı simülatörde canlı test ederken bir Docker notuyla ilgili soru
+sordu; cevap "Kaynak [Kaynak 1]'de projenin detaylerini bulmak için
+bakın" gibi zayıf/yönlendirici bir metin döndürdü ve "Sources" listesi
+altı kayıt gösterdi — bunların arasında konuyla hiç ilgisi olmayan
+bahçe fotoğrafları ve alakasız bir sesli not da vardı. Kullanıcı
+"tüm kayıtları getirmedi mi bu kötü değil mi" diye sorunca kök sebebi
+teşhis ettim.
+
+Kök sebep iki parçalıydı:
+
+1. `answer_question`, retrieval/rerank'tan gelen **her** `match`'i,
+   cevap metninde o kaynağa hiç atıfta bulunulmasa bile `sources`
+   olarak döndürüyordu. Oysa mobil tarafın kendi sözleşmesi
+   (`chat_message.dart`) `sources`'ı "cevabın gerçekten geldiği
+   item'lar" olarak tanımlıyor — context'e girmiş olmak yetmiyor.
+2. Sistem promptu, modelin kullanıcıyı kaynağı kendisi okumaya
+   yönlendirmesini (bir cevap değil, bir kaçamak) açıkça yasaklamıyordu
+   — küçük yerel modelin (llama3.2) bu şekilde "kaçma" eğilimi vardı.
+
+Düzeltme (kullanıcının açık tercihiyle: "Şimdilik sadece prompt'u
+düzelt" — model/sağlayıcı değişikliği bilinçli olarak ERTELENDİ):
+
+- Yeni `_cited_sources(answer, matches)`: cevap metnindeki `[Kaynak N]`
+  atıflarını regex'le toplayıp (`_CITATION_RE`), yalnızca gerçekten
+  atıfta bulunulan `match`'leri, `matches`'in kendi alaka sırasını
+  koruyarak döndürüyor. Cevapta hiç atıf yoksa (zayıf modelin talimatı
+  hiç uygulamaması ya da düz bir "bulamadım" cevabı) **tüm** match'lere
+  geri dönülüyor — kimsenin alakasız olduğunu doğrulamadığı kaynakları
+  gizlemek, orijinal hatadan daha kötü bir regresyon olurdu.
+- `_SYSTEM_PROMPT` güçlendirildi: modelin cevabı **kendisinin**
+  vermesi, kullanıcıyı kaynağı okumaya yönlendirmemesi ("never tell
+  the user to go read a source themselves instead of answering; that
+  is not an answer") artık açıkça talimat ediliyor.
+
+Backend: `backend/tests/test_rag_service.py`'a `_ScriptedProvider`
+(cevap metni test başına özelleştirilebilir, sabit `FakeProvider`'ın
+aksine) ve `TestCitedSourcesOnly` sınıfı eklendi — tek atıf, sırası
+karışık çoklu atıf, atıfsız cevapta tam geri dönüş, ve halüsinasyon
+(var olmayan `[Kaynak 99]`) durumlarını kapsıyor. `ruff check` temiz,
+testler 234 → **238** (+4). Migrasyon yok — backend yeniden
+başlatılınca anında etkili.

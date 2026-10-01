@@ -12,6 +12,7 @@ strict about not answering from outside the given sources, so the
 assistant doesn't fabricate facts that aren't in the user's own archive.
 """
 
+import re
 from typing import Any
 
 from ..repositories.search_repository import SearchRepository
@@ -24,8 +25,38 @@ _SYSTEM_PROMPT = (
     "archive (notes, PDFs, photos). Never use outside knowledge. If the "
     "sources don't actually answer the question, say so plainly instead "
     "of guessing. When you use a source, refer to it inline as [Kaynak N]. "
-    "Answer in Turkish, concisely, in a few sentences."
+    "Always state the actual answer yourself, using what the source says — "
+    "never tell the user to go read a source themselves instead of "
+    "answering; that is not an answer. Answer in Turkish, concisely, in a "
+    "few sentences."
 )
+
+_CITATION_RE = re.compile(r"\[Kaynak (\d+)\]")
+
+
+def _cited_sources(answer: str, matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The mobile client's own contract for `sources` is "the archive
+    items its answer actually came from" (see `chat_message.dart`) — but
+    every retrieved/reranked match used to come back regardless of
+    whether the answer's text ever cited it. A question about one note
+    could show five unrelated photos as "sources" just because they'd
+    been pulled into the prompt's context, never because the answer
+    itself said anything about them (confirmed live: asking about a note
+    mentioning Docker returned garden photos and an unrelated voice note
+    alongside it, none of which the answer actually referenced).
+
+    `[Kaynak N]` is 1-indexed in the prompt (`enumerate(matches, start=1)`
+    below matches that). Filters to only the cited ones, keeping
+    `matches`' own relevance order rather than citation-appearance order.
+    If the answer cites nothing at all (a weaker model ignoring the
+    instruction, or a plain "I don't know" with no citation) falls back
+    to returning every match — hiding sources nobody confirmed are
+    irrelevant would be a worse regression than the original bug.
+    """
+    cited = {int(n) for n in _CITATION_RE.findall(answer)}
+    if not cited:
+        return matches
+    return [match for i, match in enumerate(matches, start=1) if i in cited]
 
 _NO_SOURCES_ANSWER = "Arşivinde bu soruyla ilgili bir şey bulamadım."
 
@@ -82,4 +113,4 @@ async def answer_question(
     prompt = f"{history_section}Kaynaklar:\n\n{context}\n\nSoru: {question}"
 
     answer = await provider.generate_text(prompt, system=_SYSTEM_PROMPT)
-    return {"answer": answer, "sources": matches}
+    return {"answer": answer, "sources": _cited_sources(answer, matches)}

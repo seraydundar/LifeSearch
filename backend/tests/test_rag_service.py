@@ -184,3 +184,88 @@ async def test_never_requests_private_items():
     await answer_question("soru", repo, provider)
 
     assert repo.last_hybrid_call_filters["include_private"] is False
+
+
+class _ScriptedProvider(AIProvider):
+    """Unlike `FakeProvider`, returns whatever answer text the test
+    gives it — needed to exercise `_cited_sources`'s filtering against
+    more than one fixed canned response.
+    """
+
+    provider_name = "fake"
+
+    def __init__(self, answer: str):
+        self._answer = answer
+
+    @property
+    def embedding_model(self):
+        return "fake-embedding-model"
+
+    async def generate_text(self, prompt, *, system=None):
+        return self._answer
+
+    async def generate_embedding(self, text):
+        return [0.1, 0.2, 0.3]
+
+    async def generate_embeddings(self, texts):
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+
+def _match(item_id: str) -> dict:
+    return {
+        "item_id": item_id,
+        "item_type": "note",
+        "item_title": item_id,
+        "content": "x",
+        "score": 0.5,
+    }
+
+
+class TestCitedSourcesOnly:
+    """`sources`'ın kendi sözleşmesi (bkz. mobile/.../chat_message.dart):
+    cevabın GERÇEKTEN geldiği item'lar. Daha önce context'e giren HER
+    match, cevap metninde hiç geçmese bile "Sources" olarak dönüyordu —
+    bir Docker notuyla ilgili soruya alakasız fotoğraflar/sesli not
+    kaynak gibi görünebiliyordu (canlı doğrulandı)."""
+
+    @pytest.mark.asyncio
+    async def test_only_the_cited_match_is_returned_as_a_source(self):
+        repo = FakeSearchRepo([_match("a"), _match("b"), _match("c")])
+        provider = _ScriptedProvider("Cevap burada. [Kaynak 1]")
+
+        result = await answer_question("soru", repo, provider)
+
+        assert [m["item_id"] for m in result["sources"]] == ["a"]
+
+    @pytest.mark.asyncio
+    async def test_multiple_citations_keep_the_original_relevance_order(self):
+        repo = FakeSearchRepo([_match("a"), _match("b"), _match("c")])
+        # Cites 1 and 3 — in the opposite order they appear in the text —
+        # the returned sources must still follow `matches`' own order.
+        provider = _ScriptedProvider("Önce [Kaynak 3], sonra [Kaynak 1] de aynı şeyi söylüyor.")
+
+        result = await answer_question("soru", repo, provider)
+
+        assert [m["item_id"] for m in result["sources"]] == ["a", "c"]
+
+    @pytest.mark.asyncio
+    async def test_an_answer_with_no_citation_falls_back_to_every_match(self):
+        """A weaker model ignoring the citation instruction shouldn't
+        make sources *disappear* — that would hide items nobody
+        confirmed were actually irrelevant.
+        """
+        repo = FakeSearchRepo([_match("a"), _match("b")])
+        provider = _ScriptedProvider("Bu konuda bilgi bulamadım.")
+
+        result = await answer_question("soru", repo, provider)
+
+        assert [m["item_id"] for m in result["sources"]] == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_a_hallucinated_out_of_range_citation_is_ignored_not_a_crash(self):
+        repo = FakeSearchRepo([_match("a")])
+        provider = _ScriptedProvider("Cevap. [Kaynak 1] [Kaynak 99]")
+
+        result = await answer_question("soru", repo, provider)
+
+        assert [m["item_id"] for m in result["sources"]] == ["a"]
