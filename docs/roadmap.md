@@ -3848,3 +3848,32 @@ Backend: `ruff check` temiz, testler 233 → **234** (+1: prompt'ta artık
 "İstanbul"/"Ahmet Yılmaz" geçmediğini ve halüsinasyon-karşıtı talimatın
 var olduğunu doğrulayan). Mobile değişmedi. Migrasyon yok — backend
 yeniden başlatılınca anında etkili.
+
+## Faz 34 — `search_tab_test.dart`'ın ayın ilk günlerinde kırılan özel tarih aralığı testi düzeltildi
+
+Faz 31/32'de birkaç kez "ilgisiz, önceden var olan bir flaky test" diye
+not düşülen `search_tab_test.dart`'ın "özel tarih aralığı" testi, Faz
+33'ün push'ında GitHub Actions'ta gerçek bir kırmızı X olarak ortaya
+çıktı (CI, test gibi gerçek takvim tarihiyle çalışıyor — bugün 1 Ekim).
+Kullanıcı bunu fark edip sorunca kök sebebi tam olarak teşhis edip
+düzelttim.
+
+Kök sebep: test her zaman "ayın 1'i ile 5'i arası"nı seçmeye
+çalışıyordu — ama takvimin `lastDate`'i "şu an", yani ayın 1-4'ünde
+"5" gelecekte kalıyor, takvimde seçilemez durumda. Seçilemeyen bir
+günle aralık asla tamamlanmıyor, Save butonu (Flutter'ın kendi
+`_hasSelectedDateRange` kontrolüyle) devre dışı kalıyor, filtre hiç
+uygulanmıyordu.
+
+Düzeltme: sabit "1 ve 5" günleri yerine, her zaman bugünle biten,
+geçmişe en fazla 4 gün uzanan bir pencere (`(now.day - 4).clamp(1,
+now.day)` → `now.day`) dinamik olarak hesaplanıyor — ayın hangi
+gününde çalışırsa çalışsın hep seçilebilir ve hep o an açık olan ay
+sayfasında kalıyor. Ayın 1'inde pencere aynı güne iki kez tıklamaya
+daralıyor — Flutter'ın kendi `_CalendarDateRangePickerState
+._updateSelection`'ı bunu zaten geçerli bir tek-günlük aralık olarak
+kabul ediyor (start set + end boşken aynı/sonraki bir güne tıklamak
+end'i de set ediyor).
+
+Mobile: `flutter analyze` temiz, tüm suite yeşil — artık **hiçbir**
+ilgisiz/flaky başarısızlık kalmadı.

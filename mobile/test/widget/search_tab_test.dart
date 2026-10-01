@@ -163,19 +163,34 @@ void main() {
     await tester.pumpAndSettle();
 
     // The picker opens on the current month's calendar grid (no
-    // `initialDateRange` yet) — picking the 1st and 5th of that month
-    // directly is far less brittle across Flutter versions than typing
-    // into the keyboard-entry mode's date fields.
-    await tester.tap(find.text('1'));
+    // `initialDateRange` yet) — picking two fixed days directly is far
+    // less brittle across Flutter versions than typing into the
+    // keyboard-entry mode's date fields. The days themselves can't be
+    // hardcoded (1st and 5th) though: the picker's `lastDate` is "now",
+    // so on the 1st-4th of any real month, "day 5" is in the future and
+    // unselectable, and the range picker's Save button stays disabled
+    // with no end date ever chosen (this broke for real on 2026-10-01).
+    // A window that always ends on today and never reaches more than 4
+    // days into the past is always selectable and always on this
+    // initially-shown month's page, whatever day the test happens to
+    // run on — including when it collapses to the same day twice, which
+    // Flutter's own range picker already treats as a valid one-day
+    // range (tapping a day a second time, with start set and no end yet,
+    // sets it as the end too — see _CalendarDateRangePickerState
+    // ._updateSelection in the Flutter SDK).
+    final now = DateTime.now();
+    final startDay = (now.day - 4).clamp(1, now.day);
+    final endDay = now.day;
+
+    await tester.tap(find.text('$startDay'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('5'));
+    await tester.tap(find.text('$endDay'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
-    final now = DateTime.now();
-    final expectedFrom = DateTime(now.year, now.month, 1);
-    final expectedTo = DateTime(now.year, now.month, 5, 23, 59, 59, 999, 999);
+    final expectedFrom = DateTime(now.year, now.month, startDay);
+    final expectedTo = DateTime(now.year, now.month, endDay, 23, 59, 59, 999, 999);
     expect(repo.lastFilters!.dateFrom, expectedFrom);
     expect(repo.lastFilters!.dateTo, expectedTo);
     final format = DateFormat('d MMM');
