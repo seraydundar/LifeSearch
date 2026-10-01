@@ -157,7 +157,6 @@ class SettingsScreen extends ConsumerWidget {
             trailing: SegmentedButton<ThemeMode>(
               segments: const [
                 ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode_outlined)),
-                ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto_outlined)),
                 ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode_outlined)),
               ],
               selected: {themeMode},

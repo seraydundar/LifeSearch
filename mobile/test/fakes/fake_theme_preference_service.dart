@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:lifesearch/features/settings/data/theme_preference_service.dart';
 
 class FakeThemePreferenceService implements ThemePreferenceService {
-  FakeThemePreferenceService({ThemeMode initial = ThemeMode.system}) : _mode = initial;
+  // No "System" mode exists in the real service anymore (only Light/Dark)
+  // — defaulting to it here would make `SegmentedButton`'s `selected`
+  // a value absent from its own segments.
+  FakeThemePreferenceService({ThemeMode initial = ThemeMode.light}) : _mode = initial;
 
   ThemeMode _mode;
   int saveCallCount = 0;

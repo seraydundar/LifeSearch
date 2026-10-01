@@ -3974,3 +3974,43 @@ veritabanı açmaya çalışıp platform kanalı hatası veriyordu.
 Mobile: `flutter analyze` temiz, tüm suite yeşil (294 test, +4).
 Migrasyon `m.createTable` ile anında — mevcut kullanıcıların hiçbir
 verisi etkilenmiyor (yeni, boş bir tablo).
+
+## Faz 37 — Theme: "System" seçeneği kaldırıldı, yalnızca Açık/Koyu
+
+Kullanıcı Settings'teki üç seçenekli (Açık/Otomatik/Koyu) tema
+anahtarını görünce ilk iki seçenek arasındaki farkı sordu; açıklama
+sonrası net bir tercih bildirdi: yalnızca iki mod kalsın (Açık/Koyu),
+ilk açılışta telefon o an hangi temadaysa onunla açılsın, kullanıcı
+elle değiştirirse o seçim kalıcı olsun — telefonun teması sonradan
+değişirse uygulama bunu artık otomatik takip etmesin.
+
+Değişiklik:
+
+- `ThemePreferenceService.load()`: kayıtlı bir tercih yoksa artık
+  `ThemeMode.system` döndürmek yerine, `WidgetsBinding.instance
+  .platformDispatcher.platformBrightness`'i **bir kez** okuyup
+  Açık/Koyu olarak **kaydedip** döndürüyor — yani "sürekli takip eden
+  sistem modu" değil, "ilk açılışta tespit edilip kilitlenen" bir
+  varsayılan. (Ham `dart:ui` `PlatformDispatcher.instance` yerine
+  `WidgetsBinding.instance.platformDispatcher` kullanıldı — ilki test
+  ortamında `TestWidgetsFlutterBinding` tarafından override
+  edilemiyor, bu da testi çalıştıran makinenin gerçek parlaklık
+  ayarına bağımlı kılardı.)
+- `SettingsScreen`'deki `SegmentedButton`'dan `ThemeMode.system`
+  segmenti (orta, "A" ikonlu) kaldırıldı — yalnızca Açık/Koyu kaldı.
+
+Testler: `theme_preference_service_test.dart` yeniden yazıldı —
+`TestWidgetsFlutterBinding.ensureInitialized()` ile `platformDispatcher
+.platformBrightnessTestValue` üzerinden telefon temasını simüle edip
+hem kilitlenen varsayılanı hem de zaten kayıtlı bir değerin telefon
+temasına hiç bakmadığını doğruluyor. `FakeThemePreferenceService`'in
+varsayılan `initial` değeri `ThemeMode.system`'dan `ThemeMode.light`'a
+çekildi (artık segmentlerde bulunmayan bir değer `SegmentedButton`'a
+`selected` olarak verilemez). `settings_screen_test.dart`'a yeni bir
+test eklendi: segmentlerin yalnızca Açık/Koyu olduğunu doğruluyor.
+
+Mobile: `flutter analyze` temiz, tüm suite yeşil (296 test, +2).
+Migrasyon yok — mevcut "system" tercihi olan bir kullanıcı bir
+sonraki `load()`'da otomatik olarak telefonun o anki temasına
+kilitlenecek (okunan değer tanınmadığı için "hiç kayıt yok" yoluna
+düşüyor).

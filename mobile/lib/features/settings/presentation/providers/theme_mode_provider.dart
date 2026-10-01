@@ -7,15 +7,17 @@ final themePreferenceServiceProvider = Provider<ThemePreferenceService>((ref) {
   return ThemePreferenceService();
 });
 
-/// The user's Light/Dark/System choice, persisted (P3, docs/
-/// requirements-audit-2026-09-13.md — this used to be in-memory only,
-/// via a plain `StateProvider`, so a cold restart always reverted to
-/// following the system theme). Same `AsyncNotifierProvider` shape as
+/// The user's Light/Dark choice, persisted (P3, docs/requirements-
+/// audit-2026-09-13.md — this used to be in-memory only, via a plain
+/// `StateProvider`, so a cold restart always reverted to following the
+/// system theme). Same `AsyncNotifierProvider` shape as
 /// `appLockEnabledProvider`: starts loading (`AsyncLoading`, which
-/// `LifeSearchApp`/`SettingsScreen` treat the same as
-/// `ThemeMode.system` via `.valueOrNull ?? ThemeMode.system`) and
-/// resolves to whatever was last saved, or `ThemeMode.system` the very
-/// first time there's nothing saved yet.
+/// `LifeSearchApp`/`SettingsScreen` treat the same as `ThemeMode.system`
+/// via `.valueOrNull ?? ThemeMode.system` — a transient fallback for the
+/// brief moment before secure storage resolves, not an offered choice)
+/// and resolves to whatever was last saved, or the phone's current
+/// theme, locked in, the very first time there's nothing saved yet (see
+/// `ThemePreferenceService.load`).
 final themeModeProvider =
     AsyncNotifierProvider<ThemeModeController, ThemeMode>(ThemeModeController.new);
 

@@ -266,6 +266,21 @@ void main() {
       expect(segmented.selected, {ThemeMode.dark});
     });
 
+    // There's no "follow the system theme" option any more — only an
+    // explicit Light/Dark choice (`ThemePreferenceService`'s docstring
+    // explains why: the phone's theme is read once, at first launch,
+    // then locked in rather than continuously followed).
+    testWidgets('offers only Light and Dark, no "system" option', (tester) async {
+      await tester.pumpWidget(wrap());
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -300));
+      await tester.pumpAndSettle();
+
+      final segmented =
+          tester.widget<SegmentedButton<ThemeMode>>(find.byType(SegmentedButton<ThemeMode>));
+      expect(segmented.segments.map((s) => s.value), [ThemeMode.light, ThemeMode.dark]);
+    });
+
     testWidgets('selecting a theme persists it, not just updates the UI', (tester) async {
       final themePreference = FakeThemePreferenceService();
       await tester.pumpWidget(wrap(themePreference: themePreference));
