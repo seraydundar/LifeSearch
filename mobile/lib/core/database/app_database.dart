@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 
+import 'tables/chat_messages.dart';
 import 'tables/local_collection_items.dart';
 import 'tables/local_collections.dart';
 import 'tables/local_items.dart';
@@ -18,6 +19,7 @@ part 'app_database.g.dart';
     LocalCollections,
     LocalCollectionItems,
     LocalTags,
+    ChatMessages,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -25,7 +27,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.connection);
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -98,6 +100,12 @@ class AppDatabase extends _$AppDatabase {
           if (from < 9) {
             await m.addColumn(localItems, localItems.extractedText);
             await m.createTable(localTags);
+          }
+          // v10 (Faz 36 — Ask AI sohbeti kalıcılığı): mirrors nothing on
+          // the backend — this conversation never left the device to
+          // begin with, it just used to live in memory only.
+          if (from < 10) {
+            await m.createTable(chatMessages);
           }
         },
       );

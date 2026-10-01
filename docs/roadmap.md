@@ -3921,3 +3921,56 @@ karışık çoklu atıf, atıfsız cevapta tam geri dönüş, ve halüsinasyon
 (var olmayan `[Kaynak 99]`) durumlarını kapsıyor. `ruff check` temiz,
 testler 234 → **238** (+4). Migrasyon yok — backend yeniden
 başlatılınca anında etkili.
+
+## Faz 36 — Ask AI sohbeti artık uygulama yeniden başlayınca kaybolmuyor
+
+Faz 35'i canlı test ederken kullanıcı sordu: Search/Ask AI'a yeniden
+girince eski sohbete dönebiliyor muyum, bu özellik lazım mı? Kodu
+inceleyince `ChatController`'ın sohbeti **yalnızca bellekte** tuttuğu
+ortaya çıktı — Drift'te hiçbir tablo yoktu, uygulama kapanınca (ya da
+işletim sistemi arka plandaki process'i sonlandırınca) tüm konuşma
+sıfırdan siliniyordu. Kullanıcıya tam bir "geçmiş sohbetler listesi"
+(ChatGPT tarzı) yerine daha basit bir çözüm önerdim — tek, sürekli
+sohbeti kalıcı hale getirmek — ve kullanıcı onayladı: "tamam öyle
+yapıp pushla".
+
+Değişiklik:
+
+- Yeni Drift tablosu `ChatMessages` (`core/database/tables/
+  chat_messages.dart`, schema v9 → v10): her mesajı `userId`, `role`,
+  `content`, kaynakların JSON'u ve `isError` ile saklıyor.
+  `RecentSearches.userId` ile aynı gerekçeyle hesap bazlı izole —
+  paylaşılan bir cihazda bir hesap başka bir hesabın sohbetini asla
+  görmemeli. Satır sınıfı çakışmasını önlemek için
+  `@DataClassName('ChatMessageRow')` kullanıldı (varsayılan isim,
+  domain'deki `ChatMessage` entity'siyle çakışırdı).
+- Yeni `ChatMessagesDataSource` (`features/ai_chat/data/local/`):
+  `loadAll`/`append`, `RecentSearchesDataSource` ile birebir aynı desen.
+- `ChatController.build()` artık senkron `[]` değil, `ref.read
+  (currentUserIdProvider)`'a göre o hesabın kayıtlı geçmişini Drift'ten
+  yüklüyor (`AsyncNotifier.build()`'in `FutureOr` dönebilmesi
+  sayesinde). `ask()` her iki mesajı da (soru + cevap) arka planda
+  (`unawaited`) kalıcı hale getiriyor — hata balonları hariç, tıpkı
+  `ApiAiChatRepository.ask`'in bunları backend'e giden `history`'den
+  hariç tutma gerekçesiyle (gerçekten modelden gelmiyorlar).
+- P1-01'in hesap değişimi koruması (`docs/requirements-audit-2026-09-13
+  .md`) değişti ama bozulmadı: önceden hesap değişince state zorla `[]`
+  yapılıyordu (çünkü bellekteki tek listeyi paylaşmamak için başka
+  seçenek yoktu); artık satırlar zaten `userId`'ye göre izole
+  olduğundan, `ref.invalidateSelf()` ile yeni hesabın **kendi**
+  (muhtemelen boş) geçmişi yeniden yükleniyor — geri dönen gerçek bir
+  hesabın kayıtlı sohbetini gereksiz yere silmek, eski "zorla sıfırla"
+  davranışından daha doğru.
+
+Testler: yeni `test/unit/chat_messages_data_source_test.dart` (4 test:
+sıralama, kaynakların round-trip'i, hata balonunun hiç yazılmaması,
+hesaplar arası izolasyon). Mevcut `account_switch_privacy_test.dart`
+artık gerçek bir Drift (`forTesting`/bellek-içi) veritabanı override'ı
+gerektiriyor — `ai_chat_providers.dart`'ta veritabanı sağlayıcısı
+yalnızca gerçekten kalıcı yazım gerektiğinde (`userId != null` iken)
+okunuyor, aksi halde testler gereksiz yere gerçek bir dosya tabanlı
+veritabanı açmaya çalışıp platform kanalı hatası veriyordu.
+
+Mobile: `flutter analyze` temiz, tüm suite yeşil (294 test, +4).
+Migrasyon `m.createTable` ile anında — mevcut kullanıcıların hiçbir
+verisi etkilenmiyor (yeni, boş bir tablo).

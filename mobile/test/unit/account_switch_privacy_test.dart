@@ -1,8 +1,11 @@
 import 'dart:async';
 
+import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:lifesearch/core/database/app_database.dart';
+import 'package:lifesearch/core/database/database_provider.dart';
 import 'package:lifesearch/features/ai_chat/domain/entities/rag_answer.dart';
 import 'package:lifesearch/features/ai_chat/presentation/providers/ai_chat_providers.dart';
 import 'package:lifesearch/features/auth/domain/entities/app_user.dart';
@@ -51,8 +54,11 @@ void main() {
   test('chat history is cleared the moment the signed-in account changes', () async {
     final auth = StreamController<AppUser?>();
     addTearDown(auth.close);
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
     final container = ProviderContainer(overrides: [
       authStateChangesProvider.overrideWith((ref) => auth.stream),
+      appDatabaseProvider.overrideWithValue(db),
       aiChatRepositoryProvider.overrideWithValue(
         FakeAiChatRepository(
           answerToReturn: const RagAnswer(answer: 'User A confidential answer', sources: []),
