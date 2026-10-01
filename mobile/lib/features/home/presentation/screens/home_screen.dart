@@ -8,6 +8,17 @@ import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../../library/presentation/widgets/item_grid_tile.dart';
 
+/// The Home greeting's time-of-day text — a plain function (not inline
+/// in `build`) so it's unit-testable without needing to fake
+/// `DateTime.now()` through a whole widget pump. Boundaries follow the
+/// common "before noon / before 6pm / else" convention; the device's
+/// own wall-clock hour, not anything synced or configurable.
+String greetingForHour(int hour) {
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -21,7 +32,10 @@ class HomeScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text('Good morning 👋', style: theme.textTheme.headlineSmall),
+            Text(
+              '${greetingForHour(DateTime.now().hour)} 👋',
+              style: theme.textTheme.headlineSmall,
+            ),
             const SizedBox(height: 20),
             LifeSearchBar(
               readOnly: true, // typing happens on the dedicated Search screen

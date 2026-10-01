@@ -4014,3 +4014,21 @@ Migrasyon yok — mevcut "system" tercihi olan bir kullanıcı bir
 sonraki `load()`'da otomatik olarak telefonun o anki temasına
 kilitlenecek (okunan değer tanınmadığı için "hiç kayıt yok" yoluna
 düşüyor).
+
+## Faz 38 — Home ekranındaki selamlama artık günün saatine göre değişiyor
+
+Kullanıcı Home ekranındaki sabit "Good morning 👋" yazısının saate göre
+(sabah/öğlen/akşam) değişip değişemeyeceğini sordu — kolay ve değerli
+bir iyileştirme olduğu için uyguladım.
+
+`home_screen.dart`'a saf, test edilebilir bir `greetingForHour(int
+hour)` fonksiyonu eklendi (widget'ın `build`'i içine gömülmek yerine
+ayrı tutuldu — `DateTime.now()`'ı sahtelemeden doğrudan test
+edilebilsin diye): saat 12'den önce "Good morning", 18'den önce "Good
+afternoon", sonrası "Good evening". `Text` artık `DateTime.now().hour`'u
+bu fonksiyona veriyor.
+
+Testler: yeni `test/unit/home_greeting_test.dart` (3 test — her üç
+dilimin sınırlarını da kapsıyor: 0/8/11, 12/15/17, 18/21/23).
+
+Mobile: `flutter analyze` temiz, tüm suite yeşil (299 test, +3).
