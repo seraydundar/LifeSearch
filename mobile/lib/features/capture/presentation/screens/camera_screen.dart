@@ -5,18 +5,7 @@ import 'package:camera_macos/camera_macos.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// A minimal full-screen camera capture flow (requirements doc, section
-/// 4: "Kamera: Flutter camera package"). Pops with the captured photo's
-/// local file path, or `null` if the user backs out.
-///
-/// Two genuinely different implementations behind one public contract
-/// (P3, docs/requirements-audit-2026-09-13.md, "Platformlar"): the
-/// `camera` package has no macOS implementation at all (see
-/// `capture_platform_support.dart`'s own docstring), so macOS goes
-/// through `camera_macos` instead — a different plugin with a different
-/// controller/capture API, kept as its own widget rather than one state
-/// class juggling two controller types, since the init/capture/error
-/// flows genuinely diverge, not just the plugin underneath.
+/// Pops with the photo's local file path, or `null` if backed out; macOS routes through `camera_macos` since `camera` has no macOS impl.
 class CameraScreen extends StatelessWidget {
   const CameraScreen({super.key});
 
@@ -200,11 +189,7 @@ class _MacOSCameraScreenState extends State<_MacOSCameraScreen> {
             pictureFormat: PictureFormat.jpg,
             fit: BoxFit.cover,
             onCameraInizialized: (controller) => setState(() => _controller = controller),
-            // The package's own FutureBuilder hands its init error (a
-            // denied permission, no camera present, etc.) straight
-            // through here instead of throwing somewhere unreachable —
-            // no separate `_error` state needed the way the mobile
-            // screen has one.
+            // Init error comes through here, not a thrown exception — no separate _error state needed.
             onCameraLoading: (error) {
               if (error == null) {
                 return const Center(child: CircularProgressIndicator(color: Colors.white));
@@ -228,9 +213,7 @@ class _MacOSCameraScreenState extends State<_MacOSCameraScreen> {
   }
 }
 
-/// The capture button both camera screens show — same design, same
-/// "greyed out mid-capture" affordance, just wired to whichever
-/// controller the caller actually has.
+/// Shared capture button for both camera screens.
 class _ShutterButton extends StatelessWidget {
   const _ShutterButton({required this.isCapturing, required this.onTap});
 

@@ -1,16 +1,5 @@
-"""Auth: verifying the Supabase-issued JWT on incoming requests.
-
-The mobile app authenticates against Supabase Auth directly; the backend
-never issues its own tokens. It verifies the bearer token by asking
-Supabase itself who it belongs to (GET /auth/v1/user) rather than
-decoding the JWT locally — this works regardless of whether the project
-uses legacy JWT-format keys or the newer opaque publishable/secret keys,
-and stays correct if Supabase rotates its signing key.
-
-Every downstream call (Postgres via PostgREST, Storage) reuses this same
-user token, so Row Level Security — not this function — is what actually
-scopes a request to its own data (requirements doc, rule 14: "Kullanıcının
-verilerini başka kullanıcıların sorgularında kullanma").
+"""Verifies the Supabase bearer token via GET /auth/v1/user instead of decoding it locally,
+so it works across key formats and signing-key rotation. RLS, not this function, scopes data access.
 """
 
 from dataclasses import dataclass
@@ -60,8 +49,6 @@ async def get_current_user(authorization: str = Header(default="")) -> CurrentUs
         )
 
     body = response.json()
-    # Every log line for the rest of this request now carries this user's
-    # id, without threading it through every function signature — see
-    # core/logging.py.
+    # Picked up by core/logging.py so the rest of this request's log lines carry the user id.
     user_id_var.set(body["id"])
     return CurrentUser(id=body["id"], email=body.get("email"), access_token=token)

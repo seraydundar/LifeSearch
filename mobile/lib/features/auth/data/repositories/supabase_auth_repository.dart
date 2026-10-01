@@ -44,9 +44,7 @@ class SupabaseAuthRepository implements AuthRepository {
     try {
       final response = await _client.auth.signUp(email: email, password: password);
       if (response.session == null) {
-        // Supabase returns a `user` here even when email confirmation is
-        // required — `session` (not `user`) is the real signal that the
-        // account isn't actually signed in yet.
+        // `user` is set even when email confirmation is pending; `session` is the real signal.
         throw const AuthFailure(
           'Hesap oluşturuldu. Devam etmeden önce lütfen e-postanı onayla.',
         );

@@ -12,18 +12,11 @@ import '../screens/audio_recorder_screen.dart';
 import '../screens/camera_screen.dart';
 import 'capture_platform_support.dart';
 
-/// The "+" flow from the requirements doc (section 13) — every option is
-/// live as of Phase 8.
 Future<void> showCaptureSheet(BuildContext context) {
   return showModalBottomSheet(
     context: context,
     showDragHandle: true,
-    // Without this, the sheet is capped at roughly half the screen height
-    // by default — the six options plus header overflow that on shorter
-    // screens or with a larger system text size (an integration test on
-    // the simulator caught this as a real RenderFlex overflow, not just a
-    // cosmetic one: `isScrollControlled: false` clips the sheet's content
-    // instead of letting it grow or scroll).
+    // Without this the sheet is capped at ~half screen height and overflows on shorter screens / larger text.
     isScrollControlled: true,
     builder: (context) => const _CaptureSheet(),
   );
@@ -32,14 +25,7 @@ Future<void> showCaptureSheet(BuildContext context) {
 class _CaptureSheet extends ConsumerWidget {
   const _CaptureSheet();
 
-  // The actual per-platform decision lives in capture_platform_support.dart
-  // as plain functions of an `isWeb` boolean, not a `kIsWeb` read buried
-  // inside this widget — that's what lets a test exercise every platform
-  // combination deterministically, regardless of which machine actually
-  // runs `flutter test` (Faz 11, madde 6c, see docs/roadmap.md). macOS
-  // no longer needs its own check here — `CameraScreen` now routes it
-  // through `camera_macos` instead of excluding it (P3, docs/requirements-
-  // audit-2026-09-13.md, "Platformlar").
+  // Per-platform logic lives in capture_platform_support.dart as plain functions of isWeb, for deterministic tests.
   bool get _fileCaptureSupported => fileCaptureSupportedFor(isWeb: kIsWeb);
 
   bool get _cameraSupported => cameraSupportedFor(isWeb: kIsWeb);
@@ -65,19 +51,14 @@ class _CaptureSheet extends ConsumerWidget {
       allowedExtensions: allowedExtensions,
     );
     final file = files.isEmpty ? null : files.single;
-    if (file == null) return; // user cancelled
+    if (file == null) return;
 
     if (!context.mounted) return;
     Navigator.of(
       context,
-    ).pop(); // close the sheet, show progress on the screen behind it
+    ).pop(); // close sheet; progress shows on the screen behind it
 
-    // P3 (docs/requirements-audit-2026-09-13.md, "Platformlar"): `.path`
-    // is derived from the file's own `uri` (`PlatformFile`, file_picker
-    // 12.x) and is only ever non-null for a `file:` URI — web never
-    // gives one (no real filesystem to point a path into), so it reads
-    // the bytes directly off the file instead, the same way on every
-    // platform (`readAsBytes()` is cross-platform, not a web-only API).
+    // web never gives a `file:` path, so read bytes directly instead.
     final ok = kIsWeb
         ? await ref
             .read(captureControllerProvider.notifier)
@@ -112,7 +93,7 @@ class _CaptureSheet extends ConsumerWidget {
     Navigator.of(
       context,
     ).pop(); // close the sheet now that we're back from the camera
-    if (path == null) return; // backed out without taking a photo
+    if (path == null) return;
 
     final ok = await ref
         .read(captureControllerProvider.notifier)
@@ -138,7 +119,7 @@ class _CaptureSheet extends ConsumerWidget {
     Navigator.of(
       context,
     ).pop(); // close the sheet now that we're back from recording
-    if (path == null) return; // backed out without saving a recording
+    if (path == null) return;
 
     final ok = await ref
         .read(captureControllerProvider.notifier)
@@ -161,7 +142,7 @@ class _CaptureSheet extends ConsumerWidget {
       context: context,
       builder: (context) => const _AddLinkDialog(),
     );
-    if (url == null) return; // cancelled
+    if (url == null) return;
 
     if (!context.mounted) return;
     Navigator.of(context).pop(); // close the sheet
@@ -187,10 +168,7 @@ class _CaptureSheet extends ConsumerWidget {
     };
   }
 
-  /// "Upload Document" picks from `pdf`/`docx`/`txt` (backend
-  /// SUPPORTED_TYPES, see processing_pipeline.py) — a PDF keeps its own
-  /// `ItemType.pdf` (existing detail-screen/icon treatment), everything
-  /// else lands as the generic `ItemType.document`.
+  /// pdf/docx/txt per backend SUPPORTED_TYPES; pdf keeps its own ItemType, the rest become ItemType.document.
   ItemType _documentItemTypeFor(String? extension) {
     return switch (extension?.toLowerCase()) {
       'pdf' => ItemType.pdf,
@@ -205,9 +183,7 @@ class _CaptureSheet extends ConsumerWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        // `isScrollControlled: true` lets the sheet grow to fit this, but
-        // it's still bounded by the screen — a scrollable fallback for
-        // very small screens or a large system text size.
+        // Scrollable fallback for small screens / larger system text.
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -243,18 +219,7 @@ class _CaptureSheet extends ConsumerWidget {
                   itemTypeFor: (_) => ItemType.image,
                 ),
               ),
-              // P2-06 (docs/requirements-audit-2026-09-13.md): the gallery
-              // picker had no way to produce `ItemType.screenshot` at
-              // all — every picked image landed as a plain `image`, so
-              // Library's screenshot filter and the backend's
-              // screenshot-specific vision prompt (see
-              // processing_pipeline.py) never actually got used from
-              // this flow. An explicit second tile, rather than guessing
-              // from the filename/EXIF (unreliable — a screenshot saved
-              // via "Share" or synced from another device often loses
-              // whatever naming convention the OS originally gave it),
-              // same tradeoff already made for "Choose Image" vs. "Take
-              // Photo" right below.
+              // Explicit tile rather than guessing from filename/EXIF — unreliable since Share/sync often strips it.
               _CaptureTile(
                 icon: Icons.screenshot_outlined,
                 label: 'Choose Screenshot',
@@ -378,11 +343,7 @@ class _CaptureTile extends StatelessWidget {
   final VoidCallback? onTap;
   final bool enabled;
 
-  /// Why this tile is greyed out on *this platform specifically* — as
-  /// opposed to the transient "an upload is already in progress"
-  /// disabled state, which has no explanation and needs none (Faz 11,
-  /// madde 6c, see docs/roadmap.md). `null` (including whenever
-  /// [enabled] is true) shows no subtitle at all.
+  /// Why this tile is disabled for this platform; `null` shows no subtitle.
   final String? unavailableReason;
 
   @override

@@ -7,8 +7,7 @@ import '../../../item/domain/entities/item.dart';
 import '../../../search/domain/entities/search_result.dart';
 import '../../domain/entities/chat_message.dart';
 
-/// Backs the Ask AI conversation's persistence (Faz 36, docs/roadmap.md).
-/// Scoped by `userId` — same reasoning as `RecentSearchesDataSource`.
+/// Ask AI conversation persistence, scoped by `userId`.
 class ChatMessagesDataSource {
   ChatMessagesDataSource(this._db);
 
@@ -22,10 +21,6 @@ class ChatMessagesDataSource {
     return rows.map(_toChatMessage).toList();
   }
 
-  /// Error bubbles are never passed in — same reasoning
-  /// `ApiAiChatRepository.ask` already uses to exclude them from the
-  /// `history` sent to the backend: they're this app's own fallback
-  /// text, not something the model ever said.
   Future<void> append(String userId, ChatMessage message) {
     return _db.into(_db.chatMessages).insert(
           ChatMessagesCompanion.insert(

@@ -8,11 +8,8 @@ import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../../library/presentation/widgets/item_grid_tile.dart';
 
-/// The Home greeting's time-of-day text — a plain function (not inline
-/// in `build`) so it's unit-testable without needing to fake
-/// `DateTime.now()` through a whole widget pump. Boundaries follow the
-/// common "before noon / before 6pm / else" convention; the device's
-/// own wall-clock hour, not anything synced or configurable.
+/// Plain function (not inline in `build`) so it's testable without faking
+/// `DateTime.now()` through a widget pump.
 String greetingForHour(int hour) {
   if (hour < 12) return 'Good morning';
   if (hour < 18) return 'Good afternoon';
@@ -58,11 +55,6 @@ class HomeScreen extends ConsumerWidget {
                         scrollDirection: Axis.horizontal,
                         itemCount: items.length > 10 ? 10 : items.length,
                         separatorBuilder: (context, index) => const SizedBox(width: 12),
-                        // Same tile Library's grid uses (requirements doc,
-                        // section 25) — real thumbnail for images/
-                        // screenshots, type icon + title fallback for
-                        // everything else, so Home's teaser matches what
-                        // the user actually sees once they tap in.
                         itemBuilder: (context, index) => SizedBox(
                           width: 120,
                           child: ItemGridTile(item: items[index]),

@@ -4,11 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../providers/item_providers.dart';
 
-/// AI-generated tags (requirements doc, section 8-12) — used by both item
-/// detail and the note editor. Tapping a tag jumps straight to that tag's
-/// search results. Renders nothing while loading, on error, or when the
-/// item has no tags yet (still processing, or the AI provider produced
-/// none) — this is a bonus, not core content.
+/// AI-generated tags; tapping one jumps to its search results. Renders
+/// nothing while loading, on error, or with no tags yet.
 class TagsRow extends ConsumerWidget {
   const TagsRow({super.key, required this.itemId});
 

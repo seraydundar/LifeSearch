@@ -1,8 +1,4 @@
-"""Account deletion (requirements doc, section 49-52) — a single
-irreversible endpoint, gated on `SUPABASE_SERVICE_ROLE_KEY` being
-configured (see `AccountRepository` for why that specific key, and
-nothing else in this backend, needs it).
-"""
+"""Account deletion; requires SUPABASE_SERVICE_ROLE_KEY (see AccountRepository)."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 

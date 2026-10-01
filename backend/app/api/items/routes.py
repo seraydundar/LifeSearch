@@ -1,8 +1,4 @@
-"""items endpoints.
-
-Not wired into the app yet — this module is scaffolding for a later phase.
-See docs/requirements.md for what belongs here.
-"""
+"""Not wired into the app yet; scaffolding for a later phase."""
 
 from fastapi import APIRouter
 

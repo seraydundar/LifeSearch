@@ -13,55 +13,22 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
 
 final nativeOAuthServiceProvider = Provider<NativeOAuthService>((ref) => NativeOAuthService());
 
-/// Google sign-in (Faz 11, madde 5 — see docs/roadmap.md) is hidden
-/// entirely (see `LoginScreen`) rather than shown broken when
-/// `mobile/.env` has neither `GOOGLE_CLIENT_ID` nor
-/// `GOOGLE_SERVER_CLIENT_ID` set — same "missing config means the
-/// feature is off, not an error" contract `apiClientProvider` already
-/// uses for the AI backend. Also hidden on any platform where
-/// `google_sign_in` itself can't do the imperative flow this app uses
-/// at all — web, today (Faz 12, madde 11, denetim düzeltmesi, see
-/// docs/roadmap.md: configuring the env vars alone used to be enough
-/// to show a button that would always throw the moment it was tapped
-/// on web) — see `NativeOAuthService.isGoogleAvailable`'s docstring.
+/// Hidden (not shown broken) when unconfigured or the platform can't do the native flow (e.g. web).
 final googleSignInAvailableProvider = Provider<bool>((ref) {
   final configured = Env.googleClientId != null || Env.googleServerClientId != null;
   return configured && ref.watch(nativeOAuthServiceProvider).isGoogleAvailable;
 });
 
-/// Apple sign-in only on iOS/macOS — see `NativeOAuthService.
-/// isAppleAvailable`'s docstring for why Android isn't included.
 final appleSignInAvailableProvider = Provider<bool>((ref) {
   return ref.watch(nativeOAuthServiceProvider).isAppleAvailable;
 });
 
-/// Raw session stream — this is what `app_router.dart` listens to for
-/// redirect decisions (logged in vs logged out).
+/// What `app_router.dart` watches for redirect decisions (logged in vs out).
 final authStateChangesProvider = StreamProvider<AppUser?>((ref) {
   return ref.watch(authRepositoryProvider).authStateChanges();
 });
 
-/// The signed-in user's id, or `null` — derived from
-/// [authStateChangesProvider] rather than each per-user provider reading
-/// Supabase's `currentUser` directly at its own construction time.
-///
-/// **Faz 12 — denetim düzeltmesi (see docs/roadmap.md)**: `itemsProvider`/
-/// `itemRepositoryProvider` and friends used to read the signed-in
-/// user's id exactly once, when first built, then bind a Drift stream to
-/// that id forever — switching accounts within the same app session
-/// (sign out A, sign in B, no full app restart) left Home/Library
-/// showing **A's** items until something else happened to dispose and
-/// rebuild those providers, which nothing reliably did. Every provider
-/// that needs "the current user" should `ref.watch` this one instead
-/// (directly, or transitively through `itemRepositoryProvider`/
-/// `collectionRepositoryProvider`) so Riverpod actually rebuilds them —
-/// and their underlying Drift streams — the moment the session changes.
-///
-/// Defensive like `SyncService._currentUserIdOrNull()`/`search_providers
-/// .dart`'s `_currentUserIdOrNull()`: `Supabase.instance` asserts if
-/// `Supabase.initialize()` never ran, which a widget test that overrides
-/// a downstream provider (bypassing this one entirely) shouldn't need to
-/// know or care about.
+/// Watch this, not `currentUser` directly, so per-user providers/Drift streams rebuild on account switch.
 final currentUserIdProvider = Provider<String?>((ref) {
   try {
     return ref.watch(authStateChangesProvider).valueOrNull?.id;
@@ -75,14 +42,10 @@ final authControllerProvider = AsyncNotifierProvider<AuthController, AppUser?>(
 );
 
 /// Owns the sign-in/sign-up/sign-out actions and their loading/error state.
-/// Screens read `authControllerProvider` for that state and call these
-/// methods — they never talk to `AuthRepository` directly.
 class AuthController extends AsyncNotifier<AppUser?> {
   @override
   AppUser? build() {
-    // Keep this notifier's state in sync with the session stream so a
-    // token refresh or an external sign-out (e.g. expired session) is
-    // reflected here too, not just in authStateChangesProvider.
+    // Mirror the session stream so an external refresh/sign-out updates state too.
     ref.listen(authStateChangesProvider, (previous, next) {
       next.whenData((user) => state = AsyncData(user));
     });
@@ -103,10 +66,7 @@ class AuthController extends AsyncNotifier<AppUser?> {
     );
   }
 
-  /// Fetches a Google ID token via the native picker (`NativeOAuthService`)
-  /// and exchanges it for a Supabase session. A cancelled picker leaves
-  /// `state` as `AsyncData(null)` (still signed out) rather than an
-  /// error — there's nothing wrong to report, the user just backed out.
+  /// Cancelling the picker leaves state signed out, not an error.
   Future<void> signInWithGoogle() async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {

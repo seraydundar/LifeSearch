@@ -2,9 +2,8 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'item.freezed.dart';
 
-/// Mirrors the `type` check constraint on the `items` table
-/// (see infra/supabase/migrations/0001_init.sql). Enum member names are
-/// used verbatim as the DB values — see [ItemTypeX].
+/// Mirrors the `type` check constraint on the `items` table. Enum member
+/// names are used verbatim as the DB values — see [ItemTypeX].
 enum ItemType { note, image, screenshot, pdf, audio, url, document }
 
 extension ItemTypeX on ItemType {
@@ -19,8 +18,7 @@ extension ItemTypeX on ItemType {
 }
 
 /// A single piece of content the user saved — a note, an uploaded image/PDF,
-/// etc. This is the row shape from the `items` table; the actual text body
-/// of a note lives in `item_contents` and is fetched separately (see
+/// etc. A note's text body lives separately in `item_contents` (see
 /// `ItemRepository.fetchNoteContent`) since the list view never needs it.
 @freezed
 sealed class Item with _$Item {
@@ -36,26 +34,19 @@ sealed class Item with _$Item {
     required String processingStatus,
     required bool favorite,
     required DateTime createdAt,
-    // Duplicate Detection (requirements doc, section 46) — set by the
-    // backend pipeline, never by the client. `null` duplicateOfItemId
-    // means no candidate was found (or it's been dismissed already).
+    // Set by the backend pipeline only. `null` means no duplicate found
+    // (or dismissed already).
     String? duplicateOfItemId,
     double? duplicateSimilarity,
     @Default(false) bool duplicateDismissed,
-    // EXIF-derived capture location/time (requirements doc, section
-    // 8-12) — set by the backend pipeline from a photo's EXIF; `null`
-    // for screenshots, downloaded images, or location-off photos.
+    // EXIF-derived; `null` for screenshots, downloads, or location-off photos.
     double? latitude,
     double? longitude,
     DateTime? capturedAt,
-    // Set once at upload time — Settings' "Storage" tile sums these
-    // (requirements doc, section 49-52). `null` for notes/links, and for
-    // anything uploaded before this field existed.
+    // `null` for notes/links and anything uploaded before this field existed.
     int? fileSizeBytes,
-    // Item-level Privacy Mode (Faz 11, madde 2 — see docs/roadmap.md) —
-    // hidden from Home/Library/Search unless private items are revealed
-    // for the session (see item_providers.dart's
-    // `privateItemsRevealedProvider`).
+    // Hidden from Home/Library/Search unless revealed for the session
+    // (see item_providers.dart's `privateItemsRevealedProvider`).
     @Default(false) bool private,
   }) = _Item;
 }

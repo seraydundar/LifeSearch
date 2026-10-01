@@ -4,9 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
-/// A minimal full-screen voice note recorder (requirements doc, section
-/// 18). Pops with the recorded clip's local file path, or `null` if the
-/// user cancels without ever starting a recording.
+/// Pops with the recorded clip's local file path, or `null` if cancelled.
 class AudioRecorderScreen extends StatefulWidget {
   const AudioRecorderScreen({super.key});
 

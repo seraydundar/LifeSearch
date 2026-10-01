@@ -14,7 +14,5 @@ final collectionSuggestionsProvider =
   return ref.watch(collectionSuggestionRepositoryProvider).fetchSuggestions();
 });
 
-/// Suggestions the user dismissed this session (keyed by `suggestionKey`)
-/// — not persisted, since the backend recomputes suggestions fresh every
-/// fetch; a dismissal means "not now", not a stored preference.
+/// Not persisted — a dismissal means "not now", not a stored preference.
 final dismissedSuggestionKeysProvider = StateProvider.autoDispose<Set<String>>((ref) => {});

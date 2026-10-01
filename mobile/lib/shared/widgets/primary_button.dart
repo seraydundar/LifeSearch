@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// A full-width elevated button with a built-in loading spinner, used for
-/// every primary form action (sign in, sign up, save...) so loading state
-/// looks the same everywhere.
+/// Full-width elevated button with a built-in loading spinner, shared by every primary form action.
 class PrimaryButton extends StatelessWidget {
   const PrimaryButton({
     super.key,

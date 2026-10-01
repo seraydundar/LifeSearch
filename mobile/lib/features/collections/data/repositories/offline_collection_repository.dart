@@ -10,11 +10,6 @@ import '../../domain/repositories/collection_repository.dart';
 import '../local/collection_local_data_source.dart';
 import '../remote/remote_collection_data_source.dart';
 
-/// Offline-first `CollectionRepository`: every read comes from the local
-/// cache, every write lands there immediately and is queued for
-/// `SyncService` to push to Supabase — same pattern as
-/// `OfflineItemRepository`, which this superseded
-/// `SupabaseCollectionRepository`'s "no offline cache yet" note.
 class OfflineCollectionRepository implements CollectionRepository {
   OfflineCollectionRepository({
     required CollectionLocalDataSource local,

@@ -4,20 +4,12 @@ import '../../../../core/database/app_database.dart';
 import '../../../item/data/local/local_item_x.dart';
 import '../../../item/domain/entities/item.dart';
 
-/// Thin wrapper around the `LocalCollections`/`LocalCollectionItems` Drift
-/// tables — same role as `ItemLocalDataSource` for items. This is what
-/// `OfflineCollectionRepository` actually reads from; `SyncService` keeps
-/// it reconciled with Supabase.
 class CollectionLocalDataSource {
   CollectionLocalDataSource(this._db);
 
   final AppDatabase _db;
 
-  /// Same contract as `ItemLocalDataSource.transaction` (P1-03,
-  /// docs/requirements-audit-2026-09-13.md) — pairs a local
-  /// collection/membership write with its `SyncQueueDataSource.enqueue()`
-  /// call in `OfflineCollectionRepository` atomically, since both data
-  /// sources share this same [AppDatabase] instance.
+  /// Pairs a local write with its `SyncQueueDataSource.enqueue()` call atomically.
   Future<T> transaction<T>(Future<T> Function() action) => _db.transaction(action);
 
   Stream<List<LocalCollection>> watchAll(String userId) {
@@ -55,8 +47,7 @@ class CollectionLocalDataSource {
         .write(const LocalCollectionsCompanion(syncStatus: Value('failed')));
   }
 
-  /// Deletes the collection and every membership row that pointed at it —
-  /// sqlite doesn't cascade this automatically the way Postgres does.
+  /// Sqlite doesn't cascade deletes, so membership rows must be removed manually.
   Future<void> delete(String id) async {
     await (_db.delete(_db.localCollectionItems)..where((t) => t.collectionId.equals(id))).go();
     await (_db.delete(_db.localCollections)..where((t) => t.id.equals(id))).go();
@@ -66,8 +57,6 @@ class CollectionLocalDataSource {
     await (_db.delete(_db.localCollectionItems)..where((t) => t.collectionId.isIn(ids))).go();
     await (_db.delete(_db.localCollections)..where((t) => t.id.isIn(ids))).go();
   }
-
-  // ---- membership (LocalCollectionItems) ----
 
   Future<void> addItem(
     String collectionId,
@@ -97,15 +86,8 @@ class CollectionLocalDataSource {
         .write(const LocalCollectionItemsCompanion(syncStatus: Value('synced')));
   }
 
-  /// Every (collectionId, itemId) pair currently cached locally for
-  /// [userId] — used by `SyncService` to reconcile against the server's
-  /// membership rows. Scoped via an inner join against `LocalCollections`
-  /// (Faz 12, madde 4, denetim düzeltmesi — see docs/roadmap.md):
-  /// `LocalCollectionItems` itself carries no `userId` column of its own,
-  /// and without this join, syncing as one account would see — and then
-  /// *delete*, as "stale" — a different, previously signed-in account's
-  /// still-cached membership rows, since they'd never appear in this
-  /// account's own server-fetched membership set.
+  /// Joins against `LocalCollections` since `LocalCollectionItems` has no `userId`
+  /// column; without it, sync could delete another account's cached memberships as "stale".
   Future<List<(String, String)>> allMemberships(String userId) async {
     final query = _db.select(_db.localCollectionItems).join([
       innerJoin(
@@ -122,26 +104,10 @@ class CollectionLocalDataSource {
     }).toList();
   }
 
-  /// The items in a collection, joined against `LocalItems`, newest-added
-  /// first — matches `CollectionRepository.watchCollectionItems`'s
-  /// contract. An item can briefly be missing from `LocalItems` (its own
-  /// pull hasn't landed yet) — that row is skipped rather than crashing.
-  ///
-  /// **P1-01** (docs/requirements-audit-2026-09-13.md): this used to
-  /// filter by `collectionId` alone, with no check that the collection —
-  /// or the items in it — actually belong to [userId]. A stale
-  /// `collectionId` still sitting in route state after an account switch
-  /// (or simply a shared device's cache not yet purged) was a second,
-  /// unfiltered way to reach another account's cached items, alongside
-  /// whatever `itemsProvider`'s per-user filtering already caught.
-  /// Requires an inner join against `LocalCollections`, not just a
-  /// `where` on the membership row — `LocalCollectionItems` itself
-  /// carries no `userId` column (see `allMemberships`'s docstring).
-  ///
-  /// [includePrivate] mirrors `SearchRepository.search`'s contract
-  /// (P1-02): pass the live `privateItemsRevealedProvider` value so a
-  /// private item is excluded from a collection's detail list the same
-  /// way it already is from Home/Library.
+  /// Must filter by [userId] via join, not just `collectionId` — otherwise a stale
+  /// collection id from a prior account could leak that account's cached items.
+  /// Rows missing from `LocalItems` (pull not landed yet) are skipped, not crashed on.
+  /// [includePrivate] should be the live `privateItemsRevealedProvider` value.
   Stream<List<Item>> watchItemsForCollection(
     String collectionId,
     String userId, {

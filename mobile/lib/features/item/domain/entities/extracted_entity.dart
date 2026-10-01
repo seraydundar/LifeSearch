@@ -2,9 +2,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'extracted_entity.freezed.dart';
 
-/// Mirrors the `type` check constraint on the `entities` table (see
-/// infra/supabase/migrations/0011_entities.sql, extended by P3's
-/// 0020_entity_types_extend.sql — docs/requirements-audit-2026-09-13.md).
+/// Mirrors the `type` check constraint on the `entities` table.
 enum EntityType { person, place, organization, date, product, price, website, technology }
 
 extension EntityTypeX on EntityType {
@@ -18,9 +16,8 @@ extension EntityTypeX on EntityType {
   }
 }
 
-/// An AI-extracted named entity (requirements doc, section 44-48) — a
-/// person, place, organization, or date the backend's pipeline found
-/// mentioned in an item's content. Structured/typed, unlike a plain tag.
+/// An AI-extracted named entity found in an item's content, unlike a
+/// plain tag, this is structured and typed.
 @freezed
 sealed class ExtractedEntity with _$ExtractedEntity {
   const factory ExtractedEntity({

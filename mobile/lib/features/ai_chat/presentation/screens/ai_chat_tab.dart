@@ -8,9 +8,7 @@ import '../../../search/domain/entities/search_result.dart';
 import '../../domain/entities/chat_message.dart';
 import '../providers/ai_chat_providers.dart';
 
-/// "Ask AI" — RAG chat over the user's own archive (requirements doc,
-/// section 23). Lives as a tab alongside Search rather than its own
-/// route, matching the doc's "Tab: Search | Ask AI" layout.
+/// "Ask AI" — RAG chat over the user's own archive.
 class AiChatTab extends ConsumerStatefulWidget {
   const AiChatTab({super.key});
 
@@ -24,7 +22,7 @@ class _AiChatTabState extends ConsumerState<AiChatTab>
   final _scrollController = ScrollController();
 
   @override
-  bool get wantKeepAlive => true; // keep the draft/scroll position across tab switches
+  bool get wantKeepAlive => true;
 
   @override
   void dispose() {

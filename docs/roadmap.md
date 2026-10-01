@@ -4032,3 +4032,29 @@ Testler: yeni `test/unit/home_greeting_test.dart` (3 test — her üç
 dilimin sınırlarını da kapsıyor: 0/8/11, 12/15/17, 18/21/23).
 
 Mobile: `flutter analyze` temiz, tüm suite yeşil (299 test, +3).
+
+## Faz 39 — Kod genelinde yorum temizliği
+
+Kullanıcı kodda çok fazla yorum satırı olduğunu, bunların çıkarılmasını
+ve kalması gerekenlerin de olabildiğince kısaltılmasını istedi. Bu, her
+Faz'da uygulanan "neden"i olay tarihçesiyle (Faz N / P1-P2-P3 audit
+madde numarası / docs/roadmap.md veya requirements-audit atıfıyla)
+inline koda yazma alışkanlığının birikmiş sonucuydu — bu tarihçe zaten
+commit mesajlarında ve roadmap'te duruyor, koda tekrar yazmak gereksiz.
+
+`mobile/lib` ve `backend/app` (testler ve docs hariç) 7 paralel ajana
+bölünüp tarandı — her biri kendi dizininde `flutter analyze`/`ruff
+check` ile doğruladı, hiçbiri kod mantığına dokunmadı, sadece yorum
+satırlarını (Dart `//`/`///`, Python `#`/docstring) sildi veya tek
+satıra indirdi. Kural: kod zaten söylüyorsa yorum yok; gerçekten
+göze çarpmayan bir "neden" (bir invariant, bir workaround, bir
+gotcha) varsa tek satıra sıkıştırılıp kalıyor, tarihçe/audit atıfları
+olmadan.
+
+Toplam: 138 dosya, +739/-3106 satır (net ~2367 satır azaldı). Bu
+oturumun sonunda tam doğrulama ayrıca yapıldı: `flutter analyze`
+temiz, tüm mobile suite yeşil (299/299), `ruff check` temiz, tüm
+backend suite yeşil (238/238) — hiçbir test sayısı değişmedi (yalnızca
+yorumlar değişti). Diff ayrıca elle örneklenerek (kod gibi görünen her
+silinen satır tek tek kontrol edilerek) hiçbir gerçek kod satırının
+yanlışlıkla gitmediği doğrulandı.

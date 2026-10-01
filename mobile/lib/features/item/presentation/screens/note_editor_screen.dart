@@ -27,24 +27,14 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   bool _loadingContent = false;
   bool _isDeleting = false;
 
-  /// `null` in create mode. Mutable (unlike `widget.item`) so favorite/
-  /// private/retry below can update it optimistically and so
-  /// `watchItemByIdProvider` (see `build()`) can keep it fresh — notes
-  /// go through the same AI pipeline (tagging/entities/embedding) as
-  /// every other item type, so this screen needs the same "sil/favori/
-  /// private/retry" actions `ItemDetailScreen` already has (Faz 12,
-  /// madde 12, denetim düzeltmesi — see docs/roadmap.md: this screen
-  /// had none of them before).
+  /// `null` in create mode. Mutable so favorite/private/retry and
+  /// `watchItemByIdProvider` can update it optimistically/live.
   late Item? _item = widget.item;
 
-  /// P1-02 (docs/requirements-audit-2026-09-13.md) — same contract as
-  /// `ItemDetailScreen._requiresRevealToView`: whether reaching this
-  /// screen at all required reveal to already be on, captured once from
-  /// the (cache-corrected) item this screen opened with, not from
-  /// whatever `_item.private` becomes afterwards — so marking the
-  /// currently-open note private yourself via [_togglePrivate] doesn't
-  /// immediately lock you out of the screen you're editing. `false` in
-  /// create mode; there's no item yet to require reveal for.
+  /// Same contract as `ItemDetailScreen._requiresRevealToView`: captured
+  /// once from the item this screen opened with, so marking it private
+  /// via [_togglePrivate] doesn't lock the user out mid-edit. `false` in
+  /// create mode.
   late final bool _requiresRevealToView;
 
   bool get _isEditing => widget.item != null;
@@ -53,8 +43,6 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   void initState() {
     super.initState();
     if (_isEditing) {
-      // Same immediate-correction reasoning as `ItemDetailScreen`'s
-      // `initState()` — see that widget's docstring.
       final fresh = ref.read(watchItemByIdProvider(widget.item!.id));
       if (fresh != null) _item = fresh;
       _requiresRevealToView = _item!.private;
@@ -92,8 +80,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     }
   }
 
-  /// Item-level Privacy Mode (Faz 11, madde 2 — see docs/roadmap.md) —
-  /// same contract as `ItemDetailScreen._togglePrivate()`.
+  /// Same contract as `ItemDetailScreen._togglePrivate()`.
   Future<void> _togglePrivate() async {
     final current = _item!;
     final next = !current.private;
@@ -178,30 +165,14 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // P1-02 (docs/requirements-audit-2026-09-13.md) — same live re-check
-    // as `ItemDetailScreen`'s: e.g. `AppLockGate` resetting reveal the
-    // moment the app is backgrounded while this note is still open.
     if (_requiresRevealToView && !ref.watch(privateItemsRevealedProvider)) {
       return const PrivateItemLockedView();
     }
     if (_isEditing) {
-      // Live, not one-shot — same reasoning as `ItemDetailScreen`'s
-      // `ref.listen(watchItemByIdProvider(...))` (Faz 12, madde 8 — see
-      // docs/roadmap.md): a background sync completing this note's AI
-      // processing (or another device changing it) while this screen
-      // is open should show up here too, not just after leaving and
-      // coming back.
+      // Live re-check, same reasoning as `ItemDetailScreen._applyFreshItem`.
       ref.listen(watchItemByIdProvider(widget.item!.id), (previous, next) {
         if (next == null) return;
         setState(() => _item = next);
-        // Same gap `ItemDetailScreen._applyFreshItem` had (denetim
-        // düzeltmesi — see docs/roadmap.md): tags/entities are produced
-        // by the same AI pipeline run that just finished, but
-        // `itemTagsProvider`/`itemEntitiesProvider` are one-shot
-        // `FutureProvider`s that fetched (and cached) nothing back when
-        // the note was still pending/processing — without this,
-        // `TagsRow`/`EntitiesRow` would keep showing no tags/entities
-        // until the user left this screen and came back.
         if (previous != null &&
             previous.processingStatus != 'completed' &&
             next.processingStatus == 'completed') {

@@ -1,16 +1,11 @@
 import '../../item/domain/entities/item.dart';
 
-/// Settings' "Storage" tile (requirements doc, section 49-52) — sums
-/// `Item.fileSizeBytes`, recorded once at upload time (see
-/// `OfflineItemRepository.uploadFile`) rather than recomputed by
-/// recursively listing every item's Storage folder.
+/// Sums Item.fileSizeBytes (recorded at upload time), not recomputed by listing files.
 int totalStorageBytes(List<Item> items) {
   return items.fold(0, (sum, item) => sum + (item.fileSizeBytes ?? 0));
 }
 
-/// True when at least one file-backed item (not a note/link) has no
-/// recorded size — i.e. it was uploaded before this field existed, so
-/// the total above is a lower bound, not the real number.
+/// True when a file-backed item predates this field, making the total above a lower bound.
 bool storageTotalIsIncomplete(List<Item> items) {
   const fileTypes = {
     ItemType.image,

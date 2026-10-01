@@ -6,29 +6,9 @@ import '../../domain/entities/search_filters.dart';
 import '../../domain/entities/search_result.dart';
 import 'tfidf_ranker.dart';
 
-/// On-device relevance ranking over the local Drift cache (requirements
-/// doc, section 25-33: "offline-first ... + offline search") — used
-/// when the backend's real semantic/hybrid search can't be reached,
-/// see `OfflineFallbackSearchRepository`.
-///
-/// Ranks with a from-scratch TF-IDF + cosine similarity model
-/// (`tfidf_ranker.dart` — Faz 11, madde 6b, see docs/roadmap.md) rather
-/// than a plain substring scan: a multi-word query matches even when
-/// its words land in different fields or a different order, and
-/// results are ordered by how much of the query's vocabulary they
-/// actually contain instead of just "newest first". **Not** a neural
-/// embedding — it can't match synonyms/paraphrases, only shared
-/// vocabulary (after lowercasing and Unicode-aware tokenizing) — see
-/// `tfidf_ranker.dart`'s own docstring for why that trade-off was made.
-///
-/// Matches title, description, a note's own body, a link's URL/filename,
-/// an item's tags, and — since P2-07 (docs/requirements-audit-2026-09-13.md)
-/// — its `extractedText` (`item_contents.raw_text`: OCR text for a scanned
-/// PDF/screenshot, a PDF/DOCX/TXT's extracted body, an audio transcript, or
-/// a scraped webpage's article text; see `LocalItems.extractedText`'s own
-/// docstring). Entities and `item_contents.summary` still aren't synced to
-/// Drift, so those remain unsearchable offline — a real but narrower
-/// bounded limitation than before.
+/// On-device TF-IDF + cosine ranking, used when the backend's real search is
+/// unreachable. Not embeddings — no synonym/paraphrase matching. Entities and
+/// `item_contents.summary` aren't synced to Drift, so they stay unsearchable offline.
 class LocalSearchDataSource {
   LocalSearchDataSource(this._db);
 
@@ -47,10 +27,6 @@ class LocalSearchDataSource {
     if (trimmedQuery.isEmpty) return [];
 
     final q = _db.select(_db.localItems)..where((t) => t.userId.equals(userId));
-    // Same rule as the remote RPCs (P1-02, docs/requirements-audit-2026-09-13.md,
-    // see 0017_search_excludes_private.sql): exclude private items at the
-    // query itself rather than counting on `_hidePrivateResults`'
-    // cross-check downstream to be the only thing catching this.
     if (!includePrivate) {
       q.where((t) => t.private.equals(false));
     }
@@ -91,10 +67,6 @@ class LocalSearchDataSource {
     ];
   }
 
-  /// [itemIds] -> its tag names, for [_combinedText]. A single `WHERE
-  /// item_id IN (...)` rather than one query per item — the local
-  /// equivalent of `fetchAllItemTagRows`' bulk-fetch-then-map shape on the
-  /// sync side.
   Future<Map<String, List<String>>> _tagsForItems(List<String> itemIds) async {
     if (itemIds.isEmpty) return {};
     final rows = await (_db.select(_db.localTags)..where((t) => t.itemId.isIn(itemIds))).get();
@@ -128,11 +100,7 @@ class LocalSearchDataSource {
       if (index != -1) return _excerpt(field, index, needle.length);
     }
 
-    // No literal substring match — a multi-word query whose terms
-    // landed in different fields (or a different order) than one
-    // contiguous run of characters. TF-IDF still ranked this as a
-    // match, so fall back to an excerpt around the first shared token
-    // instead of showing nothing.
+    // No substring match, but TF-IDF ranked it — fall back to the first shared token.
     for (final field in fields) {
       if (field == null) continue;
       final lower = field.toLowerCase();

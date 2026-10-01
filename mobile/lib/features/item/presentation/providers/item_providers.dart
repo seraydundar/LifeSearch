@@ -33,12 +33,8 @@ final syncQueueDataSourceProvider = Provider<SyncQueueDataSource>((ref) {
 });
 
 final itemRepositoryProvider = Provider<ItemRepository>((ref) {
-  // Establishes the dependency that makes this — and everything built
-  // from it (`itemsProvider`, `allItemsIncludingPrivateProvider`) —
-  // rebuild across an account switch. See `currentUserIdProvider`'s
-  // docstring (Faz 12, see docs/roadmap.md); the value itself isn't
-  // needed here, `OfflineItemRepository` reads the live session on its
-  // own via `RemoteItemDataSource.userId`.
+  // Unused value, but watching it rebuilds this (and everything derived
+  // from it) across an account switch.
   ref.watch(currentUserIdProvider);
   return OfflineItemRepository(
     local: ref.watch(itemLocalDataSourceProvider),
@@ -48,33 +44,21 @@ final itemRepositoryProvider = Provider<ItemRepository>((ref) {
   );
 });
 
-/// Whether private items should currently be shown (Faz 11, madde 2 —
-/// see docs/roadmap.md) — starts `false` every time the app is opened,
-/// same amnesia as `appLockUnlockedProvider`, and flips back to `false`
-/// whenever the app is backgrounded (see `AppLockGate`'s lifecycle
-/// observer) — a private item re-hides itself even if the user never
-/// turned on the whole-app lock. Only a successful `AppLockService.
-/// authenticate()` (see `LibraryScreen`'s reveal button) sets this true.
+/// Starts `false` on every app open and resets to `false` whenever the
+/// app is backgrounded (see `AppLockGate`), so a private item re-hides
+/// itself even without the whole-app lock on.
 final privateItemsRevealedProvider = StateProvider<bool>((ref) => false);
 
-/// The repository's raw item stream, `private` items included — used
-/// only where something needs to know which ids are private
-/// (`SearchController`'s result filtering, via `.future`, so it awaits
-/// the first real emission instead of reading a possibly-still-`loading`
-/// cached value — a plain `.valueOrNull` here raced the very first
-/// search of a session and let a private item's result through) without
-/// ever *displaying* them. Every screen-facing list goes through
-/// [itemsProvider] instead. Not private (no leading `_`) — search_providers.dart
-/// awaits it directly.
+/// Raw item stream including `private` items, for filtering logic only
+/// (e.g. `SearchController`, via `.future` to avoid a stale cached
+/// `.valueOrNull` racing the first search of a session) — never for
+/// display. Screens use [itemsProvider] instead.
 final allItemsIncludingPrivateProvider = StreamProvider<List<Item>>((ref) {
   return ref.watch(itemRepositoryProvider).watchItems();
 });
 
-/// Local-first item list for the signed-in user — reads the Drift cache,
-/// which `SyncService` keeps reconciled with Supabase. Home/Library both
-/// watch this directly and it works fully offline. Hides `private` items
-/// unless [privateItemsRevealedProvider] is true — the one place that
-/// filter has to live for both screens to get it "for free".
+/// Local-first item list for the signed-in user; hides `private` items
+/// unless [privateItemsRevealedProvider] is true.
 final itemsProvider = StreamProvider<List<Item>>((ref) {
   final revealed = ref.watch(privateItemsRevealedProvider);
   return ref.watch(itemRepositoryProvider).watchItems().map(
@@ -82,50 +66,34 @@ final itemsProvider = StreamProvider<List<Item>>((ref) {
       );
 });
 
-
-/// Number of local changes still waiting to reach the server — shown in
-/// Settings (requirements doc, section 49: "Sync"). Scoped to the
-/// signed-in user (`SyncQueueEntries.userId`) — otherwise this would
-/// count every account's pending writes on a shared device, not just
-/// the one currently signed in.
+/// Scoped to the signed-in user so a shared device doesn't count every
+/// account's pending writes.
 final pendingSyncCountProvider = StreamProvider<int>((ref) {
   final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return Stream.value(0);
   return ref.watch(syncQueueDataSourceProvider).watchPendingCount(userId);
 });
 
-/// AI-generated tags for an item (requirements doc, section 8-12) — item
-/// detail/note editor show these; empty while processing hasn't reached
-/// the tagging step yet, or if it produced none.
 final itemTagsProvider = FutureProvider.autoDispose.family<List<String>, String>((ref, itemId) {
   return ref.watch(itemRepositoryProvider).fetchTags(itemId);
 });
 
-/// AI-extracted named entities for an item (requirements doc, section
-/// 44-48) — same lifecycle as `itemTagsProvider`.
 final itemEntitiesProvider =
     FutureProvider.autoDispose.family<List<ExtractedEntity>, String>((ref, itemId) {
   return ref.watch(itemRepositoryProvider).fetchEntities(itemId);
 });
 
-/// Single item by id, local-cache only — used by `ItemByIdLoader` when a
-/// route reaches `/item/:id` (or `/item/:id/note`) without the `Item`
-/// object it normally gets handed via `state.extra` (see that widget's
-/// docstring for when that happens).
+/// Local-cache-only lookup for `ItemByIdLoader`, when a route is reached
+/// without the `Item` already in hand via `state.extra`.
 final itemByIdProvider = FutureProvider.autoDispose.family<Item?, String>((ref, itemId) {
   return ref.watch(itemRepositoryProvider).findById(itemId);
 });
 
-/// Same lookup as [itemByIdProvider], but **live** — re-emits on every
-/// local change instead of a one-shot snapshot (Faz 12, madde 8, denetim
-/// düzeltmesi — see docs/roadmap.md). `ItemDetailScreen` used to load
-/// the full item exactly once in `initState()`; a background sync
-/// pulling in a `pending`→`completed` transition (or a newly-known
-/// `storagePath`) while that screen was already open never showed up —
-/// the user had to leave and come back to see it. Derived from
-/// [allItemsIncludingPrivateProvider] (not [itemsProvider]) since a
-/// private item's own detail screen should keep showing it regardless
-/// of whether private items are currently revealed elsewhere.
+/// Same as [itemByIdProvider] but live — re-emits on every local change
+/// instead of a one-shot snapshot, so `ItemDetailScreen` reflects a
+/// background sync completing while it's open. Derived from
+/// [allItemsIncludingPrivateProvider], not [itemsProvider], so a private
+/// item's own detail screen keeps showing it regardless of reveal state.
 final watchItemByIdProvider = Provider.autoDispose.family<Item?, String>((ref, itemId) {
   final items = ref.watch(allItemsIncludingPrivateProvider).valueOrNull;
   if (items == null) return null;
@@ -188,9 +156,7 @@ class CaptureController extends AsyncNotifier<void> {
     return !state.hasError;
   }
 
-  /// Same contract as [uploadFile], for web's bytes-based picker flow
-  /// (P3, docs/requirements-audit-2026-09-13.md, "Platformlar") — see
-  /// `ItemRepository.uploadFileBytes`'s own docstring.
+  /// Same contract as [uploadFile], for web's bytes-based picker flow.
   Future<bool> uploadFileBytes({
     required Uint8List bytes,
     required String originalFilename,

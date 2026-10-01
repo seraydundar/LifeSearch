@@ -9,11 +9,8 @@ import '../../../settings/domain/storage_usage.dart';
 import '../../domain/analytics.dart';
 import '../providers/analytics_providers.dart';
 
-/// Requirements doc, section 51 — see docs/roadmap.md, Faz 11, madde 3.
-/// Everything here reads from [itemsProvider] (the same local-first
-/// stream Home/Library use, `private` items already excluded unless
-/// revealed) except [analyticsTagOccurrencesProvider], which needs a
-/// connection — tags aren't cached locally.
+/// Everything here reads from [itemsProvider] except
+/// [analyticsTagOccurrencesProvider], which needs a connection.
 class AnalyticsScreen extends ConsumerWidget {
   const AnalyticsScreen({super.key});
 
@@ -50,11 +47,8 @@ class _AnalyticsBody extends ConsumerWidget {
 
     final tagsAsync = ref.watch(analyticsTagOccurrencesProvider);
 
-    // Only known once private items are actually revealed — `items`
-    // above already excludes them, so counting *that* list would
-    // always read zero (Faz 11, madde 2's own hiding doing its job) —
-    // this asks the raw, unfiltered stream instead, but only shown once
-    // the same reveal gate everything else respects has been passed.
+    // `items` already excludes private ones, so count the unfiltered stream instead,
+    // gated on the same reveal flag everything else respects.
     final revealed = ref.watch(privateItemsRevealedProvider);
     final privateStat =
         revealed ? privateCount(ref.watch(allItemsIncludingPrivateProvider).valueOrNull ?? []) : null;
@@ -140,13 +134,6 @@ class _StatTile extends StatelessWidget {
   }
 }
 
-/// One horizontal bar per content type, longest (i.e. most common) first
-/// — magnitude is the job, so a sorted bar list rather than a pie slice
-/// count is the right form. Colored with the same fixed, non-cycled
-/// per-type palette (`itemTypeColor`) Library/Home/search results
-/// already use, with its own icon+label directly beside it — that's the
-/// direct label, no separate legend needed for a single-series-per-row
-/// chart like this.
 class _TypeBar extends StatelessWidget {
   const _TypeBar({required this.type, required this.count, required this.maxCount});
 
@@ -193,10 +180,6 @@ class _TypeBar extends StatelessWidget {
   }
 }
 
-/// A single series over time (item count per month) — one hue, the
-/// app's own brand color, never a rainbow across bars that all mean the
-/// same thing. Each bar is directly labeled with its own count, so no
-/// axis/legend is needed for a chart this small.
 class _MonthlyBars extends StatelessWidget {
   const _MonthlyBars({required this.months, required this.maxCount});
 

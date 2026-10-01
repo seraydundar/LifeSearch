@@ -29,8 +29,7 @@ class ApiCollectionSuggestionRepository implements CollectionSuggestionRepositor
         return CollectionSuggestion(suggestedName: map['suggested_name'] as String, items: items);
       }).toList();
     } on DioException {
-      // Quietly degrade rather than surface an error — Library works
-      // fine without suggestions, so there's nothing actionable to show.
+      // Degrade quietly — suggestions are optional, nothing actionable to show.
       return const [];
     }
   }

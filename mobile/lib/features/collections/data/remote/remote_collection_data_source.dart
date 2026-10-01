@@ -4,13 +4,8 @@ import '../../../../core/error/failure.dart';
 import '../../../../core/network/paginated_fetch.dart';
 import '../../domain/entities/collection.dart';
 
-/// Talks to Supabase directly. Like `RemoteItemDataSource`, every write
-/// takes an explicit `id`/pair supplied by the caller rather than letting
-/// Postgres generate one — that's what makes replaying a queued sync
-/// operation idempotent.
-///
-/// Nothing outside `features/collections/data` should import this
-/// directly — screens/controllers depend on `CollectionRepository`.
+/// Writes take an explicit `id` from the caller instead of letting Postgres
+/// generate one, so a replayed queued sync op stays idempotent.
 class RemoteCollectionDataSource {
   RemoteCollectionDataSource(this._client);
 
@@ -29,11 +24,6 @@ class RemoteCollectionDataSource {
         createdAt: DateTime.parse(row['created_at'] as String),
       );
 
-  /// One-shot snapshot of every collection the user has — used by
-  /// `SyncService` to reconcile the local cache, not by the UI directly.
-  ///
-  /// Paginated — same reasoning as `RemoteItemDataSource.fetchAllRows()`
-  /// (Faz 12, madde 9, denetim düzeltmesi, see docs/roadmap.md).
   Future<List<Map<String, dynamic>>> fetchAllRows() {
     return fetchAllPages((from, to) {
       return _client
@@ -46,14 +36,7 @@ class RemoteCollectionDataSource {
     });
   }
 
-  /// Every (collection_id, item_id) membership row across the given
-  /// collections — `collection_items` carries no `user_id` of its own, so
-  /// the caller passes the ids `fetchAllRows()` just returned rather than
-  /// this filtering by user itself.
-  ///
-  /// Paginated, same as `fetchAllRows()` above — a user with many
-  /// collections each holding many items could plausibly have more
-  /// membership rows than items themselves.
+  /// `collection_items` has no `user_id`, so the caller must pass ids from `fetchAllRows()`.
   Future<List<Map<String, dynamic>>> fetchAllItemRows(List<String> collectionIds) async {
     if (collectionIds.isEmpty) return const [];
     return fetchAllPages((from, to) {

@@ -8,14 +8,9 @@ import '../../../../core/network/paginated_fetch.dart';
 import '../../domain/entities/extracted_entity.dart';
 import '../../domain/entities/item.dart';
 
-/// Talks to Supabase directly. Every write takes an explicit `id` supplied
-/// by the caller (`OfflineItemRepository`) rather than generating its own —
-/// that's what makes replaying a queued sync operation idempotent: pushing
-/// the same `id` twice upserts instead of duplicating (requirements doc,
-/// rules 16-17).
-///
-/// Nothing outside `features/item/data` should import this directly —
-/// screens/controllers depend on `ItemRepository`.
+/// Talks to Supabase directly. Writes take a caller-supplied `id` so
+/// replaying a queued sync op upserts instead of duplicating. Import only
+/// within `features/item/data` — screens/controllers use `ItemRepository`.
 class RemoteItemDataSource {
   RemoteItemDataSource(this._client);
 
@@ -52,28 +47,13 @@ class RemoteItemDataSource {
         private: row['private'] as bool? ?? false,
       );
 
-  /// Every item the user has, or — with [since] — only those changed
-  /// since that instant (P3, docs/requirements-audit-2026-09-13.md,
-  /// "Ölçek/ölçüm"): `SyncService` uses the unfiltered form for a
-  /// device's very first sync of this account and the filtered form for
-  /// every one after, against `items.updated_at` (auto-maintained by the
-  /// `set_updated_at` trigger — infra/supabase/migrations/0001_init.sql
-  /// — since Faz 1, unused for this until now). Not by the UI directly.
-  ///
-  /// Paginated (Faz 12, madde 9, denetim düzeltmesi — see
-  /// docs/roadmap.md): a plain `.select()` with no `.range()` silently
-  /// truncates past PostgREST's configured row cap instead of erroring.
-  /// `SyncService` treats "not in this response" as "deleted on the
-  /// server" — for an archive larger than one page, everything past the
-  /// cap used to look deleted and get wiped from the local cache on the
-  /// very next sync. `.order('id')` as a tiebreaker after `created_at`
-  /// keeps paging deterministic even when many rows share the exact same
-  /// timestamp (e.g. a bulk import) — without it, a tied ordering could
-  /// vary between page requests and skip or repeat rows across pages.
-  ///
-  /// [since]-filtered results alone can't tell "unchanged" apart from
-  /// "deleted on the server" — see [fetchAllIds], which `SyncService`
-  /// calls separately to tell those apart on an incremental sync.
+  /// Every item, or only those changed since [since] (`updated_at`).
+  /// Paginated: an unranged `.select()` silently truncates past
+  /// PostgREST's row cap, which `SyncService` would otherwise mistake for
+  /// server-side deletions. `.order('id')` breaks ties after
+  /// `created_at` so paging stays deterministic for same-timestamp rows.
+  /// [since]-filtered results can't distinguish "unchanged" from
+  /// "deleted" — see [fetchAllIds] for that.
   Future<List<Map<String, dynamic>>> fetchAllRows({DateTime? since}) {
     return fetchAllPages((from, to) {
       final query = _client.from('items').select().eq('user_id', userId);
@@ -83,12 +63,8 @@ class RemoteItemDataSource {
     });
   }
 
-  /// Every item id the user currently has on the server — nothing else.
-  /// `SyncService`'s only use for this: telling a server-side deletion
-  /// apart from "just didn't change" during an incremental
-  /// (`fetchAllRows(since: ...)`) sync, where the changed-rows list
-  /// alone can't make that distinction. Much cheaper than a full
-  /// [fetchAllRows] — one column, no content/tags to join.
+  /// Id-only, for `SyncService` to detect server-side deletions during an
+  /// incremental sync — cheaper than a full [fetchAllRows].
   Future<Set<String>> fetchAllIds() async {
     final rows = await fetchAllPages((from, to) {
       return _client.from('items').select('id').eq('user_id', userId).order('id').range(from, to);
@@ -96,12 +72,7 @@ class RemoteItemDataSource {
     return {for (final row in rows) row['id'] as String};
   }
 
-  /// A single row by id, or `null` if it doesn't exist (or isn't this
-  /// user's — RLS scopes this the same as [fetchAllRows]) — used by
-  /// `OfflineItemRepository.findById()`'s remote fallback (P2-09,
-  /// docs/requirements-audit-2026-09-13.md) for an item this device
-  /// hasn't synced yet (a search/RAG/related-item result, or a deep
-  /// link, for something created on another device).
+  /// `null` if the row doesn't exist or isn't this user's (RLS-scoped).
   Future<Item?> fetchById(String itemId) async {
     final rows = await _client.from('items').select().eq('id', itemId).eq('user_id', userId);
     return rows.isEmpty ? null : rowToItem(rows.first);
@@ -116,38 +87,21 @@ class RemoteItemDataSource {
     return (row?['raw_text'] as String?) ?? '';
   }
 
-  /// Joins through `item_tags` to `tags` — nested select syntax, RLS
-  /// applies to both tables so this only ever returns the caller's own.
   Future<List<String>> fetchTags(String itemId) async {
     final rows = await _client.from('item_tags').select('tags(name)').eq('item_id', itemId);
     return rows.map((row) => (row['tags'] as Map<String, dynamic>)['name'] as String).toList();
   }
 
-  /// Every tag *occurrence* across the signed-in user's whole archive —
-  /// one entry per (item, tag) association, not deduplicated (Analytics'
-  /// "most common tags" counts the duplicates, see
-  /// `analytics.dart`'s `topTags`). Same join shape as `fetchTags`, just
-  /// without the `item_id` filter — RLS (see `item_tags_owner` in
-  /// infra/supabase/migrations/0001_init.sql) already scopes this to the
-  /// caller's own rows on its own.
+  /// One entry per (item, tag) association, not deduplicated — analytics'
+  /// "most common tags" needs the duplicate counts.
   Future<List<String>> fetchAllTagNames() async {
     final rows = await _client.from('item_tags').select('tags(name)');
     return rows.map((row) => (row['tags'] as Map<String, dynamic>)['name'] as String).toList();
   }
 
-  /// Every (item id, tag name) pair across the caller's whole archive, for
-  /// `SyncService` to cache offline (P2-07, docs/requirements-audit-2026-09-13.md)
-  /// — same join shape as `fetchTags`, minus the `item_id` filter, and
-  /// paginated like `fetchAllRows` for the same reason (a plain `.select()`
-  /// silently truncates past PostgREST's row cap).
-  ///
-  /// [itemIds] (P3, "Ölçek/ölçüm"): on an incremental sync there's
-  /// nothing to refresh for an item that didn't change, so `SyncService`
-  /// scopes this to just the changed ids instead of the whole archive.
-  /// Left `null` (the whole archive, unfiltered) on a device's first
-  /// sync — `itemIds` could be every id the account has there, and a
-  /// `.inFilter` with that many values risks the request URL itself
-  /// getting too large.
+  /// For `SyncService`'s offline cache, paginated like [fetchAllRows].
+  /// [itemIds] narrows to an incremental sync's changed ids; left `null`
+  /// on a first sync, since filtering by every id risks an oversized URL.
   Future<List<Map<String, dynamic>>> fetchAllItemTagRows({List<String>? itemIds}) {
     return fetchAllPages((from, to) {
       final query = _client.from('item_tags').select('item_id, tags(name)');
@@ -156,12 +110,6 @@ class RemoteItemDataSource {
     });
   }
 
-  /// `item_id` -> `item_contents.raw_text` for the caller's whole archive
-  /// (P2-07) — the OCR/PDF/transcript/webpage text `LocalSearchDataSource`
-  /// couldn't search offline before this existed. `item_id` is unique per
-  /// row (infra/supabase/migrations/0012_item_contents_unique.sql), so
-  /// ordering by it alone is already deterministic for pagination.
-  ///
   /// [itemIds]: same incremental-sync scoping as [fetchAllItemTagRows].
   Future<List<Map<String, dynamic>>> fetchAllItemContentRows({List<String>? itemIds}) {
     return fetchAllPages((from, to) {
@@ -171,7 +119,6 @@ class RemoteItemDataSource {
     });
   }
 
-  /// Same join-through-the-junction-table shape as `fetchTags`.
   Future<List<ExtractedEntity>> fetchEntities(String itemId) async {
     final rows =
         await _client.from('item_entities').select('entities(name, type)').eq('item_id', itemId);
@@ -195,7 +142,6 @@ class RemoteItemDataSource {
         'user_id': userId,
         'type': ItemType.note.dbValue,
         'title': title,
-        // Chunked/embedded by the backend (Phase 4), same as PDFs.
         'processing_status': 'pending',
       });
       try {
@@ -204,9 +150,7 @@ class RemoteItemDataSource {
           onConflict: 'item_id',
         );
       } catch (_) {
-        // Compensate: don't leave a note item with no content behind. Only
-        // safe because `id` is caller-owned — retrying the whole op later
-        // just recreates both rows from scratch.
+        // Roll back rather than leave a note with no content.
         await _client.from('items').delete().eq('id', id);
         rethrow;
       }
@@ -236,14 +180,8 @@ class RemoteItemDataSource {
     required ItemType type,
     int? fileSizeBytes,
   }) async {
-    // Pinned once — not re-read after the storage upload's `await` below
-    // (P1-03, docs/requirements-audit-2026-09-13.md): the storage path
-    // and the item row's `user_id` must agree even if the live session
-    // actually changes mid-upload, otherwise the file ends up stored
-    // under one account while the row that points at it claims another.
-    // If the session really did change, RLS's `auth.uid() = user_id`
-    // rejects the upsert below outright — a clean failure (caught same
-    // as any other) instead of a silent cross-account write.
+    // Pinned once so storage path and row's user_id agree even if the
+    // session changes mid-upload; RLS rejects the upsert otherwise.
     final ownerId = userId;
     final storagePath = '$ownerId/$id/$originalFilename';
 
@@ -267,7 +205,6 @@ class RemoteItemDataSource {
         'mime_type': mimeType,
         'storage_path': storagePath,
         'file_size_bytes': fileSizeBytes,
-        // No worker consumes this yet — Phase 4 wires OCR/chunking/embedding.
         'processing_status': 'pending',
       });
     } catch (e) {
@@ -276,20 +213,10 @@ class RemoteItemDataSource {
     }
   }
 
-  /// Same two-step contract as [uploadFile] (storage upload, then the
-  /// `items` row — rolling the file back if that second step fails), for
-  /// a caller that only has the file's bytes in memory, not a real
-  /// filesystem path (P3, docs/requirements-audit-2026-09-13.md,
-  /// "Platformlar" — `file_picker` on web gives `PlatformFile.bytes`,
-  /// never a usable `.path`). `uploadBinary` is `storage_client`'s own
-  /// web-safe equivalent of [uploadFile]'s `.upload(path, File(...))`.
-  ///
-  /// No offline-queue counterpart the way [uploadFile] has one (see
-  /// `SyncService`'s `upload_file` op replay): there's no persistent
-  /// local file these bytes could be re-read from after an app restart
-  /// on web, so this is called directly, immediately — a failure here is
-  /// surfaced to the caller right away rather than queued for a later
-  /// retry.
+  /// Same two-step contract as [uploadFile], for callers with only bytes
+  /// in memory (e.g. `file_picker` on web). Not queued for offline retry —
+  /// there's no persistent local file to re-read after a web restart, so
+  /// failures surface to the caller immediately.
   Future<void> uploadFileBytes({
     required String id,
     required Uint8List bytes,

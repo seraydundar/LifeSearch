@@ -2,10 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../../../core/error/failure.dart';
 
-/// Calls the backend's `DELETE /account/` (requirements doc, section
-/// 49-52) — the only Settings action that goes through the backend
-/// rather than straight to Supabase, since deleting the `auth.users` row
-/// needs the service_role key, which only the backend ever holds.
+/// The only Settings action routed through the backend, not straight to Supabase — deleting `auth.users` needs the service_role key.
 class AccountService {
   AccountService(this._dio);
 

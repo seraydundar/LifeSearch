@@ -14,43 +14,20 @@ import '../database/app_database.dart';
 import '../error/failure.dart';
 import 'sync_cursor_storage.dart';
 
-/// Upload item types the backend's AI pipeline actually supports for the
-/// `upload_file` op — see backend/app/services/processing_pipeline.py
-/// SUPPORTED_TYPES. `create_url` items are triggered unconditionally
-/// instead (see `_shouldTriggerAi`), since a link has no upload step.
-///
-/// Public (not `_`-prefixed): `OfflineItemRepository.uploadFileBytes`
-/// (P3, docs/requirements-audit-2026-09-13.md, "Platformlar") needs the
-/// exact same check for its own, queue-bypassing upload path — one
-/// source of truth instead of a second, driftable copy.
+/// Upload types the backend's AI pipeline supports for `upload_file`; also used by
+/// `OfflineItemRepository.uploadFileBytes`'s queue-bypassing upload path, as one source of truth.
 const aiSupportedUploadTypes = {'pdf', 'image', 'screenshot', 'audio', 'document'};
 
-/// Sync-queue operation types that target a collection itself (as opposed
-/// to an item, or a collection's membership). Kept as a Set rather than a
-/// per-case check so `_flushQueue`'s post-switch bookkeeping only needs one
-/// membership test to know which local data source (and which id) a given
-/// queue entry's `itemId` column actually refers to.
+/// Sync-queue ops that target a collection itself (vs. an item or a membership row).
 const _collectionOps = {'create_collection', 'rename_collection', 'delete_collection'};
 
-/// Operation types for a (collectionId, itemId) membership row — for
-/// these, the queue's `itemId` column holds the *collection* id, and the
-/// actual item id lives in the payload (see `OfflineCollectionRepository`).
+/// Membership ops where the queue's `itemId` column actually holds the *collection* id,
+/// and the real item id lives in the payload.
 const _membershipOps = {'add_to_collection', 'remove_from_collection'};
 
-/// Bridges the local cache and Supabase in both directions, for both items
-/// and collections (they share one `sync_queue` table — see
-/// `SyncQueueEntries` — so one coordinator has to own draining it; two
-/// independent services would race and silently drop each other's
-/// entries, since an unrecognized `operationType` is dropped rather than
-/// retried):
-///  - pulls the server's current state into the local cache (skipping
-///    anything that has a not-yet-synced local edit, so it doesn't get
-///    clobbered)
-///  - pushes queued local writes to Supabase, oldest first
-///
-/// Framework-agnostic on purpose (no Riverpod `Ref` here) so it's easy to
-/// unit-test with fakes; the Riverpod provider wires it up to connectivity
-/// and auth-state changes.
+/// Bridges the local cache and Supabase for both items and collections (one shared `sync_queue`
+/// table needs one coordinator, or two services would race). Framework-agnostic (no Riverpod `Ref`)
+/// for easy unit testing; the Riverpod provider wires it to connectivity/auth-state changes.
 class SyncService {
   SyncService({
     required ItemLocalDataSource local,
@@ -87,14 +64,11 @@ class SyncService {
   bool _syncAgain = false;
   Timer? _pollTimer;
   int _pollAttemptsLeft;
-  // Which items were pending/processing as of the last poll check — Faz
-  // 12, madde 6 (see docs/roadmap.md): lets `_scheduleNextPollIfNeeded`
-  // tell "the same stuck job" apart from "a brand new one", see there.
+  // Items pending/processing as of the last poll; lets _scheduleNextPollIfNeeded tell a
+  // still-stuck job apart from a newly-appeared one.
   Set<String> _pollingItemIds = {};
 
-  /// Fire-and-forget: call after any local mutation or connectivity/auth
-  /// change. Coalesces overlapping calls into a single extra run instead of
-  /// running concurrently.
+  /// Fire-and-forget; coalesces overlapping calls into one extra run instead of running concurrently.
   void syncSoon() {
     if (_isSyncing) {
       _syncAgain = true;
@@ -118,8 +92,7 @@ class SyncService {
       await _flushQueue(userId);
       await _scheduleNextPollIfNeeded(userId);
     } catch (_) {
-      // Best-effort: a network blip here shouldn't crash the app. The next
-      // connectivity change or mutation calls syncSoon() again.
+      // Best-effort: a network blip shouldn't crash the app; syncSoon() gets called again later.
     } finally {
       _isSyncing = false;
       if (_syncAgain) {
@@ -129,35 +102,10 @@ class SyncService {
     }
   }
 
-  /// The only way `processing`/`completed`/`failed` reaches this device
-  /// today — there's no Supabase Realtime channel for it. Rather than
-  /// leaving an item's status stale until the user backgrounds the app,
-  /// edits something, or the network bounces (whichever of `syncSoon()`'s
-  /// other callers happens to fire next), this keeps re-pulling every
-  /// `_pollInterval` for as long as *this account* has something still
-  /// `pending`/`processing` — and stops the moment it doesn't, so a quiet
-  /// library never polls.
-  ///
-  /// Capped at `_maxPollAttempts` (default 12, i.e. ~1 minute at the
-  /// default interval): plenty for how long AI processing actually takes
-  /// in practice (seconds for a note/URL, tens of seconds for a PDF/image/
-  /// audio file). A job that's still not done after that either finishes
-  /// quietly and shows up next time something else triggers a sync, or is
-  /// one `syncNow()` will never resolve on its own anyway (an orphaned job
-  /// from a backend restart — see `job_recovery.py` on the backend side) —
-  /// polling it forever wouldn't help either case, only drain battery.
-  ///
-  /// That budget is **per pending stretch, not per `SyncService`
-  /// lifetime** (Faz 12, madde 6, denetim düzeltmesi — see
-  /// docs/roadmap.md): checking `_pollAttemptsLeft <= 0` before ever
-  /// looking at whether anything is still pending used to mean that once
-  /// one job exhausted the budget, this stopped polling *forever* for
-  /// this `SyncService` instance — including a completely different item
-  /// uploaded long afterward. Tracking which ids are actually pending
-  /// (not just whether *something* is) fixes that: a newly-appeared id
-  /// resets the budget, so a fresh job always gets its own fair ~1
-  /// minute, even if an old, permanently-stuck one is still lingering
-  /// alongside it and would otherwise have used it all up.
+  /// Polls while this account has anything pending/processing (no Realtime channel for status;
+  /// stops once idle). Budget is per pending-stretch, not per-instance: tracking which ids are
+  /// pending (not just whether any are) resets `_pollAttemptsLeft` when a new id appears, so one
+  /// permanently-stuck job can't exhaust the budget for every job after it.
   Future<void> _scheduleNextPollIfNeeded(String userId) async {
     _pollTimer?.cancel();
     _pollTimer = null;
@@ -178,9 +126,7 @@ class SyncService {
     _pollTimer = Timer(_pollInterval, syncSoon);
   }
 
-  /// Cancels any pending poll — call when whatever owns this
-  /// `SyncService` is itself being torn down (see `syncServiceProvider`),
-  /// so a stray `Timer` never outlives it.
+  /// Cancels any pending poll; call when whatever owns this `SyncService` is torn down.
   void dispose() {
     _pollTimer?.cancel();
     _pollTimer = null;
@@ -195,47 +141,22 @@ class SyncService {
   }
 
   Future<void> _pullRemote(String userId) async {
-    // P3 (docs/requirements-audit-2026-09-13.md, "Ölçek/ölçüm"): `since`
-    // is `null` the very first time this account syncs on this device —
-    // every call after that only asks the server for what actually
-    // changed, instead of re-downloading the whole archive every time.
+    // `since` is null only on this account's first sync on this device; after that, incremental.
     final since = await _syncCursor.read(userId);
     final rows = await _remote.fetchAllRows(since: since);
     final pendingIds = (await _queue.pendingEntries(userId)).map((e) => e.itemId).toSet();
 
     final changedIds = <String>{for (final row in rows) row['id'] as String};
-    // An incremental `rows` is only the *changed* ones — it can't tell
-    // "unchanged" apart from "deleted on the server" on its own, so
-    // deletion detection below needs the full id set from a separate,
-    // much cheaper request. A first-ever sync's `rows` already IS the
-    // full set (see `fetchAllRows`'s own docstring).
+    // Incremental `rows` are only the changed ones, so deletion detection needs the full id set
+    // from a separate request; a first sync's `rows` already IS the full set.
     final remoteIds = since == null ? changedIds : await _remote.fetchAllIds();
 
     // A local edit is still queued for these — don't overwrite them.
     final rowsToUpsert = rows.where((row) => !pendingIds.contains(row['id'] as String)).toList();
 
-    // P2-07 (docs/requirements-audit-2026-09-13.md): item_contents.raw_text
-    // (OCR/PDF/transcript/webpage text) synced into LocalItems alongside
-    // everything else, so LocalSearchDataSource can search it offline. One
-    // bulk fetch (like fetchAllRows itself) rather than per-row, and keyed
-    // by item_id since it's a separate table from items.
-    //
-    // P3: a note's body *is* its item_contents.raw_text (see
-    // RemoteItemDataSource.createNote/.updateNote — a note's `content` is
-    // written straight into that column, no transformation), so this same
-    // bulk fetch also covers `noteContent` below. A separate
-    // `fetchNoteContent` call per note used to run here too — concurrently,
-    // not sequentially, but still one extra request per note on every
-    // sync — duplicating data this bulk fetch already had.
-    // `RemoteItemDataSource.fetchNoteContent` itself is unchanged and still
-    // used for the one thing it's actually needed for: opening a single
-    // note in the editor on demand (see
-    // `OfflineItemRepository.fetchNoteContent`'s cold-start fallback).
-    //
-    // Scoped to just `rowsToUpsert`'s ids on an incremental sync — the
-    // upsert loop below never looks at any other item's content, so
-    // there's nothing to gain by fetching it. `null` (the whole archive)
-    // on a first sync, same as always.
+    // item_contents.raw_text fetched in one bulk request (keyed by item_id) and reused for both
+    // extractedText and noteContent (a note's content IS its raw_text) rather than a separate
+    // per-note fetch; scoped to rowsToUpsert's ids on an incremental sync.
     final contentScope =
         since == null ? null : rowsToUpsert.map((row) => row['id'] as String).toList();
     Map<String, String?> extractedTextByItemId;
@@ -280,23 +201,14 @@ class SyncService {
       ));
     }
 
-    // Drop local rows that no longer exist on the server (deleted from
-    // another device) — but never a row still waiting to be *created*.
+    // Drop local rows no longer on the server (deleted elsewhere) — never a row still queued to be created.
     final localIds = await _local.allIds(userId);
     final staleIds = localIds.where((id) => !remoteIds.contains(id) && !pendingIds.contains(id));
     if (staleIds.isNotEmpty) await _local.deleteMany(staleIds.toList());
 
-    // P2-07: tags synced the same way, into their own table (LocalTags)
-    // since an item can have several. See LocalTags/ItemLocalDataSource
-    // .replaceTags's docstrings for why this is a wholesale replace rather
-    // than a pending-aware merge — tags have no local-edit state to protect.
-    //
-    // P3: `replaceTags`'s first argument is also its *delete* scope — on
-    // an incremental sync, `tagRows` was only ever fetched for
-    // `changedIds`, so the delete scope must be exactly `changedIds` too,
-    // not the full `localIds`. Passing `localIds` here while `tagRows`
-    // only covers the changed subset would wipe every *unchanged* local
-    // item's tags with nothing fetched to reinsert them.
+    // replaceTags's first arg is also its delete scope, so it must match tagRows' fetch scope
+    // exactly (changedIds on incremental) — passing the full localIds here would wipe unchanged
+    // items' tags with nothing fetched to reinsert them.
     final tagDeleteScope = since == null ? localIds : changedIds.toList();
     if (tagDeleteScope.isNotEmpty) {
       final tagRows = await _remote.fetchAllItemTagRows(
@@ -311,12 +223,8 @@ class SyncService {
       ]);
     }
 
-    // P3: the new cursor is the latest `updated_at` actually *seen* among
-    // this sync's changed rows — not `DateTime.now()`. This device's
-    // clock and the server's aren't guaranteed to agree, and the next
-    // sync compares against a server-side column, so the cursor needs to
-    // be a server-side timestamp too. Nothing to advance past if nothing
-    // changed this time.
+    // Cursor is the latest updated_at actually seen, not DateTime.now() — the next sync compares
+    // against a server-side column, so this device's clock can't be the source of truth.
     if (rows.isNotEmpty) {
       final latestUpdatedAt = rows
           .map((row) => DateTime.parse(row['updated_at'] as String))
@@ -356,8 +264,7 @@ class SyncService {
         localIds.where((id) => !remoteIds.contains(id) && !pendingCollectionIds.contains(id));
     if (staleIds.isNotEmpty) await _localCollections.deleteMany(staleIds.toList());
 
-    // Membership rows — reconciled the same way, keyed on the pair rather
-    // than a single id.
+    // Membership rows reconciled the same way, keyed on the pair rather than a single id.
     final itemRows = await _remoteCollections.fetchAllItemRows(remoteIds.toList());
     final remoteMemberships = <(String, String)>{};
     for (final row in itemRows) {
@@ -382,31 +289,10 @@ class SyncService {
 
   Future<void> _flushQueue(String userId) async {
     for (final entry in await _queue.pendingEntries(userId)) {
-      // Faz 12, madde 2 (denetim düzeltmesi — see docs/roadmap.md): every
-      // `_remote`/`_remoteCollections` write below reads the *live*
-      // Supabase session at call time (see `RemoteItemDataSource.userId`),
-      // not the `userId` this `syncNow()` run was scoped to — without
-      // this check, a user signing out of A and into a different account
-      // B while this loop is still draining A's queue would have A's
-      // remaining writes go out under B's live session (both the row's
-      // `user_id` field *and* the auth token would silently be B's,
-      // since both come from the same racy live read — RLS's `auth.uid()
-      // = user_id` check doesn't catch this, since the two sides are
-      // consistent with *each other*, just not with the account this
-      // entry was actually queued for). Stopping here — rather than
-      // continuing, or marking every remaining entry "failed" — leaves
-      // the rest of A's queue exactly as it was; `pendingEntries(userId)`
-      // already scopes it to A, so it resumes correctly next time A
-      // signs back in.
-      //
-      // **Residual gap, deliberately not closed here** (same spirit as
-      // `url_service.py`'s documented DNS-rebinding gap): this only
-      // protects between entries, not mid-flight *inside* a single
-      // already-dispatched request — closing that fully would need
-      // pinning the exact access token this request should use rather
-      // than trusting "whichever session happens to be current when the
-      // request actually lands", which is a materially larger change to
-      // how `RemoteItemDataSource` authenticates than this fix makes.
+      // Each write below reads the live Supabase session, not the userId this run was scoped to —
+      // stop here if the account switched mid-flush, so A's remaining writes don't go out under B's
+      // session. Doesn't protect a request already in flight (same residual-gap tradeoff as
+      // url_service.py's documented DNS-rebinding gap).
       if (_currentUserIdOrNull() != userId) return;
       try {
         final payload = jsonDecode(entry.payload) as Map<String, dynamic>;
@@ -469,18 +355,13 @@ class SyncService {
               itemId: payload['itemId'] as String,
             );
           case 'trigger_ai':
-            // Queued by `_triggerAi()` below (or `ItemRepository.retryProcessing()`)
-            // when an earlier attempt couldn't reach the backend. Throwing
-            // on failure — rather than swallowing again — lets this fall
-            // into the same catch block as every other op, so it's kept
-            // queued and retried with the usual `retryCount`/`lastError`
-            // bookkeeping instead of silently disappearing a second time.
+            // Throw on failure so this falls into the same catch block as every other op,
+            // and gets retried via the usual retryCount/lastError bookkeeping.
             if (!await _aiTrigger.triggerProcessing(entry.itemId)) {
               throw Exception('AI trigger did not reach the backend');
             }
           default:
-            // Unknown op from a future app version — drop it rather than
-            // retry forever.
+            // Unknown op from a future app version — drop rather than retry forever.
             break;
         }
         await _queue.remove(entry.id);
@@ -491,8 +372,7 @@ class SyncService {
       } catch (e) {
         await _queue.recordFailure(entry.id, e.toString());
         await _markFailed(entry.operationType, entry.itemId);
-        // Keep processing the rest of the queue — one bad entry shouldn't
-        // block every other pending change.
+        // Keep going — one bad entry shouldn't block the rest of the queue.
       }
     }
   }
@@ -507,8 +387,7 @@ class SyncService {
       if (operationType == 'add_to_collection') {
         await _localCollections.markMembershipSynced(queuedId, payload['itemId'] as String);
       }
-      // 'remove_from_collection': the local row is already gone — nothing
-      // left to mark.
+      // 'remove_from_collection': the local row is already gone.
       return;
     }
     if (_collectionOps.contains(operationType)) {
@@ -523,10 +402,7 @@ class SyncService {
   }
 
   Future<void> _markFailed(String operationType, String queuedId) async {
-    // Neither case has a local item/collection row to flag: `trigger_ai`
-    // retries a side-effect on an item that already synced fine — marking
-    // *it* as sync-failed would be wrong (its own data reached the server;
-    // only the AI kickoff didn't).
+    // trigger_ai retries a side-effect on an item that already synced fine; marking it sync-failed would be wrong.
     if (operationType == 'trigger_ai') return;
     if (_membershipOps.contains(operationType)) return; // nothing local to flag as failed
     if (_collectionOps.contains(operationType)) {
@@ -536,20 +412,11 @@ class SyncService {
     await _local.markFailed(queuedId);
   }
 
-  /// Public wrapper for [_triggerAi] — `OfflineItemRepository.uploadFileBytes`
-  /// (P3, docs/requirements-audit-2026-09-13.md, "Platformlar") calls
-  /// this directly for a web upload, which bypasses `sync_queue`
-  /// entirely (no persistent local file to replay from later, unlike a
-  /// native `upload_file` entry) and so never reaches `_flushQueue`'s own
-  /// call to it — this is the only way that upload's AI kickoff ever
-  /// gets triggered at all.
+  /// Public wrapper for [_triggerAi]: used by `OfflineItemRepository.uploadFileBytes`'s web upload
+  /// path, which bypasses `sync_queue` entirely and so never reaches `_flushQueue`'s own call to it.
   Future<void> triggerAiNow(String userId, String itemId) => _triggerAi(userId, itemId);
 
-  /// Best-effort but not silent: if the backend can't be reached right now,
-  /// queues a `trigger_ai` retry — persisted in `sync_queue` (survives an
-  /// app restart) and drained by every future `_flushQueue()` call, unlike
-  /// the old fire-and-forget version, which just lost the attempt and left
-  /// the item stuck in `pending` with no record anything had gone wrong.
+  /// If the backend can't be reached, queues a persisted `trigger_ai` retry rather than losing the attempt.
   Future<void> _triggerAi(String userId, String itemId) async {
     final triggered = await _aiTrigger.triggerProcessing(itemId);
     if (!triggered) {

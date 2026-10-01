@@ -1,11 +1,5 @@
-"""Talks to Supabase (PostgREST + Storage) over HTTPS, scoped to a single
-user's access token — the same one their Flutter app got from Supabase
-Auth. Row Level Security, not this class, is what actually keeps one
-user's data out of another's queries (requirements doc, rule 14); this
-class just forwards the right `Authorization` header on every request.
-
-No service_role key involved. See core/security.py for where the token
-comes from.
+"""Talks to Supabase (PostgREST + Storage) scoped to a single user's access token.
+RLS, not this class, keeps one user's data out of another's queries.
 """
 
 from datetime import UTC, datetime
@@ -16,10 +10,7 @@ import httpx
 from ..core.config import get_settings
 
 _BUCKET = "item-files"
-# Mirrors entities.type's check constraint in
-# infra/supabase/migrations/0011_entities.sql — kept here too (rather than
-# imported from the services layer, which repositories don't depend on)
-# so a bad type never reaches Postgres and is silently dropped instead.
+# Mirrors entities.type's DB check constraint, so a bad type is dropped here, not sent to Postgres.
 _VALID_ENTITY_TYPES = {"person", "place", "organization", "date"}
 
 
@@ -35,22 +26,12 @@ class SupabaseRestRepository:
             "apikey": settings.supabase_anon_key,
             "Authorization": f"Bearer {access_token}",
         }
-        # One shared client for this repository's lifetime instead of a
-        # fresh TCP+TLS handshake per method call. `process_item()` alone
-        # makes 15-20 calls against a single item (get_item, download_file,
-        # replace_item_content, replace_chunks, attach_tags,
-        # attach_entities, job/status updates, ...) — those used to each
-        # open and close their own connection. `headers` set here apply to
-        # every request by default; a call site only needs to pass what
-        # differs (Content-Type, Prefer) — httpx merges per-request headers
-        # on top of the client's, it doesn't replace them.
+        # One shared client (not per-call) to avoid a fresh TCP+TLS handshake each time;
+        # per-request headers merge on top of these, they don't replace them.
         self._client = httpx.AsyncClient(headers=self._headers, timeout=15.0)
 
     async def aclose(self) -> None:
-        """Call once this repository is done being used — see
-        `processing_pipeline.process_item()`'s `finally` block, its only
-        caller today. Safe to await even if nothing was ever requested.
-        """
+        """Call once done with this repository. Safe to await even if nothing was requested."""
         await self._client.aclose()
 
     async def get_item(self, item_id: str) -> dict[str, Any]:
@@ -82,29 +63,8 @@ class SupabaseRestRepository:
         return response.content
 
     async def replace_chunks(self, item_id: str, job_id: str, chunks: list[dict[str, Any]]) -> None:
-        """Idempotent by design (requirements doc, rule 17) — and, since
-        Faz 12 madde 7 (denetim düzeltmesi, see docs/roadmap.md), safe
-        against two concurrent reprocessing runs for the same item (e.g.
-        the user hits "Tekrar Dene" while an earlier attempt is still in
-        flight) in a way the previous version wasn't quite:
-
-        `chunks_item_id_chunk_index_key` (see
-        infra/supabase/migrations/0013_chunks_unique.sql) turned this from
-        an independent DELETE+INSERT into an UPSERT — that stopped two
-        racing runs from *duplicating* chunks, but as two separate HTTP
-        requests (an UPSERT, then a DELETE trimming indices past the new
-        count), an *older*, slower run's delayed DELETE could still land
-        after a *newer* run had already finished, wiping out chunks the
-        newer run had just written (its own trim only knows its own,
-        smaller chunk count from *before* the newer run added more).
-
-        `replace_chunks_for_job()` (infra/supabase/migrations/
-        0015_replace_chunks_atomic.sql) closes that: one atomic RPC call
-        that upserts *and* trims within a single transaction, serialized
-        per item via an advisory lock, and a no-op if `job_id` is no
-        longer the most recent `processing_jobs` row for this item — a
-        stale call from an older job can't clobber a newer one's output
-        no matter how the two races interleave.
+        """Atomic upsert+trim RPC, job-gated: a no-op if `job_id` isn't the item's
+        most recent job, so a stale/delayed run can't clobber a newer run's chunks.
         """
         response = await self._client.post(
             f"{self._base_url}/rest/v1/rpc/replace_chunks_for_job",
@@ -125,18 +85,8 @@ class SupabaseRestRepository:
         longitude: float | None = None,
         captured_at: datetime | None = None,
     ) -> None:
-        """AI-generated title/description for an image (requirements doc,
-        section 14's Dell-monitor example) — only overwrites the fields
-        that are actually given. `latitude`/`longitude`/`captured_at`
-        come from EXIF instead (section 8-12), not the AI provider —
-        see `services/exif_service.py`.
-
-        Job-gated (P1-04, docs/requirements-audit-2026-09-13.md, see
-        `update_item_fields_for_job` in infra/supabase/migrations/
-        0018_job_gated_item_writes.sql), same reasoning as
-        `replace_chunks`/`attach_tags`: an older, slower reprocessing
-        run's metadata (e.g. a stale image analysis) must never overwrite
-        a newer run's, no matter which HTTP request happens to land last.
+        """Only overwrites fields actually given. Job-gated like `replace_chunks`, so a
+        stale run's metadata can't overwrite a newer run's.
         """
         fields: dict[str, Any] = {}
         if title:
@@ -167,15 +117,8 @@ class SupabaseRestRepository:
         ocr_text: str | None = None,
         ai_description: str | None = None,
     ) -> None:
-        """Job-gated atomic UPSERT (P1-04, docs/requirements-audit-2026-09-13.md,
-        see `replace_item_content_for_job` in infra/supabase/migrations/
-        0018_job_gated_item_writes.sql) — was already a single atomic
-        UPSERT on `item_id` (not the old independent DELETE-then-INSERT
-        pair; see `item_contents_item_id_key`,
-        infra/supabase/migrations/0012_item_contents_unique.sql), but
-        still had no job-ownership check: an older, slower run's content
-        could still land after a newer run's and overwrite it. Notes
-        write their body once at creation instead and never call this.
+        """Job-gated atomic upsert, same stale-run protection as `replace_chunks`.
+        Notes write their body once at creation and never call this.
         """
         response = await self._client.post(
             f"{self._base_url}/rest/v1/rpc/replace_item_content_for_job",
@@ -193,23 +136,7 @@ class SupabaseRestRepository:
     async def attach_tags(
         self, item_id: str, job_id: str, user_id: str, tag_names: list[str]
     ) -> None:
-        """Idempotent by design (requirements doc, rule 17) — and, since
-        Faz 13 madde 2 (üçüncü bağımsız tarama, denetim düzeltmesi, see
-        docs/roadmap.md), safe against two concurrent reprocessing runs
-        for the same item the same way `replace_chunks` already was
-        (Faz 12 madde 7): this used to be an UPSERT (into `tags`) followed
-        by an independent DELETE+INSERT (on `item_tags`) — three separate
-        HTTP requests an *older*, slower run's delayed DELETE could still
-        land in between, after a *newer* run had already finished writing
-        its own tags, wiping them back out to whatever (possibly nothing)
-        the older run found.
-
-        `replace_item_tags_for_job()` (infra/supabase/migrations/
-        0016_replace_tags_entities_atomic.sql) closes that: one atomic RPC
-        call, serialized per item via the same advisory lock
-        `replace_chunks_for_job` uses, and a no-op if `job_id` is no
-        longer the most recent `processing_jobs` row for this item.
-        """
+        """Atomic RPC, job-gated the same way as `replace_chunks` — see its docstring."""
         names = [n for n in dict.fromkeys(t.strip().lower() for t in tag_names) if n]
         response = await self._client.post(
             f"{self._base_url}/rest/v1/rpc/replace_item_tags_for_job",
@@ -251,15 +178,7 @@ class SupabaseRestRepository:
     async def mark_duplicate(
         self, item_id: str, job_id: str, duplicate_of_item_id: str, similarity: float
     ) -> None:
-        """Flags a possible duplicate found during processing (requirements
-        doc, section 46) — never blocks or merges anything, just records
-        the best candidate for the client to show a dismissible banner for.
-
-        Job-gated (P1-04, docs/requirements-audit-2026-09-13.md, see
-        `mark_duplicate_for_job` in infra/supabase/migrations/
-        0018_job_gated_item_writes.sql) — same reasoning as
-        `update_item_metadata`.
-        """
+        """Records a possible-duplicate candidate; never blocks/merges. Job-gated like metadata."""
         response = await self._client.post(
             f"{self._base_url}/rest/v1/rpc/mark_duplicate_for_job",
             headers={"Content-Type": "application/json"},
@@ -273,13 +192,7 @@ class SupabaseRestRepository:
         response.raise_for_status()
 
     async def update_item_status(self, item_id: str, job_id: str, status: str) -> None:
-        """Job-gated (P1-04, docs/requirements-audit-2026-09-13.md, see
-        `update_item_status_for_job` in infra/supabase/migrations/
-        0018_job_gated_item_writes.sql) — without this, an older job
-        erroring out *after* a newer job already completed successfully
-        could still flip the item back to `failed`; a stale, delayed
-        `processing`/`completed` write had the same risk in reverse.
-        """
+        """Job-gated: a stale job's delayed write could otherwise flip a newer job's result back."""
         response = await self._client.post(
             f"{self._base_url}/rest/v1/rpc/update_item_status_for_job",
             headers={"Content-Type": "application/json"},
@@ -315,16 +228,7 @@ class SupabaseRestRepository:
         await self.update_job(job_id, status="failed", error_message=error, completed_at=_now_iso())
 
     async def find_jobs_by_status(self, statuses: list[str]) -> list[dict[str, Any]]:
-        """Used by `job_recovery.py`'s startup sweep — that's the one
-        caller with a legitimate reason to look across every user's jobs
-        at once, so it constructs this repository with the service_role
-        key as its `access_token` (bypasses RLS) rather than a normal
-        user's.
-
-        Takes multiple statuses (P1-05, docs/requirements-audit-2026-09-13.md)
-        — the sweep needs both `pending` and `processing` jobs, not just
-        the latter; see that module's docstring.
-        """
+        """Used by job_recovery.py's sweep, built with the service_role key to see all jobs."""
         response = await self._client.get(
             f"{self._base_url}/rest/v1/processing_jobs",
             params={"status": f"in.({','.join(statuses)})", "select": "id,item_id"},
@@ -335,18 +239,8 @@ class SupabaseRestRepository:
     async def find_stale_chunk_item_ids(
         self, current_provider: str, current_embedding_model: str
     ) -> list[str]:
-        """Item ids (deduped) with at least one chunk embedded by a
-        different provider/model than the one currently configured (P3,
-        docs/requirements-audit-2026-09-13.md) — used by
-        `reembedding_service.py`'s on-request "reprocess stale
-        embeddings" action. RLS already scopes `chunks` to this caller's
-        own items (see `chunks_owner` in infra/supabase/migrations/
-        0015_replace_chunks_atomic.sql's referenced policy).
-
-        A chunk with a *null* `embedding_provider` (every chunk embedded
-        before this feature existed) is never considered stale — same
-        "null means trust it" contract as `match_chunks_hybrid`, see
-        0021_chunk_embedding_provenance.sql's own comment.
+        """Deduped item ids with a chunk embedded by a different provider/model than now in use.
+        A null embedding_provider (pre-dates this feature) is never stale.
         """
         response = await self._client.get(
             f"{self._base_url}/rest/v1/chunks",
@@ -363,10 +257,7 @@ class SupabaseRestRepository:
         return sorted({row["item_id"] for row in response.json()})
 
     async def get_chunks_for_item(self, item_id: str) -> list[dict[str, Any]]:
-        """`chunk_index`/`content`/`metadata` for every chunk an item
-        currently has, oldest index first — what `reembedding_service.py`
-        re-embeds without touching anything else about the chunk (P3).
-        """
+        """All of an item's chunks, oldest index first."""
         response = await self._client.get(
             f"{self._base_url}/rest/v1/chunks",
             params={

@@ -12,8 +12,6 @@ import '../../../item/presentation/widgets/item_type_icon.dart';
 import '../../domain/entities/search_result.dart';
 import '../providers/search_providers.dart';
 
-/// The "All/Images/Documents/Notes/Links/Audio" buckets from the
-/// requirements doc, section 21 — each maps to the `ItemType`s it covers.
 const _typeFilterBuckets = <String, Set<ItemType>>{
   'Images': {ItemType.image, ItemType.screenshot},
   'Documents': {ItemType.pdf, ItemType.document},
@@ -33,9 +31,7 @@ extension on _DatePreset {
         _DatePreset.custom => 'Özel aralık…',
       };
 
-  /// `null` for `custom` — that one needs two dates from the user
-  /// (`showDateRangePicker`), not a fixed offset from now; see
-  /// `_SearchTabState._selectDatePreset`.
+  /// `null` for `custom`, which needs two picked dates instead of a fixed offset.
   DateTime? get since {
     final now = DateTime.now();
     return switch (this) {
@@ -48,12 +44,9 @@ extension on _DatePreset {
   }
 }
 
-/// The Search half of the "Tab: Search | Ask AI" layout (requirements
-/// doc, section 23) — hosted inside `SearchHubScreen`'s `TabBarView`.
 class SearchTab extends ConsumerStatefulWidget {
   const SearchTab({super.key, this.initialQuery});
 
-  /// Run once on first build, e.g. a tag chip tapped from item detail.
   final String? initialQuery;
 
   @override
@@ -65,9 +58,7 @@ class _SearchTabState extends ConsumerState<SearchTab>
   late final _controller = TextEditingController(text: widget.initialQuery);
   Timer? _debounce;
   _DatePreset _datePreset = _DatePreset.anytime;
-  // Only meaningful while `_datePreset == _DatePreset.custom` — kept
-  // separately (rather than folded into the enum) so the chip can show
-  // the actual picked dates, not just the generic "Özel aralık…" label.
+  // Kept outside the enum so the chip can show the actual picked dates.
   DateTimeRange? _customRange;
 
   @override
@@ -117,8 +108,6 @@ class _SearchTabState extends ConsumerState<SearchTab>
       final now = DateTime.now();
       final picked = await showDateRangePicker(
         context: context,
-        // A decade back is plenty for anything this app could have —
-        // there's no real "first possible date" to derive from data.
         firstDate: DateTime(now.year - 10),
         lastDate: now,
         initialDateRange: _customRange,
@@ -131,13 +120,7 @@ class _SearchTabState extends ConsumerState<SearchTab>
       });
       _applyDateFilter(
         picked.start,
-        // Inclusive of the whole end day, not just its midnight — a
-        // range picked as "through the 20th" should still match
-        // something created at 23:59 on the 20th (same reasoning as the
-        // backend's own "geçen X" phrases, see query_parser.py).
-        // `DateTime`'s 7th positional argument is `millisecond`, not
-        // `microsecond` — both need setting to actually reach
-        // 23:59:59.999999, not roll past midnight into the next day.
+        // Inclusive of the whole end day; DateTime's 7th arg is millisecond, not microsecond.
         DateTime(picked.end.year, picked.end.month, picked.end.day, 23, 59, 59, 999, 999),
       );
       return;
@@ -157,8 +140,6 @@ class _SearchTabState extends ConsumerState<SearchTab>
     ref.read(searchControllerProvider.notifier).researchWithCurrentFilters();
   }
 
-  /// The chip's own label once a custom range is active — the actual
-  /// picked dates read better than the generic "Özel aralık…" menu entry.
   String get _dateChipLabel {
     final range = _customRange;
     if (_datePreset != _DatePreset.custom || range == null) return _datePreset.label;
@@ -170,8 +151,7 @@ class _SearchTabState extends ConsumerState<SearchTab>
     final route = result.itemType == ItemType.note
         ? '/item/${result.itemId}/note'
         : '/item/${result.itemId}';
-    // Search results don't carry the full Item the way Library rows do —
-    // the detail screens re-fetch by id via this minimal stand-in.
+    // Minimal stand-in Item; the detail screen re-fetches the real one by id.
     context.push(
       route,
       extra: Item(

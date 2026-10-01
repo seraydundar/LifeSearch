@@ -5,15 +5,9 @@ import '../../features/item/presentation/providers/item_providers.dart';
 import '../../features/settings/presentation/providers/app_lock_providers.dart';
 import '../extensions/build_context_x.dart';
 
-/// Shown instead of an item's detail/note editor screen when that item
-/// is private and private reveal has since turned back off — e.g. the
-/// app was backgrounded while a revealed private item's screen was
-/// already open (P1-02, docs/requirements-audit-2026-09-13.md:
-/// `ItemDetailScreen`/`NoteEditorScreen` used to just keep showing
-/// whichever item they were first given, regardless of reveal changing
-/// later — the one place private items didn't re-hide live the way
-/// Home/Library/Search/collection detail already do). Same reveal flow
-/// as `LibraryScreen`'s reveal button, triggered from here instead.
+/// Shown instead of an item's detail/note editor screen once that item is private and reveal has
+/// turned back off (e.g. the app was backgrounded with the screen still open). Same reveal flow as
+/// `LibraryScreen`'s reveal button.
 class PrivateItemLockedView extends ConsumerWidget {
   const PrivateItemLockedView({super.key});
 

@@ -1,8 +1,6 @@
-"""Semantic + hybrid search over items/chunks via pgvector (requirements
-doc, sections 19-21), reranking (section 65) and related-items lookup
-(section 47). Natural-language filter extraction (section 22) happens one
-layer up, in `query_parser.py` — this module only ever sees the already
-resolved `item_types`/`date_after`/`date_before`.
+"""Semantic + hybrid search, reranking, and related-items lookup over
+items/chunks via pgvector. Filter extraction happens one layer up in
+`query_parser.py` — this module only sees already-resolved filters.
 """
 
 from datetime import datetime
@@ -14,9 +12,7 @@ from .reranking_service import rerank_matches
 
 
 def _dedupe_best_per_item(matches: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
-    """Several chunks can belong to the same item — keep only each item's
-    best-scoring chunk, ranked highest first.
-    """
+    """Keeps each item's best-scoring chunk only, ranked highest first."""
     best_per_item: dict[str, dict[str, Any]] = {}
     for match in matches:
         item_id = match["item_id"]
@@ -41,8 +37,7 @@ async def semantic_search(
 ) -> list[dict[str, Any]]:
     query_embedding = await provider.generate_embedding(query)
 
-    # Over-fetch chunks since several can belong to the same item — dedupe
-    # down to one (its best-matching) chunk per item below.
+    # Over-fetch since several chunks can belong to the same item; deduped below.
     matches = await repo.match_chunks_hybrid(
         query_embedding,
         query,
@@ -51,16 +46,12 @@ async def semantic_search(
         date_after=date_after,
         date_before=date_before,
         include_private=include_private,
-        # P3 (docs/requirements-audit-2026-09-13.md): never compare this
-        # query's embedding against a chunk from a different provider's
-        # vector space — see match_chunks_hybrid's own migration note.
+        # Never compare against a chunk embedded by a different provider.
         embedding_provider=provider.provider_name,
         embedding_model=provider.embedding_model,
     )
-    # Dedupe to a *shortlist* wider than the final `limit`, not straight
-    # down to it — reranking a list already cut to size by RRF alone
-    # would have nothing left to do but reorder it. `rerank_matches`
-    # narrows this back down to `limit`.
+    # Keep a shortlist wider than `limit` so rerank_matches has something to
+    # actually reorder, instead of just a pre-cut list.
     shortlist = _dedupe_best_per_item(matches, limit=min(len(matches), limit * 2))
 
     if not rerank:
@@ -78,8 +69,7 @@ async def find_related_items(
     matches = await repo.related_items(
         item_id, match_count=limit * 3, include_private=include_private
     )
-    # related_items() has no keyword/hybrid score, only cosine similarity —
-    # reuse the same dedupe shape by aliasing it as "score".
+    # related_items() only has cosine similarity; alias it as "score" to reuse the dedupe.
     for match in matches:
         match.setdefault("score", match["similarity"])
     return _dedupe_best_per_item(matches, limit=limit)

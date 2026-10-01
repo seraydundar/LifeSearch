@@ -3,14 +3,9 @@ import 'package:flutter/material.dart';
 import '../../../ai_chat/presentation/screens/ai_chat_tab.dart';
 import 'search_tab.dart';
 
-/// "Tab: Search | Ask AI" (requirements doc, section 23) — one screen,
-/// two ways to find something in the archive: type a query, or ask a
-/// question and get a sourced answer.
 class SearchHubScreen extends StatefulWidget {
   const SearchHubScreen({super.key, this.initialQuery});
 
-  /// Run immediately on open (e.g. a tag chip tapped from item detail)
-  /// instead of landing on an empty search box.
   final String? initialQuery;
 
   @override

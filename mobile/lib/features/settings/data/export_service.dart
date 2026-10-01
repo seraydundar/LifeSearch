@@ -6,19 +6,7 @@ import '../../../core/error/failure.dart';
 import '../../../core/network/paginated_fetch.dart';
 import 'export_payload.dart';
 
-/// Builds a JSON export of everything the user has saved (requirements
-/// doc, section 49-52: "Export") as a plain string for the caller to
-/// hand off (e.g. via the OS share sheet — see `ExportController`).
-/// Supabase-direct, like the rest of Settings/Items; see
-/// `export_payload.dart` for the (independently testable) shape.
-///
-/// Deliberately returns a `String`, not a `dart:io` `File` written to a
-/// temp directory — that would need `path_provider`, which has no real
-/// filesystem to work with on web (Faz 11, madde 6c, see
-/// docs/roadmap.md). Sharing straight from bytes via `XFile.fromData`
-/// (see `ExportController`) works identically on every platform, so
-/// this isn't a "disabled on web" limitation, just a simpler design
-/// that happens to also be portable.
+/// Returns a `String`, not a `dart:io` `File`, so it works the same on web, where `path_provider` has no real filesystem.
 class ExportService {
   ExportService(this._client);
 
@@ -28,11 +16,7 @@ class ExportService {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw const AuthFailure('Oturum bulunamadı.');
 
-    // Paginated (P2-08, docs/requirements-audit-2026-09-13.md) — same
-    // reasoning as `RemoteItemDataSource.fetchAllRows()` (Faz 12, madde
-    // 9): a plain `.select()` silently truncates past PostgREST's row
-    // cap instead of erroring, which for an export would mean a large
-    // archive quietly loses everything past the first page.
+    // Paginated: a plain .select() silently truncates past PostgREST's row cap instead of erroring.
     final itemRows = await fetchAllPages((from, to) {
       return _client
           .from('items')
@@ -53,9 +37,7 @@ class ExportService {
     final entitiesByItemId = <String, List<Map<String, String>>>{};
 
     if (itemIds.isNotEmpty) {
-      // Every item_contents column, not just raw_text — the previous
-      // export silently dropped ocr_text/ai_description/summary/language
-      // even though the pipeline already writes all five (P2-08).
+      // All item_contents columns — the previous export dropped ocr_text/ai_description/summary/language.
       final contentRows = await fetchAllPages((from, to) {
         return _client
             .from('item_contents')
@@ -92,8 +74,7 @@ class ExportService {
         tagsByItemId.putIfAbsent(itemId, () => []).add(tagName);
       }
 
-      // Entities (P2-08) — same join-through-the-junction-table shape as
-      // tags, see `RemoteItemDataSource.fetchEntities`.
+      // Same join-through-junction-table shape as tags.
       final entityRows = await fetchAllPages((from, to) {
         return _client
             .from('item_entities')
@@ -112,11 +93,7 @@ class ExportService {
       }
     }
 
-    // Collections + membership (P2-08) — same shape as
-    // `RemoteCollectionDataSource.fetchAllRows`/`fetchAllItemRows`, kept
-    // separate here rather than depending on that class since it lives in
-    // a different feature module and this mirrors how `items`/`item_tags`
-    // above are already queried directly.
+    // Kept separate from RemoteCollectionDataSource since it lives in a different feature module.
     final collectionRows = await fetchAllPages((from, to) {
       return _client
           .from('collections')

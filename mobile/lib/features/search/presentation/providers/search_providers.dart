@@ -13,31 +13,8 @@ import '../../domain/entities/search_filters.dart';
 import '../../domain/entities/search_result.dart';
 import '../../domain/repositories/search_repository.dart';
 
-/// A `SearchResult` only ever carries an id/snippet, not the full `Item`
-/// — it can't check `.private` on itself the way `itemsProvider`'s list
-/// can, so Search/Related Items need this cross-check instead (Faz 11,
-/// madde 2 — see docs/roadmap.md). Skipped entirely once private items
-/// are revealed, same as `itemsProvider`.
-///
-/// Awaits `allItemsIncludingPrivateProvider.future` rather than reading
-/// a `.valueOrNull` snapshot — the very first search of a session can
-/// run before that stream's first emission arrives, and a `valueOrNull`
-/// read at exactly that moment sees `null`/`loading`, which would have
-/// let a private item's result straight through unfiltered.
-///
-/// **Fails closed, not open** (Faz 12, madde 5 — denetim düzeltmesi, see
-/// docs/roadmap.md): if that provider itself errors, this used to fall
-/// back to showing every result — including private ones — rather than
-/// failing the whole search. That was reasoning about an *unconfigured
-/// test fixture* (no `itemRepositoryProvider` override, so nothing to
-/// check against), but it applied to every real error too: a genuine
-/// Drift hiccup in production would have silently leaked private items
-/// into the results list instead of surfacing as a failure. Now it
-/// rethrows — `SearchController.search()`'s `AsyncValue.guard` turns
-/// that into the same visible error state a real network failure gets
-/// (see `search_tab.dart`'s `error:` branch), and `relatedItemsProvider`
-/// already hides its whole section on any error (`item_detail_screen
-/// .dart`) — neither silently shows something that might be private.
+/// Must await `.future`, not read `.valueOrNull` (race on first emission), and must
+/// rethrow rather than return unfiltered results on error — fails closed, not open.
 Future<List<SearchResult>> _hidePrivateResults(Ref ref, List<SearchResult> results) async {
   if (ref.read(privateItemsRevealedProvider)) return results;
   final items = await ref.read(allItemsIncludingPrivateProvider.future);
@@ -45,13 +22,8 @@ Future<List<SearchResult>> _hidePrivateResults(Ref ref, List<SearchResult> resul
   return results.where((r) => !privateIds.contains(r.itemId)).toList();
 }
 
-/// `Supabase.instance` asserts if `Supabase.initialize()` never ran —
-/// harmless in the real app (`main()` always initializes it first, see
-/// `supabaseClientProvider`'s docstring) but a widget test that overrides
-/// `searchRepositoryProvider` (bypassing the network entirely, same as
-/// `SyncService._currentUserIdOrNull()`'s reasoning for `AuthFailure`)
-/// would otherwise hit this by way of `SearchController`'s recent-search
-/// bookkeeping, which has nothing to do with what that test is checking.
+/// Catches `Supabase.instance`'s assert when uninitialized, which a widget test
+/// overriding `searchRepositoryProvider` would otherwise hit via recent-search bookkeeping.
 String? _currentUserIdOrNull(Ref ref) {
   try {
     return ref.read(supabaseClientProvider).auth.currentUser?.id;
@@ -77,19 +49,12 @@ final recentSearchesDataSourceProvider = Provider<RecentSearchesDataSource>((ref
 });
 
 final recentSearchesProvider = StreamProvider<List<String>>((ref) {
-  // `ref.watch` (not the one-off `_currentUserIdOrNull` read below) so
-  // this rebuilds across an account switch — see `currentUserIdProvider`'s
-  // docstring (Faz 12, docs/roadmap.md). Previously bound to whichever
-  // account was signed in when this provider was first watched, the same
-  // bug `itemsProvider` had.
+  // ref.watch (not a one-off read) so this rebuilds on account switch.
   final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return Stream.value(const []);
   return ref.watch(recentSearchesDataSourceProvider).watchRecent(userId);
 });
 
-/// Active type/date filters (requirements doc, section 21) — a plain
-/// `StateProvider` since the Search tab is the only writer and there's no
-/// async work involved in just holding the selection.
 final searchFiltersProvider = StateProvider<SearchFilters>((ref) => const SearchFilters());
 
 final searchControllerProvider =
@@ -98,40 +63,17 @@ final searchControllerProvider =
 class SearchController extends AsyncNotifier<List<SearchResult>> {
   String _lastQuery = '';
 
-  /// Bumped by every `search()` call (and `clear()`) — Faz 12, madde 13
-  /// (denetim düzeltmesi — see docs/roadmap.md): nothing here previously
-  /// stopped a slow, *older* `search()` call's response from landing
-  /// after a faster, *newer* one already updated `state` (or after
-  /// `clear()` reset it) — typing a query, changing your mind and
-  /// typing a different one, or clearing the field entirely, could all
-  /// have the earlier call's stale results silently reappear once its
-  /// request/private-filter round trip finally completed. Each call
-  /// captures its own generation number before doing any `await`; if
-  /// `_searchGeneration` has moved on by the time it's ready to write
-  /// `state`, that means something newer superseded it, so it discards
-  /// its own (now-stale) result instead.
+  /// Bumped by every search()/clear(); a call discards its own result if this has
+  /// moved on by the time it resolves, so a stale response can't overwrite a newer one.
   int _searchGeneration = 0;
 
   @override
   List<SearchResult> build() {
-    // Faz 12, madde 5 (denetim düzeltmesi — see docs/roadmap.md): a
-    // result set fetched *while* private items were revealed doesn't
-    // re-filter itself when the reveal flag flips back off (e.g. the
-    // app is backgrounded — see `AppLockGate`'s lifecycle observer) —
-    // every other private-item entry point (Home, Library) re-hides
-    // live because they read `itemsProvider` reactively; this list is a
-    // one-shot snapshot from whenever `search()` last ran, so without
-    // this listener a private item's result would keep showing in an
-    // already-displayed list even after reveal turns back off.
+    // Results are a one-shot snapshot, so re-filter when reveal flips back off.
     ref.listen(privateItemsRevealedProvider, (previous, next) {
       if (previous == true && next == false) _reapplyPrivacyFilter();
     });
-    // P1-01 (docs/requirements-audit-2026-09-13.md): this controller
-    // never watched who's signed in — switching accounts within the same
-    // app session (sign out A, sign in B, no full restart) left A's
-    // result list on screen for B until B ran a fresh search(). Every
-    // account change (including to/from signed-out) clears it immediately,
-    // the same as `recentSearchesProvider` already does for its own state.
+    // Clear on account switch so a previous account's results don't linger.
     ref.listen(currentUserIdProvider, (previous, next) {
       if (previous != next) clear();
     });
@@ -156,12 +98,8 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
 
     state = const AsyncLoading();
     final filters = ref.read(searchFiltersProvider);
-    // The backend excludes private items by default (P1-02, docs/
-    // requirements-audit-2026-09-13.md) — only ask for them once this
-    // device's own private reveal is unlocked. `_hidePrivateResults`
-    // below still re-checks the response: reveal can flip back off
-    // between this read and the response landing (see
-    // `_reapplyPrivacyFilter`'s docstring).
+    // `_hidePrivateResults` below re-checks the response, since reveal can flip off
+    // between this read and the response landing.
     final includePrivate = ref.read(privateItemsRevealedProvider);
     final result = await AsyncValue.guard(() async {
       final results = await ref
@@ -170,9 +108,6 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
       return _hidePrivateResults(ref, results);
     });
 
-    // Something newer (another search(), or clear()) has already
-    // started since this call began — a slow response for a query the
-    // user has since moved on from should never overwrite it.
     if (generation != _searchGeneration) return;
     state = result;
 
@@ -182,8 +117,6 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
     }
   }
 
-  /// Re-runs the last query under the current filters — called when the
-  /// user changes a filter chip while a search is already showing results.
   Future<void> researchWithCurrentFilters() async {
     if (_lastQuery.isEmpty) return;
     await search(_lastQuery);
@@ -191,16 +124,13 @@ class SearchController extends AsyncNotifier<List<SearchResult>> {
 
   void clear() {
     _lastQuery = '';
-    // Invalidates any still-in-flight search() so its late-arriving
-    // result can't overwrite this reset once it finally completes.
+    // Invalidates any in-flight search() so it can't overwrite this reset.
     _searchGeneration++;
     state = const AsyncData([]);
   }
 }
 
-/// Items whose content is close to the given one — for the "Related"
-/// section on the item detail screen. Keyed by item id so switching
-/// between items doesn't reuse a stale result.
+/// Keyed by item id so switching between items doesn't reuse a stale result.
 final relatedItemsProvider = FutureProvider.autoDispose.family<List<SearchResult>, String>(
   (ref, itemId) async {
     final includePrivate = ref.watch(privateItemsRevealedProvider);

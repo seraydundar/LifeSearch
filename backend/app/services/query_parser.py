@@ -1,21 +1,13 @@
-"""Natural-language filter extraction (requirements doc, section 22) —
-turns a query like "geçen ay baktığım PDF'ler" into a type filter, a date
-filter, and a cleaned-up query text to actually embed/search on.
-
-Deliberately rule-based rather than an LLM call: no API key needed, and
-it runs before we know whether a provider is even configured. It only
-ever *extends* what the client already sent — `/search/` treats any
-filter already given in the request as authoritative and just fills in
-the gaps from what this recognizes (see `api/search/routes.py`).
+"""Turns a query like "geçen ay baktığım PDF'ler" into a type filter, a date
+filter, and cleaned query text. Rule-based, not an LLM call: no API key
+needed, and it runs before we know if a provider is even configured.
 """
 
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-# Turkish keyword -> ItemType.dbValue (see mobile's ItemType / items.type
-# check constraint). Longest-first so e.g. "ekran görüntüsü" is tried
-# before a bare "görüntü" would otherwise partially match.
+# Turkish keyword -> ItemType.dbValue.
 _TYPE_KEYWORDS: dict[str, str] = {
     "ekran görüntüleri": "screenshot",
     "ekran görüntüsü": "screenshot",
@@ -75,15 +67,8 @@ def _strip(text: str, phrase: str) -> str:
 def _extract_types(text: str) -> tuple[str, list[str]]:
     remaining = text
     found: set[str] = set()
-    # Longest keyword first (P2-02, docs/requirements-audit-2026-09-13.md)
-    # — iterating in `_TYPE_KEYWORDS`' own declared order let a shorter
-    # keyword that's also a complete, `\b`-bounded substring of a longer
-    # one (`"notlar"` inside `"sesli notlar"`) match and get stripped out
-    # *before* the longer, more specific phrase ever got a chance —
-    # misclassifying a voice note as a text note and leaving a stray
-    # "sesli" behind in the cleaned query. Sorting by length here, rather
-    # than just carefully hand-ordering the dict, stays correct as new
-    # keywords are added later.
+    # Longest keyword first: dict order let "notlar" match inside "sesli
+    # notlar" before the more specific phrase got a chance.
     for keyword in sorted(_TYPE_KEYWORDS, key=len, reverse=True):
         item_type = _TYPE_KEYWORDS[keyword]
         pattern = r"\b" + re.escape(keyword) + r"\b"
@@ -99,7 +84,7 @@ def _start_of_day(moment: datetime) -> datetime:
 
 def _start_of_week(moment: datetime) -> datetime:
     start = _start_of_day(moment)
-    return start - timedelta(days=start.weekday())  # Monday
+    return start - timedelta(days=start.weekday())
 
 
 def _start_of_month(moment: datetime) -> datetime:
@@ -111,24 +96,13 @@ def _start_of_year(moment: datetime) -> datetime:
 
 
 def _last_instant_before(period_start: datetime) -> datetime:
-    """The latest representable moment strictly before `period_start` —
-    closes off a "geçen X" (last X) range at an inclusive upper bound
-    (the hybrid RPC's `created_at <= filter_before` treats both bounds
-    as inclusive, see infra/supabase/migrations/0006_hybrid_and_related.sql)
-    without it leaking one microsecond into the period that follows.
-    """
+    """Inclusive upper bound for a "geçen X" range, one microsecond before the next period."""
     return period_start - timedelta(microseconds=1)
 
 
 def _date_range_for_phrase(phrase: str, *, now: datetime) -> tuple[datetime, datetime | None]:
-    """Calendar-correct ranges, not rolling windows — "geçen ay" (last
-    month) used to be `today - 30 days`, which is wrong for any month
-    that isn't exactly 30 days long (11 of the 12 are), and "bugün"/"dün"
-    had no upper bound at all, so "dün" (yesterday) actually matched
-    everything from yesterday onward, today included (see docs/roadmap.md,
-    Faz 10c, madde 2). "bu X" (this X, still ongoing) legitimately has no
-    upper bound — nothing can be dated in the future — but every "geçen X"
-    (last X) is a *closed* period and needs one.
+    """Calendar-correct ranges, not rolling windows. "bu X" (ongoing) has no
+    upper bound; every "geçen X" (last X) is a closed period and needs one.
     """
     today = _start_of_day(now)
     this_week = _start_of_week(today)
@@ -146,8 +120,7 @@ def _date_range_for_phrase(phrase: str, *, now: datetime) -> tuple[datetime, dat
     if phrase == "bu ay":
         return this_month, None
     if phrase == "geçen ay":
-        # The day before the 1st of this month always falls in the
-        # previous month, whatever that month's actual length was.
+        # Day before the 1st of this month always falls in the previous month.
         last_month = _start_of_month(this_month - timedelta(days=1))
         return last_month, _last_instant_before(this_month)
     if phrase == "bu yıl":
@@ -170,16 +143,8 @@ def _extract_date(text: str, *, now: datetime) -> tuple[str, datetime | None, da
 def parse_query(
     text: str, *, now: datetime | None = None, timezone_offset_minutes: int = 0
 ) -> ParsedQuery:
-    """`timezone_offset_minutes` (P2-02, docs/requirements-audit-2026-09-13.md):
-    all the calendar-boundary logic above (`_date_range_for_phrase` and its
-    helpers) works purely in whatever `now` it's handed — it has no idea
-    that "now" here is UTC. Shifting `now` forward by the client's own UTC
-    offset before resolving a date phrase, then shifting the two results
-    back by the same amount, gets a *local* calendar day/week/month/year
-    boundary out of code that never needs to know timezones exist. Without
-    this, "bugün" always meant "today in UTC" — wrong by the client's
-    offset for everyone not on UTC (e.g. up to 3 hours early/late for a
-    request near local midnight in Turkey, UTC+3).
+    """Shifts `now` by `timezone_offset_minutes` before resolving a date phrase
+    and shifts results back, so date boundaries are local, not UTC.
     """
     now = now or datetime.now(UTC)
     offset = timedelta(minutes=timezone_offset_minutes)
@@ -194,9 +159,7 @@ def parse_query(
     cleaned = re.sub(r"\s+", " ", remaining).strip()
 
     return ParsedQuery(
-        # Never hand back an empty query just because it was all filter
-        # words ("geçen ay pdfler") — fall back to searching the original
-        # text rather than embedding "".
+        # Fall back to the original text rather than embedding "" if the query was all filter words.
         cleaned_query=cleaned or text.strip(),
         item_types=item_types or None,
         date_from=date_from,

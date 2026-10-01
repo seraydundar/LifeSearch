@@ -6,17 +6,8 @@ import '../../features/item/presentation/providers/item_providers.dart';
 import '../network/connectivity_provider.dart';
 import 'sync_service.dart';
 
-/// Lives outside both `item_providers.dart` and `collection_providers.dart`
-/// on purpose: `SyncService` now reconciles both items and collections (one
-/// `sync_queue` table, one coordinator — see `SyncService`'s doc comment),
-/// so it needs providers from both features. Defining it in either feature
-/// file would make that file import the other, both ways, for no reason
-/// beyond this one provider.
-///
-/// Reconciles local cache ↔ Supabase. Kicked off whenever connectivity
-/// returns or the user signs in; `itemRepositoryProvider` and
-/// `collectionRepositoryProvider` also nudge it after every local write
-/// (see `SyncService.syncSoon`).
+/// Lives outside both item/collection provider files since `SyncService` needs both, avoiding a
+/// cross-feature import just for this. Kicked off on connectivity return, sign-in, and every local write.
 final syncServiceProvider = Provider<SyncService>((ref) {
   final service = SyncService(
     local: ref.watch(itemLocalDataSourceProvider),

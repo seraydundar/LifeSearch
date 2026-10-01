@@ -1,32 +1,7 @@
 import 'dart:math' as math;
 
-/// Fully on-device TF-IDF + cosine-similarity relevance ranking — the
-/// "tam offline semantic search" item from the audit (Faz 11, madde 6b,
-/// see docs/roadmap.md).
-///
-/// **What this is not**: a neural embedding. It cannot match synonyms
-/// or paraphrases — a query for "araba" will not match a document that
-/// only says "otomobil". A real semantic match like that needs a
-/// trained embedding model, which would mean bundling a multi-hundred-
-/// megabyte model file and a native inference plugin into the app —
-/// something that can't be verified end-to-end without a real device,
-/// so it was deliberately not done here (see docs/roadmap.md, Faz 11
-/// madde 6b for the trade-off this chose instead).
-///
-/// **What this fixes over plain substring search**
-/// (`LocalSearchDataSource`'s previous behaviour): results are ranked
-/// by how much of the query's vocabulary they actually contain, not
-/// just "newest first" — and a multi-word query matches a document
-/// even when its words land in different fields or a different order
-/// ("kahve" in the title, "dükkanı" in the note body) — a plain
-/// substring search can never do that, since it looks for the whole
-/// query as one contiguous run of characters.
-///
-/// Deliberately a from-scratch ~50-line implementation, not a package:
-/// the corpus here is one user's local item cache (realistically
-/// hundreds to a few thousand rows), rebuilt fresh on every search — an
-/// inverted index or a BM25 library would be solving a scale problem
-/// this app doesn't have.
+/// Not a neural embedding — no synonym/paraphrase matching, only shared vocabulary.
+/// From-scratch rather than a package since the corpus (one user's local cache) is small.
 class TfidfDocument {
   const TfidfDocument({required this.id, required this.text});
 
@@ -35,9 +10,7 @@ class TfidfDocument {
 }
 
 /// Ranks [documents] against [query], highest cosine similarity first.
-/// A document that shares no vocabulary with the query at all (cosine
-/// similarity of exactly 0) is left out entirely — same "no match, not
-/// just a low-ranked match" contract the old substring search had.
+/// A document with zero shared vocabulary is left out entirely, not just ranked low.
 List<MapEntry<String, double>> rankByTfidf({
   required String query,
   required List<TfidfDocument> documents,
@@ -46,7 +19,7 @@ List<MapEntry<String, double>> rankByTfidf({
   if (queryTokens.isEmpty || documents.isEmpty) return const [];
 
   final tokensByDocId = <String, List<String>>{};
-  final documentFrequency = <String, int>{}; // term -> how many docs contain it
+  final documentFrequency = <String, int>{};
   for (final doc in documents) {
     final tokens = tokenize(doc.text);
     tokensByDocId[doc.id] = tokens;
@@ -56,13 +29,10 @@ List<MapEntry<String, double>> rankByTfidf({
   }
 
   final documentCount = documents.length;
-  // Smoothed idf: a term in every single document still gets a small
-  // positive weight (1) rather than 0 — a query that's only common
-  // words should still return *something*, just ranked lower than a
-  // query containing rarer, more distinctive terms.
+  // Smoothed: a term in every document still gets weight 1 instead of 0.
   double idf(String term) {
     final df = documentFrequency[term] ?? 0;
-    if (df == 0) return 0; // never appears in the corpus at all
+    if (df == 0) return 0;
     return math.log(documentCount / df) + 1;
   }
 
@@ -73,8 +43,7 @@ List<MapEntry<String, double>> rankByTfidf({
     }
     final vector = <String, double>{};
     for (final entry in counts.entries) {
-      // Log-scaled term frequency — a term appearing 10x in one field
-      // shouldn't dominate 10x as much as one appearing once.
+      // Log-scaled: a term appearing 10x shouldn't dominate 10x as much.
       final tf = 1 + math.log(entry.value);
       final weight = tf * idf(entry.key);
       if (weight > 0) vector[entry.key] = weight;
@@ -105,9 +74,7 @@ List<MapEntry<String, double>> rankByTfidf({
   return scored;
 }
 
-/// Lowercases and splits on anything that isn't a Unicode letter/digit
-/// (so Turkish characters like "ı"/"ş"/"ğ" stay part of a word instead
-/// of being treated as delimiters, unlike plain ASCII `\w`).
+/// Splits on non-Unicode-letter/digit so Turkish characters like "ı"/"ş"/"ğ" stay in-word.
 List<String> tokenize(String text) {
   return text
       .toLowerCase()

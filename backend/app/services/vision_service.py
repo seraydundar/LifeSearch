@@ -1,6 +1,5 @@
-"""Image analysis / AI description generation (requirements doc, section
-14). Thin wrapper over `AIProvider.analyze_image` — kept as its own file
-so the pipeline doesn't call the provider directly.
+"""Thin wrapper over `AIProvider.analyze_image` so the pipeline never calls
+the provider directly.
 """
 
 from typing import Any

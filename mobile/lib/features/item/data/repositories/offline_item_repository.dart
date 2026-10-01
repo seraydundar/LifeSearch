@@ -15,10 +15,9 @@ import '../local/local_item_x.dart';
 import '../local/sync_queue_data_source.dart';
 import '../remote/remote_item_data_source.dart';
 
-/// Offline-first `ItemRepository`: every read comes from the local cache
-/// (`ItemLocalDataSource`), every write lands there immediately and is
-/// queued for `SyncService` to push to Supabase — the UI never blocks on
-/// the network (requirements doc, section 38: Repository → {Local, Remote}).
+/// Offline-first `ItemRepository`: reads come from the local cache, writes
+/// land there immediately and are queued for `SyncService` to push —
+/// the UI never blocks on the network.
 class OfflineItemRepository implements ItemRepository {
   OfflineItemRepository({
     required ItemLocalDataSource local,
@@ -64,25 +63,15 @@ class OfflineItemRepository implements ItemRepository {
     final local = await _local.findById(_userId, itemId);
     if (local != null) return local.toDomainItem();
 
-    // P2-09 (docs/requirements-audit-2026-09-13.md): the local cache
-    // used to be the only place this looked — a genuinely new item on
-    // another device (or one a search/RAG/related result surfaced
-    // before this device's own sync ever pulled it in) could never
-    // resolve to more than whatever trimmed stand-in the caller already
-    // had in hand (see e.g. `search_tab.dart`'s `_openResult`).
+    // Remote fallback for an item not yet synced to this device (e.g.
+    // surfaced by search/RAG from another device).
     try {
       final remote = await _remote.fetchById(itemId);
       if (remote == null) return null;
-      // Cached locally so the next lookup — and anything watching
-      // `watchItems()`/`watchItemByIdProvider` — sees it without
-      // another round trip, same end state a normal sync pull leaves
-      // behind, just for one item instead of the whole archive.
+      // Cache it so the next lookup/watch avoids another round trip.
       await _local.upsert(remote.toLocalItemsCompanion(userId: _userId));
       return remote;
     } catch (_) {
-      // Offline, or a genuine backend hiccup — same "not synced to this
-      // device yet" contract a local-only miss already had; callers
-      // (e.g. `ItemByIdLoader`) already degrade gracefully for `null`.
       return null;
     }
   }
@@ -98,8 +87,6 @@ class OfflineItemRepository implements ItemRepository {
         userId: _userId,
         type: ItemType.note.dbValue,
         title: Value(title),
-        // Chunked/embedded by the backend (Phase 4), same as PDFs — flips
-        // to 'completed' once that job finishes, not immediately.
         processingStatus: const Value('pending'),
         createdAt: now,
         noteContent: Value(content),
@@ -152,13 +139,9 @@ class OfflineItemRepository implements ItemRepository {
     final id = _uuid.v4();
     final now = DateTime.now();
 
-    // The path file_picker hands back can live in a cache dir the OS is
-    // free to clear before we're back online — copy it into our own
-    // documents dir so a queued upload survives that.
+    // file_picker's path can live in a cache dir the OS may clear before
+    // we're back online — persist it so a queued upload survives that.
     final persistedPath = await _persistPickedFile(id, localFilePath, originalFilename);
-    // Known immediately (no need to wait for the upload to reach Supabase)
-    // — recorded now so Settings' "Storage" tile reflects it right away,
-    // and carried in the queued payload so the remote row gets it too.
     final fileSizeBytes = await File(persistedPath).length();
 
     await _local.transaction(() async {
@@ -213,11 +196,9 @@ class OfflineItemRepository implements ItemRepository {
     final now = DateTime.now();
     final userId = _userId;
 
-    // Unlike uploadFile(), no local-first/queue step — this reaches the
-    // server immediately and throws straight to the caller if it can't
-    // (see ItemRepository.uploadFileBytes's own docstring for why: no
-    // persistent local copy of these bytes exists to replay a queued
-    // attempt from later).
+    // Unlike uploadFile(), no local-first/queue step: no persistent local
+    // copy of these bytes exists to replay later, so this throws straight
+    // to the caller on failure.
     await _remote.uploadFileBytes(
       id: id,
       bytes: bytes,
@@ -237,15 +218,11 @@ class OfflineItemRepository implements ItemRepository {
       processingStatus: const Value('pending'),
       createdAt: now,
       fileSizeBytes: Value(bytes.length),
-      // The remote write above already succeeded — this row is exactly
-      // as synced as one `SyncService._pullRemote` would have pulled in.
+      // Remote write above already succeeded, so this is already synced.
       syncStatus: const Value('synced'),
     ));
 
-    // Parity with the native `upload_file` queue op (see
-    // SyncService._flushQueue's own `_shouldTriggerAi`/`_triggerAi`
-    // call) — nothing else will ever kick this off for an upload that
-    // bypassed the queue entirely.
+    // This bypassed the queue, so nothing else triggers AI processing.
     if (aiSupportedUploadTypes.contains(type.dbValue)) {
       await _syncService.triggerAiNow(userId, id);
     }
@@ -310,8 +287,7 @@ class OfflineItemRepository implements ItemRepository {
 
   @override
   Future<String> getSignedUrl(String storagePath) {
-    // Not cached offline yet — viewing a file's actual content still needs
-    // a connection. Local metadata (title, type, status) works offline.
+    // File content isn't cached offline; only metadata is.
     return _remote.getSignedUrl(storagePath);
   }
 
@@ -373,11 +349,8 @@ class OfflineItemRepository implements ItemRepository {
 
   @override
   Future<void> retryProcessing(String itemId) async {
-    // Optimistic — the item detail screen reflects a fresh attempt right
-    // away instead of sitting on a stale 'failed' chip. `_pullRemote()`
-    // skips this item while the queue entry below is still pending (see
-    // its `pendingIds` check), so this doesn't get clobbered by a pull
-    // that hasn't seen the retry succeed yet.
+    // Optimistic UI update; a pull won't clobber it while the queue
+    // entry below is still pending.
     await _local.transaction(() async {
       await _local.setProcessingStatus(itemId, 'pending');
       await _queue.enqueue(

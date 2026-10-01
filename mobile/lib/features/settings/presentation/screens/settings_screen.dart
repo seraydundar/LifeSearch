@@ -34,9 +34,7 @@ class SettingsScreen extends ConsumerWidget {
     ref.listen(exportControllerProvider, (previous, next) {
       if (next.hasError) context.showErrorSnackBar('Dışa aktarılamadı.');
     });
-    // P3 (docs/requirements-audit-2026-09-13.md): reports the result
-    // either way — a silent "accepted" for a button press the user is
-    // actively watching would look like nothing happened.
+    // Reports the result either way — a silent "accepted" would look like nothing happened.
     ref.listen(reprocessStaleEmbeddingsControllerProvider, (previous, next) {
       if (next.hasError) {
         context.showErrorSnackBar('Yeniden işleme başlatılamadı.');
@@ -101,12 +99,7 @@ class SettingsScreen extends ConsumerWidget {
             onTap: () => context.push('/analytics'),
           ),
           const Divider(),
-          // "AI Status", not "AI Settings" (P2-08, docs/requirements-audit
-          // -2026-09-13.md): there's nothing here to configure — the AI
-          // provider is chosen server-side (backend/.env's AI_PROVIDER),
-          // not per-user — so a "Settings" label overclaimed what this
-          // row actually does. It's a read-only status line, same as
-          // Storage/Sync above it, not a control.
+          // "AI Status" not "AI Settings" — the provider is chosen server-side; this row is read-only.
           ListTile(
             leading: const Icon(Icons.auto_awesome_outlined),
             title: const Text('AI Status'),
@@ -115,9 +108,7 @@ class SettingsScreen extends ConsumerWidget {
                   ? 'AI destekli işleme aktif — embedding, arama ve Ask AI bu sunucu üzerinden çalışıyor'
                   : 'Backend yapılandırılmamış — AI destekli işleme (arama, Ask AI) devre dışı',
             ),
-            // P3 (docs/requirements-audit-2026-09-13.md): the one actual
-            // action this row can trigger — everything else about "AI
-            // Status" is read-only, see that rename's own note above.
+            // The one actual action on this otherwise read-only row.
             trailing: aiAvailable
                 ? TextButton(
                     onPressed: isReprocessing
@@ -238,10 +229,7 @@ class SettingsScreen extends ConsumerWidget {
     await ref.read(accountControllerProvider.notifier).deleteAccount();
   }
 
-  /// Turning app-lock ON requires a successful authentication first — so a
-  /// user with, say, unreliable Face ID doesn't lock themselves out on the
-  /// very next launch. Turning it OFF doesn't need re-auth: reaching this
-  /// switch at all means the current session is already unlocked.
+  /// Turning ON requires a successful auth first (so unreliable biometrics can't lock the user out); OFF needs no re-auth.
   Future<void> _onAppLockToggle(BuildContext context, WidgetRef ref, bool value) async {
     if (value) {
       final success = await ref.read(appLockServiceProvider).authenticate();

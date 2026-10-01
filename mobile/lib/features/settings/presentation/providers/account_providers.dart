@@ -11,9 +11,7 @@ final accountServiceProvider = Provider<AccountService>((ref) {
 final accountControllerProvider =
     AsyncNotifierProvider<AccountController, void>(AccountController.new);
 
-/// Owns loading/error state for "Delete Account". On success, signs the
-/// (now nonexistent) session out locally — `goRouterProvider`'s redirect
-/// takes it from there straight back to `/login`.
+/// On success, signs the now-nonexistent session out locally; the router redirect handles the rest.
 class AccountController extends AsyncNotifier<void> {
   @override
   void build() {}

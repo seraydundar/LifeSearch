@@ -5,9 +5,6 @@ import '../../../../shared/extensions/build_context_x.dart';
 import '../providers/collection_providers.dart';
 import 'create_collection_dialog.dart';
 
-/// Checkbox list of every collection, letting the user toggle whether
-/// `itemId` belongs to each one — opened from item detail (requirements
-/// doc, section 28).
 Future<void> showAddToCollectionSheet(BuildContext context, String itemId) {
   return showModalBottomSheet(
     context: context,

@@ -51,22 +51,12 @@ class ApiSearchRepository implements SearchRepository {
       final response = await dio.post('/search/', data: {
         'query': query,
         if (filters.types.isNotEmpty) 'item_types': filters.types.map((t) => t.dbValue).toList(),
-        // P2-02 (docs/requirements-audit-2026-09-13.md): `dateFrom`/`dateTo`
-        // are local `DateTime`s (today/last-week/last-month chips, the
-        // custom range picker — see search_tab.dart), and Dart's own
-        // `toIso8601String()` omits the timezone offset for anything
-        // that isn't already UTC. The backend used to read that
-        // offset-less string as if it *were* UTC — every filter chip was
-        // silently off by this client's UTC offset. `.toUtc()` first
-        // makes the instant self-describing (a trailing `Z`) instead of
-        // ambiguous.
+        // `.toUtc()` first: bare `toIso8601String()` omits the offset, which the backend
+        // would otherwise misread as already being UTC.
         if (filters.dateFrom != null) 'date_from': filters.dateFrom!.toUtc().toIso8601String(),
         if (filters.dateTo != null) 'date_to': filters.dateTo!.toUtc().toIso8601String(),
         'include_private': includePrivate,
-        // Lets the backend's free-text date parser ("bugün", "dün" typed
-        // directly into the query) resolve against this client's actual
-        // local calendar day instead of UTC's — independent of whether a
-        // filter chip above is also active.
+        // Lets the backend's free-text date parser ("bugün", "dün") use the client's local day.
         'timezone_offset_minutes': DateTime.now().timeZoneOffset.inMinutes,
       });
       return _parseResults(response.data);

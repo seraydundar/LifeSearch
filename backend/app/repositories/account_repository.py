@@ -1,26 +1,6 @@
-"""Deletes a user's account (requirements doc, section 49-52: "Delete
-Account"). Two steps, always in this order:
-
-  1. Remove their uploaded files from Storage, using their OWN access
-     token — the same permission the mobile app already relies on to
-     delete a single item's file (`RemoteItemDataSource.deleteItem`), no
-     elevated access needed. The paths come from `items.storage_path`,
-     which the client already has RLS-scoped read access to.
-  2. Delete the `auth.users` row via Supabase's Admin Auth API — this
-     needs the service_role key (nothing else in this backend does; see
-     core/config.py), and is what actually removes everything else:
-     every table that references `auth.users(id)` does so with
-     `on delete cascade` (items, tags, collections, chunks,
-     item_contents, processing_jobs — see
-     infra/supabase/migrations/0001_init.sql).
-
-No service_role key means no way to actually remove the auth user —
-callers should treat `AccountDeletionUnavailable` as "not configured
-yet", not a transient failure worth retrying. `account_service.delete_account()`
-checks `ensure_deletion_available()` *before* step 1, precisely so that
-"not configured yet" is discovered before any file is actually deleted —
-otherwise a misconfigured backend would delete a user's files on every
-attempt and never be able to finish the job that was supposed to justify it.
+"""Deletes a user's account: own-token file deletion first, then a service_role
+auth.users delete (cascades everything else). Availability must be checked before
+step 1, or a missing key leaves files deleted but the account intact on every retry.
 """
 
 from typing import Any
@@ -47,12 +27,7 @@ class AccountRepository:
         }
 
     def ensure_deletion_available(self) -> None:
-        """No I/O — just the same config check `delete_auth_user` makes,
-        surfaced separately so it can run *before* anything destructive
-        starts. Synchronous on purpose: nothing here needs an event loop
-        turn, and a plain function can't be mistaken for one more network
-        call in the sequence.
-        """
+        """Same check as `delete_auth_user`, surfaced to run before anything destructive starts."""
         if not self._service_role_key:
             raise AccountDeletionUnavailable("SUPABASE_SERVICE_ROLE_KEY is not configured.")
 

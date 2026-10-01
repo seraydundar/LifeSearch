@@ -1,22 +1,4 @@
-/// Pure data-shaping for "Export my data" (requirements doc, section
-/// 49-52) — kept separate from the Supabase I/O in `ExportService` so the
-/// shape itself is unit-testable without a real client.
-///
-/// Only metadata and text content are included, never the binary files
-/// themselves (photos/PDFs/audio) — downloading and zipping every file is
-/// out of scope for a first cut, and the export says so explicitly rather
-/// than silently omitting them.
-///
-/// `export_version: 2` (P2-08, docs/requirements-audit-2026-09-13.md):
-/// v1 only carried a note's own body (misleadingly named `note_content`
-/// even though it came from the same `item_contents.raw_text` every
-/// content type writes to — see `processing_pipeline.py`), tags, and no
-/// `private` flag or collection membership at all. v2 makes the scope an
-/// explicit contract: every `item_contents` field, entities, `private`,
-/// and which collections an item belongs to. There's no reader of a v1
-/// export to migrate — it's a one-way share-and-done JSON blob, not a
-/// format anything re-imports — so this is a clean rename rather than an
-/// additive, backwards-compatible change.
+/// Pure data-shaping (unit-testable without a real client); only metadata/text are included, never binary files — out of scope, and the export says so explicitly.
 Map<String, dynamic> buildExportPayload({
   required String userId,
   required DateTime exportedAt,

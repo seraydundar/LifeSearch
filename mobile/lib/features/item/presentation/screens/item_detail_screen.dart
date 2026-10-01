@@ -29,46 +29,22 @@ class ItemDetailScreen extends ConsumerStatefulWidget {
 class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   late Item _item = widget.item;
   String? _signedUrl;
-  // P2-09 (docs/requirements-audit-2026-09-13.md): a failed signed-URL
-  // fetch used to leave `_signedUrl` null forever, indistinguishable
-  // from "still loading" — the file-open button/image just stayed
-  // disabled/blank with no way to try again short of leaving the screen
-  // and coming back (which re-runs `initState()`, itself no guarantee
-  // the network is any better a second later).
+  // Distinct from "still loading" so the UI can show a retry affordance.
   bool _signedUrlError = false;
   bool _isDeleting = false;
   Item? _duplicateTarget;
 
-  /// P1-02 (docs/requirements-audit-2026-09-13.md): whether reaching this
-  /// screen at all required private reveal to already be on — captured
-  /// once in `initState()`, from the item this screen was *opened* with
-  /// (corrected against the local cache first, same as `_item` itself),
-  /// not from whatever `_item.private` becomes afterwards. That
-  /// distinction matters: marking the currently-open item private
-  /// yourself via [_togglePrivate] below must not immediately lock you
-  /// out of the screen you're actively using (see that test in
-  /// item_detail_screen_test.dart, "no auth needed either way") — only
-  /// an item that was *already* private when opened (so getting here at
-  /// all already required reveal, whether via an already-revealed
-  /// Library/Search tap or `ItemByIdLoader`'s own gate) should re-lock
-  /// itself if reveal turns back off later, e.g. the app is backgrounded
-  /// while this screen is still on screen.
+  /// Captured once from the item this screen was *opened* with, not
+  /// from `_item.private` afterwards: marking the open item private via
+  /// [_togglePrivate] must not immediately lock the user out of it.
   late final bool _requiresRevealToView;
 
   @override
   void initState() {
     super.initState();
-    // Search results, Ask AI sources and Related Items all push this
-    // route with a *trimmed* stand-in `Item` — just enough to render a
-    // title/type (see e.g. `search_tab.dart`'s `_openResult`) — because
-    // that's all they themselves have; `storagePath`/`sourceUrl`/
-    // `favorite`/`createdAt` are never set on it. If the local cache
-    // already has the real row (the common case — reading a `Provider`
-    // synchronously here needs no `await`), correct it immediately
-    // rather than waiting for the first `ref.listen` change below,
-    // which only fires on a change *after* this point (an item tapped
-    // from Library already carries the real thing, so this is a no-op
-    // there).
+    // Search/Ask AI/Related Items push a trimmed stand-in `Item`; correct
+    // it immediately from the local cache if available, rather than
+    // waiting for the first `ref.listen` change below.
     final fresh = ref.read(watchItemByIdProvider(widget.item.id));
     if (fresh != null) _item = fresh;
     _requiresRevealToView = _item.private;
@@ -76,25 +52,11 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     _loadDuplicateTarget();
   }
 
-  /// **Live, not one-shot** (Faz 12, madde 8, denetim düzeltmesi — see
-  /// docs/roadmap.md): this used to be a single `findById()` call in
-  /// `initState()` — a background sync completing this item's processing
-  /// (or filling in `storagePath`) while the screen was already open
-  /// never showed up until the user left and came back. `ref.listen` on
-  /// [watchItemByIdProvider] (see `build()`) calls this every time the
-  /// local row actually changes, including this screen's own optimistic
-  /// writes (`_toggleFavorite` etc. already write straight to Drift, so
-  /// this just confirms what's already on screen — no visible flicker)
-  /// and, now, a real completion pulled in from the server; and, since
-  /// `ref.listen` only fires on a *change*, also the initial resolution
-  /// if the local cache wasn't warmed up yet when `initState()` ran.
-  ///
-  /// Not synced to this device yet (a genuine possibility right after an
-  /// item was created on another device) is the one case this can't fix
-  /// — [watchItemByIdProvider] only ever reflects the local cache, never
-  /// the network — so a `null` emission is ignored, silently keeping
-  /// whatever we were already given rather than replacing a real (if
-  /// incomplete) item with a "not found" wall.
+  /// Called on every local change to [watchItemByIdProvider] (see
+  /// `build()`'s `ref.listen`), so a background sync completing this
+  /// item shows up live. A `null` emission is ignored rather than
+  /// replacing a real item with "not found" — it just means not synced
+  /// to this device yet.
   void _applyFreshItem(Item fresh, Item? previous) {
     final hadStoragePath = _item.storagePath;
     final hadDuplicateOfItemId = _item.duplicateOfItemId;
@@ -105,20 +67,10 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     if (fresh.duplicateOfItemId != null && fresh.duplicateOfItemId != hadDuplicateOfItemId) {
       _loadDuplicateTarget(); // ditto
     }
-    // Faz 12'nin bulduğu bir sonraki hata (denetim düzeltmesi — see
-    // docs/roadmap.md, "arama yarışı"nın hemen ardından): tags/entities
-    // are produced by the same AI pipeline run that just finished, but
-    // `itemTagsProvider`/`itemEntitiesProvider` are one-shot
-    // `FutureProvider`s keyed by item id — they fetched (and cached)
-    // their result back when the item was still pending/processing
-    // (usually nothing), and nothing here ever told them to try again.
-    // `TagsRow`/`EntitiesRow` would silently keep showing "no tags yet"
-    // until the user left this screen and came back, even though
-    // `_item.processingStatus` itself updated live right above.
-    // `previous == null` (the very first emission this screen ever
-    // sees) is excluded — that's not a transition, and `initState()`'s
-    // own correction already gets `TagsRow`/`EntitiesRow`'s first fetch
-    // for free since it runs before their first build.
+    // Re-fetch tags/entities on pending/processing -> completed: the
+    // one-shot FutureProviders cached an empty result from before the
+    // pipeline finished. `previous == null` (first emission) is excluded
+    // since initState()'s correction already covers that case.
     if (previous != null &&
         previous.processingStatus != 'completed' &&
         fresh.processingStatus == 'completed') {
@@ -160,8 +112,6 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
       final url = await ref.read(itemRepositoryProvider).getSignedUrl(path);
       if (mounted) setState(() => _signedUrl = url);
     } catch (_) {
-      // P2-09: a real, visible failure state — not an indefinitely
-      // disabled button with no explanation and no way to try again.
       if (mounted) setState(() => _signedUrlError = true);
     }
   }
@@ -178,12 +128,8 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     }
   }
 
-  /// Item-level Privacy Mode (Faz 11, madde 2 — see docs/roadmap.md).
-  /// Marking/unmarking doesn't itself need a biometric check — that's
-  /// only required to *reveal* already-private items in Library/Home/
-  /// Search (see `LibraryScreen`'s reveal button); this is just editing
-  /// one of the signed-in user's own items, same trust level as
-  /// favoriting it.
+  /// Marking/unmarking needs no biometric check — only *revealing*
+  /// already-private items does (see `LibraryScreen`'s reveal button).
   Future<void> _togglePrivate() async {
     final next = !_item.private;
     setState(() => _item = _item.copyWith(private: next)); // optimistic
@@ -221,11 +167,6 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     }
   }
 
-  /// Backend pipeline errored (bad API key, corrupt PDF, ...) or the
-  /// initial trigger never reached the backend at all — either way
-  /// `processingStatus` stayed something other than 'completed' with
-  /// nothing automatically re-attempting it. This is the user's way to
-  /// ask for another try.
   Future<void> _retryProcessing() async {
     setState(() => _item = _item.copyWith(processingStatus: 'pending')); // optimistic
     try {
@@ -270,10 +211,8 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
     ref.listen(watchItemByIdProvider(widget.item.id), (previous, next) {
       if (next != null) _applyFreshItem(next, previous);
     });
-    // P1-02 (docs/requirements-audit-2026-09-13.md): re-checked on every
-    // build (via `ref.watch`, not just read once) so this actually
-    // reacts live — e.g. `AppLockGate` resetting reveal the moment the
-    // app is backgrounded while this screen is still the one on screen.
+    // ref.watch, not read: reacts live if AppLockGate resets reveal
+    // while this screen is open.
     if (_requiresRevealToView && !ref.watch(privateItemsRevealedProvider)) {
       return const PrivateItemLockedView();
     }
@@ -325,10 +264,6 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
               child: Image.network(_signedUrl!, fit: BoxFit.cover),
             )
           else if (isImage && _signedUrlError)
-            // P2-09 (docs/requirements-audit-2026-09-13.md): distinct
-            // from "still loading" — an explicit failure with a way to
-            // try again, instead of sitting on the generic type-icon
-            // placeholder with no explanation.
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -400,10 +335,6 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
               label: const Text('Bağlantıyı Aç'),
             )
           else if (!isImage && _item.storagePath != null && _signedUrlError)
-            // P2-09 (docs/requirements-audit-2026-09-13.md): previously
-            // indistinguishable from "still loading" — the button just
-            // stayed disabled forever with no way to retry short of
-            // leaving and re-opening the screen.
             OutlinedButton.icon(
               onPressed: _loadSignedUrl,
               icon: const Icon(Icons.refresh),
@@ -432,9 +363,7 @@ class _ItemDetailScreenState extends ConsumerState<ItemDetailScreen> {
   }
 }
 
-/// Flags a possible duplicate found by the backend pipeline (requirements
-/// doc, section 46) — never blocks anything, just lets the user jump to
-/// the other item or dismiss the flag for good.
+/// Flags a possible duplicate; lets the user jump to it or dismiss.
 class _DuplicateBanner extends StatelessWidget {
   const _DuplicateBanner({required this.target, required this.onView, required this.onDismiss});
 
@@ -485,9 +414,7 @@ class _DuplicateBanner extends StatelessWidget {
   }
 }
 
-/// Horizontal strip of semantically related items (requirements doc,
-/// section 47) — hidden entirely while loading/empty/errored so it never
-/// distracts from the item's own content.
+/// Horizontal strip of related items; hidden while loading/empty/errored.
 class _RelatedSection extends ConsumerWidget {
   const _RelatedSection({required this.itemId, required this.onTap});
 
@@ -563,10 +490,7 @@ class _RelatedCard extends StatelessWidget {
   }
 }
 
-/// EXIF capture location (requirements doc, section 8-12) — tapping opens
-/// it in Maps. Coordinates are shown as-is (no reverse geocoding — that
-/// needs its own API/key) rounded to ~11m precision, which is plenty for
-/// "where was I when I took this".
+/// EXIF capture location; tapping opens it in Maps. No reverse geocoding.
 class _LocationRow extends StatelessWidget {
   const _LocationRow({required this.latitude, required this.longitude});
 

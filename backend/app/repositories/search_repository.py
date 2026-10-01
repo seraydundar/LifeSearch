@@ -1,8 +1,5 @@
-"""Calls the search-related RPCs (infra/supabase/migrations/0004_search.sql,
-0006_hybrid_and_related.sql) over PostgREST, scoped by the caller's own
-JWT — same pattern as `items_repository.py`. No service_role key;
-`auth.uid()` inside each SQL function is what actually scopes results to
-this user.
+"""Calls the search-related RPCs over PostgREST. No service_role key; `auth.uid()`
+inside each SQL function scopes results to the caller.
 """
 
 from datetime import datetime
@@ -41,9 +38,7 @@ class SearchRepository:
             "query_embedding": format_embedding_literal(query_embedding),
             "query_text": query_text,
             "match_count": match_count,
-            # Private items are excluded in SQL by default (see
-            # 0017_search_excludes_private.sql) — the client only asks for
-            # them once its own device-level private reveal is unlocked.
+            # Private items excluded in SQL by default; client opts in once its reveal is unlocked.
             "include_private": include_private,
         }
         if item_types:
@@ -52,12 +47,7 @@ class SearchRepository:
             payload["filter_after"] = date_after.isoformat()
         if date_before:
             payload["filter_before"] = date_before.isoformat()
-        # P3 (docs/requirements-audit-2026-09-13.md): excludes a chunk
-        # embedded by a different provider/model than the one live right
-        # now — see 0023_hybrid_search_embedding_provenance.sql. Omitted
-        # entirely (not sent as null) when the caller doesn't have both —
-        # the RPC's own default (no filtering) already covers that case,
-        # and PostgREST would otherwise happily send a literal "null".
+        # Omitted unless both are set, so PostgREST doesn't send a literal "null".
         if embedding_provider and embedding_model:
             payload["filter_embedding_provider"] = embedding_provider
             payload["filter_embedding_model"] = embedding_model
@@ -102,10 +92,7 @@ class SearchRepository:
     async def find_duplicate_candidate(
         self, item_id: str, *, similarity_threshold: float = 0.93
     ) -> dict[str, Any] | None:
-        """At most one match — the pipeline only needs to know whether a
-        near-identical item already exists (requirements doc, section 46),
-        not a ranked list.
-        """
+        """At most one match; callers only need to know a near-identical item exists."""
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(
                 f"{self._base_url}/rest/v1/rpc/find_duplicate_candidate",

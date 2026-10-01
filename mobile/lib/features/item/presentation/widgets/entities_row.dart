@@ -11,7 +11,6 @@ IconData _entityTypeIcon(EntityType type) {
     EntityType.place => Icons.place_outlined,
     EntityType.organization => Icons.apartment_outlined,
     EntityType.date => Icons.event_outlined,
-    // P3 (docs/requirements-audit-2026-09-13.md):
     EntityType.product => Icons.shopping_bag_outlined,
     EntityType.price => Icons.sell_outlined,
     EntityType.website => Icons.link_outlined,
@@ -19,11 +18,8 @@ IconData _entityTypeIcon(EntityType type) {
   };
 }
 
-/// AI-extracted named entities (requirements doc, section 44-48) — same
-/// role as `TagsRow`, just typed: each chip carries an icon for what kind
-/// of entity it is (person/place/organization/date). Tapping one jumps to
-/// its search results, same as a tag. Renders nothing while loading, on
-/// error, or when the item has none yet — a bonus, not core content.
+/// Same role as `TagsRow`, but typed — each chip carries an icon for its
+/// entity kind.
 class EntitiesRow extends ConsumerWidget {
   const EntitiesRow({super.key, required this.itemId});
 

@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-/// Wraps Home/Library/Settings in a bottom `NavigationBar`, using
-/// `StatefulShellRoute.indexedStack` so each tab keeps its own scroll
-/// position / state when switching away and back.
+/// Bottom `NavigationBar` shell; `indexedStack` keeps each tab's state when switching away and back.
 class ScaffoldWithNavBar extends StatelessWidget {
   const ScaffoldWithNavBar({super.key, required this.navigationShell});
 

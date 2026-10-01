@@ -2,13 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../domain/entities/item.dart';
 
-/// A fixed accent per content type, so a note/PDF/screenshot/etc. reads at
-/// a glance from its color alone — Library grid/list, Home's "Recently
-/// Added", search results and item detail all share it, so the same type
-/// always looks the same everywhere. Deliberately a soft, mid-tone
-/// palette (not the app's indigo — that's reserved for search/brand) to
-/// stay in the "minimal, not AI-glow" register (requirements doc, section
-/// 67) rather than reading as a full color-coded system.
+/// Fixed accent per content type, shared across Library/Home/search/detail.
+/// Soft mid-tone palette, not the app's indigo (reserved for search/brand).
 Color itemTypeColor(ItemType type) {
   return switch (type) {
     ItemType.note => Colors.amber.shade700,

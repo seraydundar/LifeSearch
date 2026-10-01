@@ -2,10 +2,6 @@ import 'package:drift/drift.dart';
 
 import '../../../../core/database/app_database.dart';
 
-/// Local-only search history (requirements doc, section 30) — never
-/// leaves the device. Scoped by `userId` so a shared device's accounts
-/// don't see (or clear) each other's search history — see
-/// `RecentSearches.userId`'s docstring.
 class RecentSearchesDataSource {
   RecentSearchesDataSource(this._db);
 
@@ -13,13 +9,8 @@ class RecentSearchesDataSource {
   static const _maxEntries = 10;
 
   Stream<List<String>> watchRecent(String userId) {
-    // `id DESC` as a tiebreaker, not just `searchedAt DESC`: the column's
-    // `currentDateAndTime` default is only second-precision, so a
-    // re-search that lands in the same wall-clock second as the previous
-    // entry (routine in a test, plausible for a fast re-search in real
-    // use too) would otherwise tie and fall back to an unspecified scan
-    // order — `id` is a monotonically increasing autoincrement, so it
-    // always breaks the tie the right way (most recently inserted first).
+    // `id DESC` tiebreaker: `searchedAt` is only second-precision, so same-second
+    // re-searches would otherwise tie and sort unpredictably.
     final query = _db.select(_db.recentSearches)
       ..where((t) => t.userId.equals(userId))
       ..orderBy([(t) => OrderingTerm.desc(t.searchedAt), (t) => OrderingTerm.desc(t.id)])
@@ -31,8 +22,7 @@ class RecentSearchesDataSource {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return;
 
-    // Keep it a set of recent *distinct* queries: drop any earlier
-    // occurrence of the same text before inserting the new one.
+    // Keep distinct: drop any earlier occurrence of the same text first.
     await (_db.delete(_db.recentSearches)
           ..where((t) => t.userId.equals(userId) & t.query.equals(trimmed)))
         .go();

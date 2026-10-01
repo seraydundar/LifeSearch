@@ -1,11 +1,7 @@
 import '../../item/domain/entities/item.dart';
 
-/// Analytics screen (requirements doc, section 51 — see docs/roadmap.md,
-/// Faz 11, madde 3). Pure functions over whatever's already in the local
-/// cache (`itemsProvider`) — no separate backend endpoint, same
-/// offline-first contract as everywhere else in this app; only
-/// [topTags] needs a network round trip, since tags aren't cached
-/// locally (see `ItemRepository.fetchTags`'s docstring).
+// Pure functions over the locally cached items; only [topTags] needs a
+// network round trip, since tags aren't cached locally.
 
 int totalItemCount(List<Item> items) => items.length;
 
@@ -24,23 +20,18 @@ Map<ItemType, int> countsByType(List<Item> items) {
 class MonthlyCount {
   const MonthlyCount(this.month, this.count);
 
-  /// Always the 1st of the month, local time — a bucket key, not a real
-  /// "created at" timestamp.
+  /// Bucket key (1st of month, local time), not a real "created at" timestamp.
   final DateTime month;
   final int count;
 }
 
-/// Item count per calendar month for the last [months] months (the
-/// current one included), oldest first. Always exactly [months] entries
-/// — zero-filled for a month nothing was added in — so a bar row never
-/// has to guess whether a missing entry means "no data" or "not asked
-/// for" (see `AnalyticsScreen`'s monthly bars).
+/// Item count per calendar month for the last [months] months (current
+/// one included), oldest first, zero-filled so every month is present.
 List<MonthlyCount> itemsPerMonth(List<Item> items, {int months = 6, DateTime? now}) {
   final today = now ?? DateTime.now();
   final buckets = <DateTime, int>{};
   for (var i = months - 1; i >= 0; i--) {
-    // DateTime normalizes an out-of-range month (e.g. month 0 -> last
-    // December) on its own — no manual year rollover needed here.
+    // DateTime normalizes an out-of-range month (e.g. month 0 -> last December) on its own.
     final month = DateTime(today.year, today.month - i);
     buckets[DateTime(month.year, month.month)] = 0;
   }
@@ -55,10 +46,9 @@ List<MonthlyCount> itemsPerMonth(List<Item> items, {int months = 6, DateTime? no
   return [for (final e in entries) MonthlyCount(e.key, e.value)];
 }
 
-/// Most frequent tag names, most common first. `allTagOccurrences` is a
-/// flat list with one entry per (item, tag) association (see
-/// `ItemRepository.fetchAllTagNames()`) — deliberately not deduplicated
-/// going in, since counting the duplicates is the whole point.
+/// Most frequent tag names, most common first. `allTagOccurrences` must stay
+/// un-deduplicated (one entry per item-tag association) since counting
+/// duplicates is the point.
 List<(String, int)> topTags(List<String> allTagOccurrences, {int limit = 10}) {
   final counts = <String, int>{};
   for (final tag in allTagOccurrences) {

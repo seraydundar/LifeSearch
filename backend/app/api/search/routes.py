@@ -1,6 +1,4 @@
-"""Search endpoints. Synchronous (not background tasks, unlike
-/ai/process-item) — the mobile app is waiting on these for a result.
-"""
+"""Search endpoints. Synchronous (unlike /ai/process-item): the mobile app waits on the result."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -26,9 +24,7 @@ def _require_provider():
     try:
         return get_ai_provider(get_settings())
     except (RuntimeError, NotImplementedError, ValueError) as error:
-        # A config problem (no key, unimplemented provider) is a service
-        # outage from the client's point of view, not "no results" — 503
-        # says so plainly instead of returning an empty result list.
+        # Config problem = service outage to the client, not "no results".
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Search is unavailable: {error}",
@@ -53,17 +49,11 @@ async def search_endpoint(
     provider = _require_provider()
     repo = SearchRepository(user.access_token)
 
-    # Natural-language filtering (requirements doc, section 22): pull a
-    # type/date filter out of the query text itself, e.g. "geçen ay
-    # baktığım PDF'ler". Anything the client already sent explicitly (the
-    # Search tab's filter chips) wins — this only fills in the gaps.
+    # Pulls type/date filters out of the query text; explicit client filters win.
     parsed = parse_query(body.query, timezone_offset_minutes=body.timezone_offset_minutes)
     item_types = body.item_types or parsed.item_types
     date_from = body.date_from or parsed.date_from
-    # Previously always `body.date_to` — silently dropping the parser's
-    # own upper bound (see query_parser.py's "geçen X" phrases) whenever
-    # the client hadn't sent one of its own, so e.g. "dün" kept matching
-    # everything from yesterday onward instead of yesterday alone.
+    # Parser's date_to must apply too, or "dün" matches yesterday onward instead of just that day.
     date_to = body.date_to or parsed.date_to
 
     matches = await semantic_search(
@@ -85,13 +75,8 @@ async def related_endpoint(
     body: RelatedRequest,
     user: CurrentUser = Depends(get_current_user),
 ) -> RelatedResponse:
-    """Related items (requirements doc, section 47) — similarity against
-    the source item's own content, no query text involved. Not behind
-    `require_search_rate_limit`: unlike `/search/`, this never calls the
-    AI provider (it reuses an already-stored chunk embedding as the
-    comparison vector — see `find_related_items`), so it doesn't carry
-    the per-call cost the rate limit exists to bound.
-    """
+    """Similarity against the source item's own content; no query text or AI provider call,
+    so it's not behind require_search_rate_limit."""
     repo = SearchRepository(user.access_token)
     matches = await find_related_items(
         body.item_id, repo, limit=body.limit, include_private=body.include_private

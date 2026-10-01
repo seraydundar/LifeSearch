@@ -1,10 +1,5 @@
-"""Smart Collections suggestion endpoint (requirements doc, section 129).
-
-No mutation lives here — turning a suggestion into a real collection is a
-plain Supabase insert the Flutter app does directly (see
-`SupabaseCollectionRepository.createCollection`), the same way it creates
-any other collection. This endpoint only ever reads and clusters.
-"""
+"""Smart Collections suggestions. Read-only: turning a suggestion into a real
+collection is a plain Supabase insert done directly by the Flutter app."""
 
 from fastapi import APIRouter, Depends
 
@@ -24,9 +19,7 @@ async def suggest_endpoint(
 ) -> SuggestCollectionsResponse:
     repo = SearchRepository(user.access_token)
 
-    # Unlike /search/ and /ai/ask, a missing/broken AI provider doesn't
-    # 503 here — clustering needs no provider at all, and naming just
-    # falls back to a plainer name (see collection_suggestion_service).
+    # No 503 here (unlike /search, /ai/ask): clustering needs no provider; naming just falls back.
     try:
         provider = get_ai_provider(get_settings())
     except (RuntimeError, NotImplementedError, ValueError):

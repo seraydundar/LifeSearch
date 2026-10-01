@@ -1,8 +1,5 @@
-"""Splits normalized text into embedding-sized chunks (requirements doc,
-section 42). Paragraph-aware: packs whole paragraphs together up to
-`target_chars`, and only cuts inside a paragraph when that paragraph alone
-exceeds the target — so a chunk boundary lands between ideas, not
-mid-sentence, whenever the source text allows it.
+"""Splits text into embedding-sized chunks, paragraph-aware: packs whole
+paragraphs up to `target_chars` and only cuts inside one that alone exceeds it.
 """
 
 DEFAULT_TARGET_CHARS = 800
@@ -30,8 +27,7 @@ def chunk_text(
         buffer = ""
 
     for paragraph in paragraphs:
-        # A single paragraph bigger than the target gets sliced on its own,
-        # with the running buffer flushed first so it isn't split apart.
+        # Flush the buffer first so an oversized paragraph doesn't split it apart.
         if len(paragraph) > target_chars:
             flush()
             chunks.extend(_slice_long_paragraph(paragraph, target_chars, overlap_chars))
@@ -42,11 +38,7 @@ def chunk_text(
             buffer = candidate
             continue
 
-        # Adding this paragraph would overflow — grab a small overlap from
-        # the current buffer's tail *before* closing it out (flush() resets
-        # buffer to "", so computing this after flush() would always yield
-        # an empty overlap — that was the bug here), so a concept spanning
-        # the boundary still appears in both chunks.
+        # Grab overlap before flush() clears buffer (grabbing it after was the bug).
         overlap = buffer[-overlap_chars:] if overlap_chars else ""
         flush()
         buffer = f"{overlap}\n\n{paragraph}".strip() if overlap else paragraph
@@ -61,20 +53,9 @@ def chunk_pages(
     target_chars: int = DEFAULT_TARGET_CHARS,
     overlap_chars: int = DEFAULT_OVERLAP_CHARS,
 ) -> list[tuple[str, int]]:
-    """Like `chunk_text`, but for content with an actual page concept
-    (PDFs — see `processing_pipeline.py`'s PDF branch) — chunks each page
-    independently and tags every resulting chunk with its 1-based page
-    number (P3, docs/requirements-audit-2026-09-13.md: "page/section
-    izini taşı").
-
-    Chunking per page rather than the whole joined document means a
-    chunk never straddles a page boundary, so its page number is always
-    exact, never an approximation — the trade-off is that two short
-    adjacent pages `chunk_text()` would otherwise have packed into one
-    chunk now become two, slightly smaller ones. Overlap still applies
-    *within* a page, just never *across* one. An empty page (blank, or
-    one OCR genuinely found nothing on) simply contributes no chunks —
-    `chunk_text("")` already returns `[]`.
+    """Like `chunk_text`, but per-page (PDFs), tagging each chunk with its
+    1-based page number. Chunks never straddle a page boundary, so the page
+    number is always exact, at the cost of occasional smaller chunks.
     """
     return [
         (chunk, page_number)

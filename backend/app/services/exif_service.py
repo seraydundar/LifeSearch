@@ -1,11 +1,6 @@
-"""Capture location/time from a photo's EXIF metadata (requirements doc,
-section 8-12: `items.latitude`/`longitude`/`captured_at`). Purely local
-(Pillow), no AI provider involved.
-
-Most photos have none of this — screenshots, downloaded images, or a
-phone with location services off — so every failure mode here returns
-`None` values rather than raising; this is optional metadata, never
-something that should fail an item's processing over.
+"""Reads location/time from EXIF metadata (Pillow only, no AI provider).
+Most photos lack this data, so every failure path returns None instead of
+raising — it's optional metadata, never worth failing an item's processing.
 """
 
 from datetime import datetime
@@ -16,9 +11,6 @@ from PIL import ExifTags, Image
 
 
 def extract_exif_metadata(image_bytes: bytes) -> dict[str, Any]:
-    """Returns `{"latitude": float | None, "longitude": float | None,
-    "captured_at": datetime | None}`.
-    """
     result: dict[str, Any] = {"latitude": None, "longitude": None, "captured_at": None}
 
     try:
@@ -59,9 +51,7 @@ def _extract_gps(exif: Image.Exif) -> tuple[float | None, float | None]:
 
 
 def _dms_to_decimal(dms: Any, ref: str | None) -> float | None:
-    """`dms` is a (degrees, minutes, seconds) tuple — GPS coordinates are
-    stored that way in EXIF rather than as a single decimal.
-    """
+    """`dms` is (degrees, minutes, seconds), EXIF's GPS coordinate format."""
     if not dms or not ref:
         return None
     try:

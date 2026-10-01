@@ -5,11 +5,8 @@ import 'package:intl/intl.dart';
 import '../../domain/entities/item.dart';
 import 'item_type_icon.dart';
 
-/// The standard row for an item in any list (Library, a collection's
-/// contents, ...) — tapping navigates to its detail/editor screen. An
-/// optional `trailing` slot lets a screen add its own action (e.g.
-/// "remove from this collection") without needing its own copy of this
-/// widget.
+/// Standard row for an item in any list. Optional `trailing` slot lets a
+/// screen add its own action (e.g. "remove from this collection").
 class ItemListTile extends StatelessWidget {
   const ItemListTile({super.key, required this.item, this.trailing});
 

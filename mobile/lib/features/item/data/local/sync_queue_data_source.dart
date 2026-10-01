@@ -25,8 +25,7 @@ class SyncQueueDataSource {
         );
   }
 
-  /// Only `userId`'s own queued writes — see `SyncQueueEntries.userId`'s
-  /// docstring for why this matters on a shared device.
+  /// Only `userId`'s own queued writes (shared-device isolation).
   Future<List<SyncQueueEntry>> pendingEntries(String userId) {
     return (_db.select(_db.syncQueueEntries)
           ..where((t) => t.userId.equals(userId))
@@ -45,8 +44,7 @@ class SyncQueueDataSource {
     return (_db.delete(_db.syncQueueEntries)..where((t) => t.id.equals(id))).go();
   }
 
-  /// Bumps the retry counter and records the error in one statement, so a
-  /// failed sync attempt never races with itself.
+  /// One statement so the counter bump and error write can't race.
   Future<void> recordFailure(int id, String error) {
     return _db.customStatement(
       'UPDATE sync_queue_entries SET retry_count = retry_count + 1, last_error = ? WHERE id = ?',

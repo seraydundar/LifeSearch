@@ -21,9 +21,8 @@ class LibraryScreen extends ConsumerStatefulWidget {
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   bool _favoritesOnly = false;
 
-  /// Item-level Privacy Mode (Faz 11, madde 2 — see docs/roadmap.md).
-  /// Hiding never needs a check; revealing does. `AppLockGate` already
-  /// re-hides on backgrounding regardless of how this got turned on.
+  /// Hiding needs no check; revealing does. `AppLockGate` re-hides on
+  /// backgrounding regardless of how this got turned on.
   Future<void> _togglePrivateReveal() async {
     if (ref.read(privateItemsRevealedProvider)) {
       ref.read(privateItemsRevealedProvider.notifier).state = false;
@@ -132,14 +131,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                     itemCount: visible.length,
                     itemBuilder: (context, index) {
                       final item = visible[index];
-                      // A stable per-item key, not just position — without
-                      // it, Flutter reuses a tile's State by position when
-                      // the sorted list reorders (e.g. a new note becomes
-                      // newest and pushes everything else down a slot).
-                      // ItemGridTile fetches its signed URL once in
-                      // initState(), so a reused tile would keep showing
-                      // the *previous* occupant's already-resolved
-                      // thumbnail under the new item's title.
+                      // Key by id, not position: ItemGridTile resolves its thumbnail once in
+                      // initState(), so a reorder would otherwise show a stale thumbnail.
                       return ItemGridTile(key: ValueKey(item.id), item: item);
                     },
                   );

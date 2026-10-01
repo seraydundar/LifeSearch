@@ -24,10 +24,7 @@ class ApiAiChatRepository implements AiChatRepository {
     try {
       final response = await dio.post('/ai/ask', data: {
         'question': question,
-        // Error bubbles ("Bir hata oluştu") never came from the model —
-        // they're this app's own fallback text — so they're excluded
-        // rather than fed back in as if the assistant had actually said
-        // them.
+        // Error bubbles are local fallback text, not something the model said — excluded here.
         'history': [
           for (final message in history)
             if (!message.isError)

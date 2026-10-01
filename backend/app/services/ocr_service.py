@@ -1,10 +1,5 @@
-"""Text extraction from images (requirements doc, section 14).
-
-Not a separate OCR engine — the transcription comes from the same
-multimodal vision call `vision_service.analyze_image` makes (its
-`ocr_text` field). Kept as its own function so swapping in a dedicated
-OCR engine (Tesseract, Google Vision, ...) later, without touching the
-pipeline, is a one-function change.
+"""Not a separate OCR engine — reuses vision_service's `ocr_text` field; kept
+isolated so swapping in a real OCR engine later is a one-function change.
 """
 
 from typing import Any

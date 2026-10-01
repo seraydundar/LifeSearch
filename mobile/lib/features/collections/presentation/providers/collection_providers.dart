@@ -21,10 +21,7 @@ final remoteCollectionDataSourceProvider = Provider<RemoteCollectionDataSource>(
 });
 
 final collectionRepositoryProvider = Provider<CollectionRepository>((ref) {
-  // See `currentUserIdProvider`'s docstring (Faz 12, docs/roadmap.md) —
-  // makes this, `collectionsProvider` and `collectionItemsProvider`
-  // rebuild across an account switch instead of staying bound to
-  // whichever account was signed in when first built.
+  // Forces a rebuild on account switch instead of staying bound to the first user.
   ref.watch(currentUserIdProvider);
   return OfflineCollectionRepository(
     local: ref.watch(collectionLocalDataSourceProvider),
@@ -45,9 +42,7 @@ final collectionItemsProvider = StreamProvider.family<List<Item>, String>((ref, 
       .watchCollectionItems(collectionId, includePrivate: includePrivate);
 });
 
-/// Which collections an item is already in — re-fetched each time the
-/// "Add to Collection" sheet opens rather than kept live, since it's only
-/// read while that sheet is on screen.
+/// Re-fetched each time the "Add to Collection" sheet opens rather than kept live.
 final itemCollectionIdsProvider =
     FutureProvider.autoDispose.family<List<String>, String>((ref, itemId) {
   return ref.watch(collectionRepositoryProvider).collectionIdsForItem(itemId);

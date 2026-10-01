@@ -2,9 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-/// Example queries from the requirements doc (section 1) that the search
-/// box cycles through in its hint text, so an idle field sells the
-/// natural-language pitch instead of reading like a plain filename search.
+/// Hint-text prompts the search box rotates through to preview natural-language queries.
 const _examplePrompts = <String>[
   'Search your life...',
   'Geçen ay baktığım siyah monitörü bul',
@@ -14,15 +12,7 @@ const _examplePrompts = <String>[
   'İçinde PostgreSQL\'den bahsettiğim notları bul',
 ];
 
-/// The search box used on both Home (a `readOnly` teaser that opens the
-/// Search tab) and the Search tab itself (a live field) — one component so
-/// the two stay visually identical and only diverge in behavior.
-///
-/// It's LifeSearch's most central piece of UI (requirements doc, section
-/// 67: "Google Search, but for your personal digital life"), so it gets a
-/// bit more visual weight than a plain `TextField`: a soft shadow to lift
-/// it off the surface, and a rotating hint that previews the kind of
-/// natural-language query the app actually understands.
+/// Shared by Home's `readOnly` teaser and the Search tab's live field, so both stay visually identical.
 class LifeSearchBar extends StatefulWidget {
   const LifeSearchBar({
     super.key,
@@ -37,16 +27,14 @@ class LifeSearchBar extends StatefulWidget {
 
   final TextEditingController? controller;
 
-  /// True for the Home screen teaser — taps navigate to `/search` instead
-  /// of opening the keyboard in place.
+  /// True for the Home screen teaser — taps navigate to `/search` instead of opening the keyboard in place.
   final bool readOnly;
   final bool autofocus;
   final VoidCallback? onTap;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
 
-  /// Overrides the default trailing sparkle hint (e.g. the Search tab's
-  /// clear button once there's a query).
+  /// Overrides the default trailing sparkle hint (e.g. the Search tab's clear button once there's a query).
   final Widget? suffixIcon;
 
   @override
@@ -63,8 +51,7 @@ class _LifeSearchBarState extends State<LifeSearchBar> {
     super.initState();
     _rotation = Timer.periodic(const Duration(milliseconds: 3200), (_) {
       if (!mounted) return;
-      // Only cycle while there's nothing to distract from: an idle teaser,
-      // or an empty field that isn't currently being typed into.
+      // Only cycle an idle teaser or an empty, unfocused field.
       if (widget.readOnly || (_isEmpty && !_focusNode.hasFocus)) {
         setState(() => _promptIndex = (_promptIndex + 1) % _examplePrompts.length);
       }

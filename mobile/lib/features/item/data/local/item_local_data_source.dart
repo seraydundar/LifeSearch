@@ -2,27 +2,16 @@ import 'package:drift/drift.dart';
 
 import '../../../../core/database/app_database.dart';
 
-/// Thin wrapper around the `LocalItems` Drift table. This is the app's
-/// actual source of truth for reads — `OfflineItemRepository` never reads
-/// from Supabase directly, only through here.
+/// Source of truth for reads — `OfflineItemRepository` never reads from
+/// Supabase directly, only through here.
 class ItemLocalDataSource {
   ItemLocalDataSource(this._db);
 
   final AppDatabase _db;
 
-  /// Runs [action] in one Drift transaction — for `OfflineItemRepository`
-  /// to pair a local write with its `SyncQueueDataSource.enqueue()` call
-  /// (P1-03, docs/requirements-audit-2026-09-13.md): those used to be two
-  /// separate `await`s, so the app dying between them left a local-only
-  /// mutation with no queue entry to ever push it — worse, the next
-  /// `_pullRemote()` would then delete it outright, since a local id
-  /// that's neither on the server nor in the pending queue looks exactly
-  /// like "deleted elsewhere" (see `SyncService._pullRemote`'s
-  /// `staleIds`). Any query issued through this same [AppDatabase]
-  /// instance while [action] runs — including `SyncQueueDataSource`'s,
-  /// which shares it — participates in the same transaction, so a
-  /// failure partway through rolls back every write [action] made, not
-  /// just this data source's own.
+  /// Runs [action] atomically so a local write and its queued sync entry
+  /// can't be split by a crash — a write with no queue entry looks
+  /// "deleted elsewhere" to the next pull and gets wiped.
   Future<T> transaction<T>(Future<T> Function() action) => _db.transaction(action);
 
   Stream<List<LocalItem>> watchAll(String userId) {
@@ -32,34 +21,18 @@ class ItemLocalDataSource {
     return query.watch();
   }
 
-  /// Scoped to [userId] like every other read here (`watchAll`,
-  /// `allIds`, ...) — **not** just `t.id.equals(itemId)` on its own
-  /// (Faz 12, madde 3, denetim düzeltmesi — see docs/roadmap.md). A row
-  /// from a *previous* account can still be sitting in this device's
-  /// local cache (the app never wipes it on sign-out, only stops
-  /// showing it in account-scoped lists — see Faz 10a's own documented
-  /// limitation) — without this filter, a route that resolves an item
-  /// straight from its id (a deep link, `ItemByIdLoader`, tapping a
-  /// duplicate/related item) could hand a *different, currently
-  /// signed-in* account someone else's cached note content.
+  /// Must filter by [userId], not just the id: a previous account's rows
+  /// stay cached on sign-out, so an id-only lookup could leak another
+  /// account's cached content to whoever is signed in now.
   Future<LocalItem?> findById(String userId, String itemId) {
     return (_db.select(_db.localItems)
           ..where((t) => t.id.equals(itemId) & t.userId.equals(userId)))
         .getSingleOrNull();
   }
 
-  /// Ids of every one of [userId]'s items still waiting on the AI
-  /// pipeline — `SyncService` polls (see `_scheduleNextPollIfNeeded`) for
-  /// as long as this is non-empty, so `processing`/`completed`/`failed`
-  /// shows up without the user having to background/reopen the app or
-  /// make an edit to trigger another sync.
-  ///
-  /// Returns the actual **ids**, not just whether any exist (Faz 12,
-  /// madde 6, denetim düzeltmesi — see docs/roadmap.md): `SyncService`
-  /// needs to tell "the same stuck job it's already been polling" apart
-  /// from "a brand new item just started processing", so a long-stuck
-  /// job can't permanently disable polling for everything that starts
-  /// afterwards.
+  /// Returns ids, not just a count: `SyncService` polls while this is
+  /// non-empty, and needs to tell an already-tracked stuck job apart from
+  /// a newly started one so one stuck job can't block polling for others.
   Future<Set<String>> unfinishedProcessingIds(String userId) async {
     final rows = await (_db.selectOnly(_db.localItems)
           ..addColumns([_db.localItems.id])
@@ -104,17 +77,14 @@ class ItemLocalDataSource {
         title: Value(title),
         noteContent: Value(content),
         syncStatus: Value(syncStatus),
-        // The content changed, so any existing embeddings are stale —
-        // back to 'pending' until the AI pipeline re-processes it.
+        // Content changed, so stale embeddings need re-processing.
         processingStatus: const Value('pending'),
       ),
     );
   }
 
-  /// Optimistic local-only update for `ItemRepository.retryProcessing()` —
-  /// `processingStatus` itself is otherwise set exclusively by the backend
-  /// pipeline (via a `_pullRemote()` sync), so this is deliberately
-  /// overwritten on the next pull once the real status comes back.
+  /// Optimistic only — overwritten on the next pull once the backend's
+  /// real status comes back.
   Future<void> setProcessingStatus(String itemId, String status) {
     return (_db.update(_db.localItems)..where((t) => t.id.equals(itemId)))
         .write(LocalItemsCompanion(processingStatus: Value(status)));
@@ -144,15 +114,9 @@ class ItemLocalDataSource {
     return (_db.delete(_db.localItems)..where((t) => t.id.isIn(ids))).go();
   }
 
-  /// Replaces the local `LocalTags` cache for every id in [itemIds] with
-  /// [tagRows] (P2-07, docs/requirements-audit-2026-09-13.md) — called by
-  /// `SyncService._pullRemote` each sync with the server's current
-  /// (item, tag) pairs. A wholesale replace rather than a diff: tags have
-  /// no pending/queued-edit state the way item fields do (see
-  /// `LocalTags`'s own docstring), so there's nothing local to clobber.
-  /// [itemIds] scopes the delete to this user's own rows (`LocalTags`
-  /// carries no `userId` of its own — same reasoning as
-  /// `LocalCollectionItems`), and is assumed non-empty by the caller.
+  /// Wholesale replace, not a diff: tags carry no pending/queued state to
+  /// clobber. [itemIds] scopes the delete since `LocalTags` has no
+  /// `userId` column, and is assumed non-empty by the caller.
   Future<void> replaceTags(
     List<String> itemIds,
     List<({String itemId, String name})> tagRows,

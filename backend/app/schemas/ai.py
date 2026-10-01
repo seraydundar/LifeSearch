@@ -13,10 +13,7 @@ class ProcessItemResponse(BaseModel):
 
 
 class ChatTurn(BaseModel):
-    """One earlier turn in the conversation (P2-03, docs/requirements-
-    audit-2026-09-13.md) — `role` is `"user"` or `"assistant"`, mirroring
-    the mobile app's own `ChatRole`.
-    """
+    """role is "user" or "assistant", mirroring the mobile app's ChatRole."""
 
     role: str
     text: str
@@ -25,8 +22,7 @@ class ChatTurn(BaseModel):
 class AskRequest(BaseModel):
     question: str
     limit: int = 8
-    # Oldest first, not including `question` itself — see rag_service.
-    # answer_question's docstring for how this is used.
+    # Oldest first; does not include `question` itself.
     history: list[ChatTurn] = []
 
 
@@ -37,10 +33,7 @@ class AskResponse(BaseModel):
 
 
 class ReprocessStaleEmbeddingsResponse(BaseModel):
-    """P3 (docs/requirements-audit-2026-09-13.md) — see
-    reembedding_service.py. `stale_item_count` is known synchronously
-    (a quick query) even though the actual re-embedding runs in the
-    background after this response is sent."""
+    """stale_item_count is known synchronously; the re-embedding itself runs in the background."""
 
     status: str
     stale_item_count: int

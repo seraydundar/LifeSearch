@@ -6,11 +6,8 @@ import '../../../item/domain/entities/item.dart';
 import '../../../item/presentation/providers/item_providers.dart';
 import '../../../item/presentation/widgets/item_type_icon.dart';
 
-/// The grid counterpart to `ItemListTile` — a square card that shows a real
-/// thumbnail for images/screenshots (fetched lazily, one signed URL per
-/// visible tile, same pattern as item_detail_screen's single image) and
-/// falls back to the type icon for everything else, or if the signed URL
-/// fails to load.
+/// Grid counterpart to `ItemListTile`; shows a thumbnail for images/
+/// screenshots, falling back to the type icon otherwise or on load failure.
 class ItemGridTile extends ConsumerStatefulWidget {
   const ItemGridTile({super.key, required this.item});
 

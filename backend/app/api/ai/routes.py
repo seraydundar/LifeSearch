@@ -1,11 +1,4 @@
-"""AI processing endpoints.
-
-The mobile app calls `POST /ai/process-item` right after a note/PDF
-successfully syncs to Supabase (see the Flutter side's `AiProcessingTrigger`,
-called from `SyncService`). Nothing here talks back to Supabase using an
-admin key — it reuses the caller's own session token, so RLS applies
-exactly as it would if the client made the request itself.
-"""
+"""AI processing endpoints. Uses the caller's own session token (no admin key), so RLS applies."""
 
 import logging
 
@@ -41,16 +34,8 @@ async def process_item_endpoint(
     user: CurrentUser = Depends(require_ai_rate_limit),
 ) -> ProcessItemResponse:
     repo = SupabaseRestRepository(user.access_token)
-    # Created *before* "202 accepted" is returned, not as this task's own
-    # first line (P1-05, docs/requirements-audit-2026-09-13.md):
-    # `BackgroundTasks` only start running after the response is already
-    # on the wire, so a process death in that gap used to leave no trace
-    # at all — no row for `job_recovery.py`'s startup sweep to find, and
-    # a `create_job` failure itself never reached the normal failed/
-    # status flow (it was outside `process_item`'s own try/except).
-    # Raising here instead surfaces it as a normal failed request, which
-    # the mobile client already retries (see `SyncService._triggerAi`'s
-    # queued `trigger_ai` retry).
+    # Job row is created before returning 202, not inside the background task,
+    # so a crash before the task starts still leaves a row for job_recovery.py to find.
     try:
         job_id = await repo.create_job(body.item_id, job_type="chunk_and_embed")
     except Exception as error:
@@ -60,9 +45,7 @@ async def process_item_endpoint(
             detail=f"Could not start processing: {error}",
         ) from error
 
-    # Returns immediately; the item's `processing_status` (and the
-    # matching `processing_jobs` row) is what actually reports progress —
-    # including a bad AI_PROVIDER config, resolved lazily inside the task.
+    # Progress (incl. a bad AI_PROVIDER config) is reported via processing_status, not here.
     background_tasks.add_task(
         process_item,
         body.item_id,
@@ -80,9 +63,7 @@ async def ask_endpoint(
     body: AskRequest,
     user: CurrentUser = Depends(require_ai_rate_limit),
 ) -> AskResponse:
-    """RAG chat (requirements doc, section 23): answers only from the
-    user's own archive, always with the sources it used.
-    """
+    """Answers only from the user's own archive, always with sources."""
     try:
         provider = get_ai_provider(get_settings())
     except (RuntimeError, NotImplementedError, ValueError) as error:
@@ -122,17 +103,8 @@ async def reprocess_stale_embeddings_endpoint(
     background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(require_ai_rate_limit),
 ) -> ReprocessStaleEmbeddingsResponse:
-    """User-triggered fix for a provider/model switch (P3, docs/
-    requirements-audit-2026-09-13.md) — a Settings button for "I just
-    changed AI_PROVIDER, some of my search results might be wrong now."
-    Re-embeds only; see `reembedding_service.py`'s own docstring for why
-    that's a deliberately narrower scope than a full reprocess.
-
-    `stale_item_count` is known synchronously (one quick query) even
-    though the actual re-embedding happens in the background after this
-    response is sent — same "202 now, work after" shape as
-    `/process-item`, just without a `processing_status` the mobile app
-    would need to poll (see `reembed_stale_items`'s docstring for why).
+    """Re-embeds stale chunks after an AI_PROVIDER switch (re-embed only, not a full reprocess).
+    stale_item_count is counted synchronously; the re-embedding itself runs in the background.
     """
     try:
         provider = get_ai_provider(get_settings())

@@ -3,13 +3,8 @@ import '../../domain/entities/search_result.dart';
 import '../../domain/repositories/search_repository.dart';
 import 'local_search_data_source.dart';
 
-/// Wraps the real (semantic/hybrid) search with a local keyword fallback
-/// (requirements doc: "offline-first ... + offline keyword search") —
-/// tried only when the remote call itself fails (no connectivity, the
-/// backend unreachable, no `BACKEND_URL` configured, ...), never as a
-/// first choice, since local keyword matching is strictly worse than the
-/// AI-backed result set. `related()` has no offline analog — it needs
-/// embeddings — so it always goes straight to remote.
+/// Local keyword search is tried only when the remote call fails, never as a first
+/// choice. `related()` has no offline analog (needs embeddings), so it always goes remote.
 class OfflineFallbackSearchRepository implements SearchRepository {
   OfflineFallbackSearchRepository({
     required SearchRepository remote,

@@ -28,9 +28,7 @@ abstract final class AppRoutes {
   static const analytics = '/analytics';
 }
 
-/// Central navigation graph. Auth-gated: signed-out users can only reach
-/// `/login` and `/register`; signed-in users get redirected away from them
-/// into the bottom-nav shell.
+/// Central navigation graph, auth-gated via `redirect` below.
 final goRouterProvider = Provider<GoRouter>((ref) {
   final authRepository = ref.watch(authRepositoryProvider);
 
@@ -61,10 +59,7 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/item/:id/note',
-        // `extra` is the fast path (an in-app tap already has the `Item`
-        // in hand); a cold-started deep link/route restore never has one
-        // — `ItemByIdLoader` resolves it from `:id` instead of crashing
-        // on a `null` cast, see that widget's docstring.
+        // Falls back to ItemByIdLoader when `extra` is absent (e.g. deep link/route restore).
         builder: (context, state) {
           final extra = state.extra as Item?;
           return extra != null
@@ -89,9 +84,7 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: AppRoutes.search,
-        // `extra`, when given, is an initial query to run immediately —
-        // used by tag chips (see item_detail_screen.dart) to jump
-        // straight to that tag's results instead of an empty search box.
+        // `extra`, when given, is an initial query to run immediately (used by tag chips).
         builder: (context, state) => SearchHubScreen(initialQuery: state.extra as String?),
       ),
       GoRoute(

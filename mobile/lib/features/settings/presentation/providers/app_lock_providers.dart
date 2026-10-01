@@ -4,8 +4,7 @@ import '../../data/app_lock_service.dart';
 
 final appLockServiceProvider = Provider<AppLockService>((ref) => AppLockService());
 
-/// Whether the user has turned app-lock on, persisted in secure storage.
-/// Settings' toggle updates this through [setEnabled].
+/// Whether app-lock is on, persisted in secure storage; Settings updates it through [setEnabled].
 final appLockEnabledProvider =
     AsyncNotifierProvider<AppLockEnabledController, bool>(AppLockEnabledController.new);
 
@@ -19,15 +18,10 @@ class AppLockEnabledController extends AsyncNotifier<bool> {
   }
 }
 
-/// Whether this device can even do biometric/PIN auth — Settings hides the
-/// toggle when false.
+/// Whether this device can even do biometric/PIN auth — Settings hides the toggle when false.
 final appLockDeviceSupportedProvider = FutureProvider<bool>((ref) {
   return ref.read(appLockServiceProvider).isDeviceSupported();
 });
 
-/// In-memory only, never persisted — a cold start always begins locked
-/// (false) whenever app-lock is enabled. [AppLockGate] flips this back to
-/// false whenever the app returns from the background, so re-authenticating
-/// is required again rather than staying unlocked forever once the app has
-/// been opened once.
+/// In-memory only; starts locked on cold start, and [AppLockGate] re-locks it on every background return.
 final appLockUnlockedProvider = StateProvider<bool>((ref) => false);

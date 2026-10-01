@@ -1,17 +1,5 @@
-"""Structured logging (requirements doc, section 53).
-
-Every log line is one JSON object on stdout with a timestamp, level,
-logger name, and message, plus whatever identifiers actually apply:
-`request_id` (every request, via `request_logging_middleware`),
-`user_id` (once auth resolves it, via `core.security.get_current_user`),
-and — passed explicitly at each call site — `job_id`, `item_id`,
-`processing_time_ms`. Rule: never log personal document/content bodies,
-only identifiers and timings.
-
-`request_id`/`user_id` travel through `contextvars` rather than being
-threaded through every function signature — each request runs in its own
-asyncio Task, which gets its own copy of the context (PEP 567), so one
-request's values never leak into another's concurrently-running logs.
+"""Structured JSON logging. Never log content bodies, only identifiers/timings.
+request_id/user_id travel via contextvars (per-asyncio-Task), so concurrent requests can't leak.
 """
 
 import contextvars
@@ -30,9 +18,7 @@ request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 user_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("user_id", default=None)
 
-# Every attribute a stdlib LogRecord carries by default — used to tell
-# "the message and its built-ins" apart from whatever a caller passed via
-# `extra={...}`, which is what actually gets merged into the JSON output.
+# Default LogRecord attrs, to separate built-ins from caller-supplied `extra={...}` fields.
 _STANDARD_RECORD_ATTRS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", (), None))) | {
     "message",
     "asctime",
@@ -40,10 +26,7 @@ _STANDARD_RECORD_ATTRS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", (), 
 
 
 class _ContextFilter(logging.Filter):
-    """Stamps the current request's request_id/user_id onto every record
-    emitted while handling it — including from deep inside the AI
-    pipeline, which never sees a request object at all.
-    """
+    """Stamps request_id/user_id onto every record, even deep inside code with no request object."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = request_id_var.get()
@@ -69,32 +52,12 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
-# Nothing in this app's own code calls `logger.debug(...)` — `debug`
-# only ever existed to make root-logger output more verbose in
-# development. Setting the *root* logger to DEBUG did that, but Python's
-# logging hierarchy means every third-party logger that never sets its
-# own level (which is the normal, well-behaved way to write a library)
-# inherits that same DEBUG threshold — including these, whose DEBUG
-# output includes exactly what requirements doc, section 53 says never
-# to log: `openai`'s SDK logs full request/response bodies (prompts,
-# embedding input) at DEBUG, and `httpx`/`httpcore` (which every
-# repository here uses directly for Supabase, not just the OpenAI
-# client) can log request headers at DEBUG — including the
-# `Authorization` bearer token, i.e. the signed-in user's own session,
-# or `service_role`'s if that repository happens to be the sweep in
-# job_recovery.py. Pinning each of these to its own level, regardless of
-# `debug`, stops root's level from ever reaching them — a logger's
-# *own* level always wins over whatever level an ancestor has.
+# At DEBUG these log bodies/headers (incl. bearer tokens); pinned so root's level can't reach them.
 _NOISY_THIRD_PARTY_LOGGERS = ("openai", "httpx", "httpcore")
 
 
 def configure_logging(debug: bool = True) -> None:
-    # On the handler, not the logger: `Logger.filter()` only checks the
-    # *originating* logger's own filters (e.g. `getLogger("app.request")`,
-    # not root), so a filter added to root would silently never run for
-    # any child logger. A handler's filter, by contrast, runs for every
-    # record that reaches it regardless of which logger it came from —
-    # which is what actually stamps request_id/user_id onto everything.
+    # Filter goes on the handler, not the logger: a root-logger filter never runs for child loggers.
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_JsonFormatter())
     handler.addFilter(_ContextFilter())
@@ -110,11 +73,7 @@ def configure_logging(debug: bool = True) -> None:
 async def request_logging_middleware(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
-    """One log line per request — method/path/status/processing_time_ms,
-    never the body or query string content (requirements doc, section
-    53). Also echoes `request_id` back as `X-Request-Id` so a report from
-    the mobile app can be matched to server-side logs.
-    """
+    """One log line per request; never body/query content. Echoes request_id as X-Request-Id."""
     request_id = str(uuid.uuid4())
     token = request_id_var.set(request_id)
     started = time.monotonic()

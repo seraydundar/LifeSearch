@@ -7,11 +7,7 @@ import '../../domain/entities/collection_suggestion.dart';
 import '../providers/collection_providers.dart';
 import '../providers/collection_suggestion_providers.dart';
 
-/// Smart Collections (requirements doc, section 129) — AI-clustered
-/// groups of items the user hasn't organized yet, shown above the plain
-/// collection list. Purely additive: nothing here blocks or errors
-/// Library if there are no suggestions (or no backend configured at
-/// all) — the section just doesn't render.
+/// Renders nothing if there are no suggestions (or no backend configured).
 class CollectionSuggestionsSection extends ConsumerWidget {
   const CollectionSuggestionsSection({super.key});
 

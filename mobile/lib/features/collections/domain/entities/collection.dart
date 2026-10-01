@@ -2,9 +2,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'collection.freezed.dart';
 
-/// A user-made grouping of items (requirements doc, section 28). `isSmart`
-/// is reserved for AI-suggested collections — nothing in the app creates
-/// one with `isSmart: true` yet, see infra/supabase/migrations/0008_collections.sql.
+/// `isSmart` is reserved for AI-suggested collections; nothing creates one with it true yet.
 @freezed
 sealed class Collection with _$Collection {
   const factory Collection({

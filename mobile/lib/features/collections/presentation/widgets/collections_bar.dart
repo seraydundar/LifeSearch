@@ -6,9 +6,6 @@ import '../../../../shared/extensions/build_context_x.dart';
 import '../providers/collection_providers.dart';
 import 'create_collection_dialog.dart';
 
-/// Horizontal strip of the user's collections at the top of Library
-/// (requirements doc, section 28) — a "+ New" chip always leads, tapping
-/// a collection opens its contents.
 class CollectionsBar extends ConsumerWidget {
   const CollectionsBar({super.key});
 

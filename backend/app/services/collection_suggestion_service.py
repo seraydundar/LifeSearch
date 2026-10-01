@@ -1,14 +1,7 @@
-"""Smart Collections — the AI-suggestion half (requirements doc, section
-129). `0008_collections.sql` added plain, user-made collections; this is
-what suggests them: cluster the user's not-yet-collected items by
-embedding similarity (`item_similarity_pairs`, done in SQL — see
-`infra/supabase/migrations/0009_collection_suggestions.sql`), then name
-each cluster.
-
-Clustering itself never needs an AI provider — only the naming step
-does, and even that degrades to a plain type-based name instead of
-failing when no key is configured (same "AI is optional, not required"
-pattern as duplicate detection).
+"""Smart Collections suggestion: cluster not-yet-collected items by embedding
+similarity (`item_similarity_pairs`, computed in SQL), then name each cluster.
+Naming needs an AI provider; clustering doesn't, and degrades to a plain
+type-based name when no provider is configured.
 """
 
 import asyncio
@@ -29,10 +22,7 @@ _TYPE_LABELS = {
 
 
 class _UnionFind:
-    """Tracks which items have been connected (directly or transitively)
-    by a similar-enough pair, so a chain A~B~C ends up in one cluster
-    even though A and C were never compared directly.
-    """
+    """Groups items connected directly or transitively (A~B~C -> one cluster)."""
 
     def __init__(self) -> None:
         self._parent: dict[str, str] = {}
@@ -67,9 +57,7 @@ def _cluster(pairs: list[dict[str, Any]]) -> list[dict[str, dict[str, Any]]]:
 
 
 def _fallback_name(items: dict[str, dict[str, Any]]) -> str:
-    """Used when there's no AI provider (or it fails) — a plain but
-    honest name beats blocking the suggestion entirely.
-    """
+    """No AI provider, or it failed — a plain name beats no suggestion."""
     type_counts: dict[str, int] = {}
     for item in items.values():
         type_counts[item["type"]] = type_counts.get(item["type"], 0) + 1
@@ -91,8 +79,6 @@ async def _named_via_ai(items: dict[str, dict[str, Any]], provider: AIProvider) 
     try:
         name = await provider.generate_text(prompt)
     except Exception:
-        # Naming is a nice-to-have on top of a nice-to-have — never let a
-        # flaky provider turn a working suggestion into a failed request.
         return None
     return name.strip().strip('"').strip("'") or None
 
@@ -104,20 +90,13 @@ async def suggest_collections(
     similarity_threshold: float = 0.75,
     min_group_size: int = 3,
 ) -> list[dict[str, Any]]:
-    """Returns `[{"suggested_name": str, "items": [{"item_id", "title",
-    "item_type"}, ...]}, ...]` — clusters smaller than `min_group_size`
-    are dropped since a pair of similar items is what "Related items"
-    already surfaces; a *collection* suggestion should be worth the
-    user's attention.
+    """Clusters smaller than `min_group_size` are dropped — a mere pair is
+    already covered by "Related items".
     """
     pairs = await repo.item_similarity_pairs(similarity_threshold=similarity_threshold)
     clusters = [c for c in _cluster(pairs) if len(c) >= min_group_size]
 
-    # Each cluster's naming call is independent of every other's — run them
-    # concurrently instead of one-at-a-time, so a user with several
-    # suggestions waits for the slowest single completion call, not their
-    # sum. gather() preserves input order in its result regardless of which
-    # call actually finishes first, so this still lines up with `clusters`.
+    # Run naming calls concurrently; gather() keeps results aligned with clusters.
     if provider is not None:
         names = await asyncio.gather(*(_named_via_ai(c, provider) for c in clusters))
     else:
