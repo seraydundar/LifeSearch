@@ -192,8 +192,12 @@ class _MonthlyBars extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return SizedBox(
-      height: 100,
+    // A fixed-height SizedBox here used to overflow by a few pixels — the
+    // count label + bar + month label's actual height varies with font
+    // size/scale and doesn't match any single hardcoded number.
+    // IntrinsicHeight sizes the row to whatever its tallest column
+    // actually needs instead.
+    return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [

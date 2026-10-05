@@ -4116,3 +4116,27 @@ Görüntüle, Yoksay) eklendi — bu özelliğin ikisinde de daha önce hiç
 testi yoktu.
 
 Mobile: `flutter analyze` temiz, tüm suite yeşil (305 test, +5).
+
+## Faz 42 — Analytics'teki aylık grafik taşıyordu (6px overflow)
+
+Kullanıcı Analytics ekranında "BOTTOM OVERFLOWED BY 6.0 PIXELS" uyarısı
+gördü (son 6 ay bar grafiğinin altında).
+
+Kök sebep: `_MonthlyBars` sabit bir `SizedBox(height: 100)` içine sayı
+etiketi + çubuk + ay etiketini sığdırmaya çalışıyordu — bu üçünün
+toplam doğal yüksekliği (yazı tipi/satır yüksekliğine bağlı olarak)
+100'ü birkaç piksel aşıyordu, özellikle o ayda yeterince içerik olup
+çubuk uzadığında (kullanıcının ekranında Eylül ayında 10 item vardı).
+
+Düzeltme: sabit piksel yüksekliği `IntrinsicHeight` ile değiştirildi —
+satır artık en uzun sütununun gerçekten ihtiyaç duyduğu yüksekliğe
+göre kendiliğinden boyutlanıyor, yazı tipi boyutu/erişilebilirlik
+ölçeği değişse bile taşmıyor.
+
+Testler: `analytics_screen_test.dart`'a yeni bir test — o ayki item
+sayısını 10'a çıkarıp `tester.takeException()`'ın `null` kaldığını
+doğruluyor. Düzeltmeden önce bu testin gerçekten kullanıcının gördüğü
+hatayı ("overflowed by 6.0 pixels") birebir yakaladığı `git stash` ile
+doğrulandı.
+
+Mobile: `flutter analyze` temiz, tüm suite yeşil (306 test, +1).

@@ -121,4 +121,22 @@ void main() {
 
     expect(find.text('Henüz etiket yok.'), findsOneWidget);
   });
+
+  // Found live: the monthly bar chart's fixed-height SizedBox was a few
+  // pixels too short for its own content (count label + bar + month
+  // label), overflowing visibly ("BOTTOM OVERFLOWED BY 6.0 PIXELS")
+  // whenever the current month had enough items for a tall bar.
+  testWidgets('a busy current month does not overflow the monthly bar chart', (tester) async {
+    final now = DateTime.now();
+    final repo = FakeItemRepository(
+      initialItems: [
+        for (var i = 0; i < 10; i++) item(id: 'item-$i', createdAt: DateTime(now.year, now.month, 1)),
+      ],
+    );
+
+    await tester.pumpWidget(wrap(repo));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
 }
