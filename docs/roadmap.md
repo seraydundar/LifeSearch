@@ -4166,3 +4166,19 @@ gördüğü sorunu (359.75px dar vs 800px tam genişlik) birebir yakaladığı
 `git stash` ile doğrulandı.
 
 Mobile: `flutter analyze` temiz, tüm suite yeşil (308 test, +2).
+
+## Faz 44 — Home selamlaması gece yarısından sonra hâlâ "Good morning" diyordu
+
+Faz 38'in 3 dilimli `greetingForHour`'u (12'den önce sabah, 18'den
+önce öğlen, sonrası akşam) gece 02:19'da da "Good morning" diyordu —
+kullanıcı canlı testte fark etti. 0-11 aralığının tamamını "sabah"
+saymak, gece yarısıyla sabah 5 arasını da kapsıyordu.
+
+Düzeltme: 5 dilime çıkarıldı — 05:00 öncesi ve 22:00 sonrası "Good
+night", 05-11 "Good morning", 12-17 "Good afternoon", 18-21 "Good
+evening".
+
+Testler: `home_greeting_test.dart` yeni sınırlara göre yeniden
+yazıldı (gece yarısı/geç gece artık ayrı test ediliyor).
+
+Mobile: `flutter analyze` temiz, tüm suite yeşil (310 test, +2).

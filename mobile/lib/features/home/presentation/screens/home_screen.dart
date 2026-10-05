@@ -11,9 +11,11 @@ import '../../../library/presentation/widgets/item_grid_tile.dart';
 /// Plain function (not inline in `build`) so it's testable without faking
 /// `DateTime.now()` through a widget pump.
 String greetingForHour(int hour) {
+  if (hour < 5) return 'Good night';
   if (hour < 12) return 'Good morning';
   if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 22) return 'Good evening';
+  return 'Good night';
 }
 
 class HomeScreen extends ConsumerWidget {
