@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
 import 'package:lifesearch/features/item/presentation/providers/item_providers.dart';
 import 'package:lifesearch/features/item/presentation/screens/item_detail_screen.dart';
@@ -273,6 +274,87 @@ void main() {
     // returning null must never crash or blank the screen.
     expect(find.text('Untitled from search'), findsOneWidget);
     expect(find.text('Dosyayı Aç'), findsNothing); // never had a real storagePath to show one for
+  });
+
+  group('duplicate banner', () {
+    testWidgets('shows once the item is flagged, and "Görüntüle" opens the original',
+        (tester) async {
+      final original = Item(
+        id: 'item-original',
+        type: ItemType.pdf,
+        title: 'Original report',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+      );
+      final copy = Item(
+        id: 'item-1',
+        type: ItemType.pdf,
+        title: 'Copy report',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+        duplicateOfItemId: 'item-original',
+        duplicateSimilarity: 1.0,
+      );
+      final repo = FakeItemRepository(initialItems: [original, copy]);
+
+      final router = GoRouter(routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => ProviderScope(
+            overrides: [
+              itemRepositoryProvider.overrideWithValue(repo),
+              searchRepositoryProvider.overrideWithValue(FakeSearchRepository()),
+            ],
+            child: ItemDetailScreen(item: copy),
+          ),
+        ),
+        GoRoute(path: '/item/:id', builder: (context, state) => const Scaffold(body: Text('original screen'))),
+      ]);
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('zaten eklenmiş'), findsOneWidget);
+      expect(find.text('Original report'), findsOneWidget);
+
+      await tester.tap(find.text('Görüntüle'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('original screen'), findsOneWidget);
+    });
+
+    testWidgets('"Yoksay" dismisses the banner for good', (tester) async {
+      final original = Item(
+        id: 'item-original',
+        type: ItemType.pdf,
+        title: 'Original report',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+      );
+      final copy = Item(
+        id: 'item-1',
+        type: ItemType.pdf,
+        title: 'Copy report',
+        processingStatus: 'completed',
+        favorite: false,
+        createdAt: DateTime(2026, 1, 1),
+        duplicateOfItemId: 'item-original',
+        duplicateSimilarity: 1.0,
+      );
+      final repo = FakeItemRepository(initialItems: [original, copy]);
+
+      await tester.pumpWidget(wrap(copy, repo: repo));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('zaten eklenmiş'), findsOneWidget);
+
+      await tester.tap(find.text('Yoksay'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('zaten eklenmiş'), findsNothing);
+    });
   });
 
   // P1-02 (docs/requirements-audit-2026-09-13.md): this screen used to

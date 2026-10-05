@@ -7,6 +7,7 @@ import '../../../../shared/widgets/private_item_locked_view.dart';
 import '../../../collections/presentation/widgets/add_to_collection_sheet.dart';
 import '../../domain/entities/item.dart';
 import '../providers/item_providers.dart';
+import '../widgets/duplicate_banner.dart';
 import '../widgets/entities_row.dart';
 import '../widgets/tags_row.dart';
 
@@ -30,6 +31,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   /// `null` in create mode. Mutable so favorite/private/retry and
   /// `watchItemByIdProvider` can update it optimistically/live.
   late Item? _item = widget.item;
+  Item? _duplicateTarget;
 
   /// Same contract as `ItemDetailScreen._requiresRevealToView`: captured
   /// once from the item this screen opened with, so marking it private
@@ -47,9 +49,38 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       if (fresh != null) _item = fresh;
       _requiresRevealToView = _item!.private;
       _loadContent();
+      _loadDuplicateTarget();
     } else {
       _requiresRevealToView = false;
     }
+  }
+
+  /// Same contract as `ItemDetailScreen._loadDuplicateTarget`.
+  Future<void> _loadDuplicateTarget() async {
+    final current = _item;
+    final duplicateOfItemId = current?.duplicateOfItemId;
+    if (duplicateOfItemId == null || current!.duplicateDismissed) return;
+    final target = await ref.read(itemRepositoryProvider).findById(duplicateOfItemId);
+    if (mounted) setState(() => _duplicateTarget = target);
+  }
+
+  Future<void> _dismissDuplicate() async {
+    final current = _item!;
+    setState(() => _item = current.copyWith(duplicateDismissed: true)); // optimistic
+    try {
+      await ref.read(itemRepositoryProvider).dismissDuplicate(current.id);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _item = current); // revert
+      context.showErrorSnackBar('Güncellenemedi.');
+    }
+  }
+
+  void _openDuplicateTarget() {
+    final target = _duplicateTarget;
+    if (target == null) return;
+    final route = target.type == ItemType.note ? '/item/${target.id}/note' : '/item/${target.id}';
+    context.push(route, extra: target);
   }
 
   Future<void> _loadContent() async {
@@ -172,12 +203,16 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
       // Live re-check, same reasoning as `ItemDetailScreen._applyFreshItem`.
       ref.listen(watchItemByIdProvider(widget.item!.id), (previous, next) {
         if (next == null) return;
+        final hadDuplicateOfItemId = previous?.duplicateOfItemId;
         setState(() => _item = next);
         if (previous != null &&
             previous.processingStatus != 'completed' &&
             next.processingStatus == 'completed') {
           ref.invalidate(itemTagsProvider(next.id));
           ref.invalidate(itemEntitiesProvider(next.id));
+        }
+        if (next.duplicateOfItemId != null && next.duplicateOfItemId != hadDuplicateOfItemId) {
+          _loadDuplicateTarget(); // wasn't known yet when we last checked
         }
       });
     }
@@ -234,6 +269,17 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (item != null &&
+                      !item.duplicateDismissed &&
+                      item.duplicateOfItemId != null &&
+                      _duplicateTarget != null) ...[
+                    DuplicateBanner(
+                      target: _duplicateTarget!,
+                      onView: _openDuplicateTarget,
+                      onDismiss: _dismissDuplicate,
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   TextField(
                     controller: _titleController,
                     style: Theme.of(context).textTheme.titleLarge,

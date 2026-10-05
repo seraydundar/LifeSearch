@@ -203,6 +203,84 @@ void main() {
     });
   });
 
+  // The duplicate banner existed only in `ItemDetailScreen` — notes go
+  // through this screen instead, which never had the wiring at all
+  // (found live: a note's own duplicate, correctly flagged by the
+  // backend, never showed anything here).
+  group('duplicate banner', () {
+    testWidgets('shows once the note is flagged, and "Görüntüle" opens the original',
+        (tester) async {
+      final original = note(id: 'note-original', title: 'Original note');
+      final copy = note(id: 'note-1', title: 'Copy note').copyWith(
+        duplicateOfItemId: 'note-original',
+        duplicateSimilarity: 1.0,
+      );
+      final repo = FakeItemRepository(initialItems: [original, copy]);
+
+      final router = GoRouter(routes: [
+        GoRoute(path: '/', builder: (context, state) => NoteEditorScreen(item: copy)),
+        GoRoute(path: '/item/:id/note', builder: (context, state) => const Scaffold(body: Text('original screen'))),
+      ]);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [itemRepositoryProvider.overrideWithValue(repo)],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('zaten eklenmiş'), findsOneWidget);
+      expect(find.text('Original note'), findsOneWidget);
+
+      await tester.tap(find.text('Görüntüle'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('original screen'), findsOneWidget);
+    });
+
+    testWidgets('"Yoksay" dismisses the banner for good', (tester) async {
+      final original = note(id: 'note-original', title: 'Original note');
+      final copy = note(id: 'note-1', title: 'Copy note').copyWith(
+        duplicateOfItemId: 'note-original',
+        duplicateSimilarity: 1.0,
+      );
+      final repo = FakeItemRepository(initialItems: [original, copy]);
+
+      await tester.pumpWidget(wrap(copy, repo: repo));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('zaten eklenmiş'), findsOneWidget);
+
+      await tester.tap(find.text('Yoksay'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('zaten eklenmiş'), findsNothing);
+    });
+
+    testWidgets('a note flagged as a duplicate while this screen is already open shows it live',
+        (tester) async {
+      final original = note(id: 'note-original', title: 'Original note');
+      final copy = note(id: 'note-1', title: 'Copy note', processingStatus: 'pending');
+      final repo = FakeItemRepository(initialItems: [original, copy]);
+
+      await tester.pumpWidget(wrap(copy, repo: repo));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('zaten eklenmiş'), findsNothing);
+
+      // Same shape as processing finishing live — the background job
+      // flags the duplicate in the same run it marks the item completed.
+      repo.updateItem(copy.copyWith(
+        processingStatus: 'completed',
+        duplicateOfItemId: 'note-original',
+        duplicateSimilarity: 1.0,
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('zaten eklenmiş'), findsOneWidget);
+    });
+  });
+
   // P1-02 (docs/requirements-audit-2026-09-13.md) — same contract as
   // `ItemDetailScreen`'s: see that screen's test file for the full
   // rationale.

@@ -4084,3 +4084,35 @@ ekrandan hiç çıkmadan yeniden adlandırıp başlığın anında güncellendi�
 doğruluyor.
 
 Mobile: `flutter analyze` temiz, tüm suite yeşil (300 test, +1).
+
+## Faz 41 — Duplicate banner notlarda hiç çıkmıyordu
+
+Kullanıcı test checklist'inde işaretlemediği "Duplicate banner" maddesini
+denedi: aynı metinli iki not ekledi, ikincisi tamamlandı ama banner hiç
+çıkmadı. Backend'i (Supabase'deki `items` tablosu) ve simülatörün yerel
+Drift veritabanını (`sqlite3` ile) doğrudan sorgulayarak önce arka ucun
+`duplicate_of_item_id`/`duplicate_similarity` alanlarını doğru
+hesaplayıp hem Supabase'e hem telefona senkronladığını doğruladım — asıl
+sorun orada değildi.
+
+Kök sebep: duplicate banner kodu yalnızca `ItemDetailScreen`'de
+yazılmıştı (görsel/PDF/belge/ses/link item'ları için) — notlar ise
+tamamen ayrı bir ekrana (`NoteEditorScreen`) gidiyor ve o ekranda bu
+özellik hiç yazılmamıştı. Yani bir UI gecikmesi değil, gerçek bir eksik
+özellikti.
+
+Düzeltme: `_DuplicateBanner` widget'ı `ItemDetailScreen`'den çıkarılıp
+paylaşılan `widgets/duplicate_banner.dart`'a taşındı (`DuplicateBanner`,
+public). `NoteEditorScreen`'e `ItemDetailScreen` ile birebir aynı
+desen eklendi: `_duplicateTarget` state'i, `_loadDuplicateTarget()`
+(`initState`'te ve canlı dinleyicide — arka planda işlem biterken ekran
+açık kaldıysa da yakalıyor), `_dismissDuplicate()`, `_openDuplicateTarget()`,
+ve banner'ın body'nin en üstünde gösterilmesi.
+
+Testler: hem `note_editor_screen_test.dart`'a (3 yeni test: banner
+gösterimi + Görüntüle, Yoksay, canlı güncelleme) hem de
+`item_detail_screen_test.dart`'a (2 yeni test: banner gösterimi +
+Görüntüle, Yoksay) eklendi — bu özelliğin ikisinde de daha önce hiç
+testi yoktu.
+
+Mobile: `flutter analyze` temiz, tüm suite yeşil (305 test, +5).
