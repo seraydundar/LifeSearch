@@ -16,20 +16,27 @@ class CollectionDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final itemsAsync = ref.watch(collectionItemsProvider(collectionId));
+    // `name` is only the value passed in at navigation time — a rename
+    // while this screen is open wouldn't show here without also watching
+    // the live list and taking the current name from it.
+    final liveName = ref.watch(collectionsProvider).valueOrNull
+        ?.where((c) => c.id == collectionId)
+        .firstOrNull
+        ?.name;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(name),
+        title: Text(liveName ?? name),
         actions: [
           IconButton(
             icon: const Icon(Icons.edit_outlined),
             tooltip: 'Yeniden adlandır',
-            onPressed: () => _rename(context, ref),
+            onPressed: () => _rename(context, ref, liveName ?? name),
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: 'Koleksiyonu sil',
-            onPressed: () => _delete(context, ref),
+            onPressed: () => _delete(context, ref, liveName ?? name),
           ),
         ],
       ),
@@ -79,8 +86,8 @@ class CollectionDetailScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _rename(BuildContext context, WidgetRef ref) async {
-    final newName = await showCreateCollectionDialog(context, initialName: name);
+  Future<void> _rename(BuildContext context, WidgetRef ref, String currentName) async {
+    final newName = await showCreateCollectionDialog(context, initialName: currentName);
     if (newName == null || newName.trim().isEmpty) return;
     try {
       await ref.read(collectionRepositoryProvider).renameCollection(collectionId, newName.trim());
@@ -89,12 +96,12 @@ class CollectionDetailScreen extends ConsumerWidget {
     }
   }
 
-  Future<void> _delete(BuildContext context, WidgetRef ref) async {
+  Future<void> _delete(BuildContext context, WidgetRef ref, String currentName) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Koleksiyonu sil'),
-        content: Text('"$name" silinecek. İçindeki öğeler silinmez.'),
+        content: Text('"$currentName" silinecek. İçindeki öğeler silinmez.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(context).pop(false), child: const Text('Vazgeç')),

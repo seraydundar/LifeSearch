@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lifesearch/features/collections/domain/entities/collection.dart';
 import 'package:lifesearch/features/collections/presentation/providers/collection_providers.dart';
 import 'package:lifesearch/features/collections/presentation/screens/collection_detail_screen.dart';
 import 'package:lifesearch/features/item/domain/entities/item.dart';
@@ -48,5 +49,30 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Docker Notes'), findsOneWidget);
+  });
+
+  // The AppBar title used to be the `name` passed in at navigation time —
+  // a rename while this screen stayed open never showed until leaving and
+  // coming back, since nothing re-read the collection's current name.
+  testWidgets('renaming updates the title immediately, without leaving the screen',
+      (tester) async {
+    final repo = FakeCollectionRepository(
+      initialCollections: [
+        Collection(id: 'c1', name: 'Docker', isSmart: false, createdAt: DateTime(2026, 1, 1)),
+      ],
+    );
+    await tester.pumpWidget(wrap(repo));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Docker'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Yeniden adlandır'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Docker Notları');
+    await tester.tap(find.text('Kaydet'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Docker Notları'), findsOneWidget);
+    expect(find.text('Docker'), findsNothing);
   });
 }

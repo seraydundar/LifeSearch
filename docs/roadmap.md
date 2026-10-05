@@ -4058,3 +4058,29 @@ backend suite yeşil (238/238) — hiçbir test sayısı değişmedi (yalnızca
 yorumlar değişti). Diff ayrıca elle örneklenerek (kod gibi görünen her
 silinen satır tek tek kontrol edilerek) hiçbir gerçek kod satırının
 yanlışlıkla gitmediği doğrulandı.
+
+## Faz 40 — Koleksiyon yeniden adlandırma: başlık ekranda güncellenmiyordu
+
+Kullanıcı canlı testte buldu: bir koleksiyonu açıp yeniden adlandırınca
+AppBar başlığı eski ismi göstermeye devam ediyordu — geri gidip tekrar
+girince yeni isim görünüyordu.
+
+Kök sebep: `CollectionDetailScreen`'in başlığı, `go_router`'ın
+`state.extra` ile navigasyon anında bir kerelik geçirilen sabit `name`
+parametresini kullanıyordu — `renameCollection` çağrısı yerel DB'yi ve
+`collectionsProvider`'ı (zaten canlı bir `StreamProvider`) doğru
+güncelliyordu, ama bu ekranın kendisi o stream'i hiç izlemiyordu.
+Ekrandan çıkıp tekrar girmek işe yarıyordu çünkü o zaman router yeni
+`name`'i Koleksiyonlar şeridinden taze okuyup geçiriyordu.
+
+Düzeltme: `build()` artık `collectionsProvider`'ı izleyip
+`collectionId`'ye göre güncel ismi buluyor (`liveName`), başlıkta ve
+yeniden adlandır/sil diyaloglarında `liveName ?? name` kullanılıyor —
+`name` yalnızca ilk kare çizilene kadar (stream henüz hiç veri
+vermemişken) bir geri dönüş değeri.
+
+Testler: `collection_detail_screen_test.dart`'a yeni bir test —
+ekrandan hiç çıkmadan yeniden adlandırıp başlığın anında güncellendiğini
+doğruluyor.
+
+Mobile: `flutter analyze` temiz, tüm suite yeşil (300 test, +1).
