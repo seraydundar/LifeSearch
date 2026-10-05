@@ -4140,3 +4140,29 @@ hatayı ("overflowed by 6.0 pixels") birebir yakaladığı `git stash` ile
 doğrulandı.
 
 Mobile: `flutter analyze` temiz, tüm suite yeşil (306 test, +1).
+
+## Faz 43 — "Koleksiyona Ekle" sayfası koleksiyon yoksa dar açılıyordu
+
+Kullanıcı bir item'dan "Koleksiyona Ekle"yi açınca, hiç koleksiyonu
+yokken sayfanın (tek satırlık "Henüz koleksiyonun yok." metnine göre)
+dar ve ortada bir kutu gibi açıldığını, bir koleksiyon ekleyince aynı
+sayfanın tam genişliğe (ekran kenarlarına) yayıldığını fark etti —
+verilere göre tutarsız bir genişlik.
+
+Kök sebep: `AddToCollectionSheet`'in `showModalBottomSheet` içeriği
+hiçbir yerde genişliğe zorlanmıyordu — `Column`'un `mainAxisSize.min`
+olması yalnızca dikey eksenle ilgili, ama içerik çok kısa olduğunda
+(yalnızca başlık + tek satır mesaj + buton) sheet kendini içeriğin
+doğal genişliğine küçültüyordu.
+
+Düzeltme: `Padding`'i bir `SizedBox(width: double.infinity)` ile
+sarmalayıp sheet'i her zaman tam genişliğe zorladım — koleksiyon olsun
+olmasın artık aynı genişlikte açılıyor.
+
+Testler: yeni `test/widget/add_to_collection_sheet_test.dart` (2 test
+— boş ve dolu durumda sheet genişliğinin Scaffold genişliğiyle aynı
+olduğunu doğruluyor). Düzeltmeden önce ilk testin gerçekten kullanıcının
+gördüğü sorunu (359.75px dar vs 800px tam genişlik) birebir yakaladığı
+`git stash` ile doğrulandı.
+
+Mobile: `flutter analyze` temiz, tüm suite yeşil (308 test, +2).
