@@ -7,26 +7,22 @@ notes, voice memos and links from daily life, then find them again with
 natural-language, semantic search — *"Google Search, but for your personal
 digital life."*
 
-> Status: all 9 planned phases have code, plus several passes beyond the
-> requirements doc's own scope (tags, offline keyword search, structured
-> logging, EXIF location, CI/CD, a full Settings screen, rate limiting,
-> reranking, ...). A full independent audit against the 71-item
-> requirements doc, [`docs/requirements-audit-2026-09-13.md`](docs/requirements-audit-2026-09-13.md),
-> found and fixed the sharpest cross-account and per-job data-integrity
-> gaps since (account-switch isolation for search/chat/private reveal,
-> private items leaking past reveal in search/RAG, session pinning
-> across a multi-step upload, job-gated writes so an older reprocessing
-> run can't overwrite a newer one's output, a DNS-rebinding gap in URL
-> fetching, and several content/search gaps — see that document's
-> "Önerilen uygulama sırası" and the git history since for what's landed
-> — plus what's still open: a real two-account Supabase/RLS acceptance
-> run (needs a live project, not just code), offline tag search,
-> export completeness/pagination, and the further-out items below).
-> **The requirements doc's section 66 MVP scenario should not be
-> considered done until that live acceptance run happens.** 208 backend
-> + 251 mobile tests green (passing tests, not a correctness guarantee —
-> see the audit doc). Full requirements:
-> [`docs/requirements.md`](docs/requirements.md).
+A solo-built, full-stack mobile project: offline-first Flutter client,
+FastAPI AI backend, Supabase/pgvector for auth + storage + vector search.
+310 mobile + 238 backend tests, built incrementally across 40+ phases
+(full history in [`docs/roadmap.md`](docs/roadmap.md)).
+
+**Highlights**
+- Hybrid (keyword + vector) semantic search with LLM reranking
+- RAG-based "Ask AI" chat, citation-filtered sources, multi-turn context
+- Offline-first sync: every write lands in a local Drift cache first,
+  then queues to Supabase in the background, with conflict resolution
+  and incremental pulls
+- Per-item **and** device-level Privacy Mode, biometric-gated
+- Pluggable `AIProvider` interface — OpenAI, Gemini, or a fully local
+  Ollama pipeline, swappable without touching the processing pipeline
+- Duplicate detection, EXIF-based location/capture metadata, OCR
+  fallback for scanned PDFs
 
 ## Screenshots
 
@@ -68,7 +64,7 @@ flowchart LR
         API --> Pipeline --> Provider
     end
 
-    AI["OpenAI\n(embeddings, vision, Whisper, chat)"]
+    AI["OpenAI / Gemini / Ollama\n(embeddings, vision, transcription, chat)"]
 
     Repo -- "REST + signed URLs" --> Storage
     Repo -- "auth, CRUD, RPCs" --> PG
@@ -79,18 +75,11 @@ flowchart LR
     Provider --> AI
 ```
 
-Every mobile write goes to Drift first, then syncs to Supabase in the
-background (offline-first — see requirements doc, rule "yazma önce
-local'e"). There's no Supabase Realtime channel wired up: a background
-job's `processing`/`completed`/`failed` transition reaches the device
-only through `SyncService`'s own pull/poll cycle (on a mutation,
-connectivity change, or a short interval while something is still
-pending — see `sync_service.dart`), not a push. The backend never gets
-the user's Supabase password or the `service_role` key from the app; it
-verifies the caller's own JWT against `/auth/v1/user` on every request
-and never touches Storage or Postgres except as that user. `AIProvider`
-is an interface, not a hard dependency on OpenAI — swapping providers
-doesn't touch the pipeline.
+Every mobile write lands in Drift first, then syncs to Supabase in the
+background — no Realtime channel, a background job's status reaches the
+device through `SyncService`'s own pull/poll cycle instead. The backend
+never holds the user's password or the `service_role` key; it verifies
+the caller's own JWT on every request and acts only as that user.
 
 ## Monorepo layout
 
@@ -130,63 +119,24 @@ cp .env.example .env   # fill in Supabase URL/anon key + an AI provider key
 uvicorn app.main:app --reload
 ```
 
-> macOS/Homebrew note: Homebrew's Python and macOS's system `libexpat`
-> disagree on ABI, which breaks anything importing `xml`/`pyexpat` —
-> `venv` creation, and later `pypdf` (used for PDF text extraction). Run
-> `brew install expat` once, then prefix every backend command —
-> `venv` creation, `uvicorn`, `pytest`, `ruff` — with
-> `DYLD_LIBRARY_PATH="$(brew --prefix expat)/lib"`.
+> **macOS note**: Homebrew's Python and macOS's system `libexpat`
+> disagree on ABI. Run `brew install expat` once, then prefix every
+> backend command with `DYLD_LIBRARY_PATH="$(brew --prefix expat)/lib"`.
 
-For AI processing (`POST /ai/process-item`) to actually produce
-embeddings, `AI_PROVIDER=openai` and `OPENAI_API_KEY` need to be set in
-`backend/.env`. Without a key, the endpoint still responds and the item's
-`processing_status` correctly flips to `failed` with a clear
-`error_message` on its `processing_jobs` row — it degrades, it doesn't
-crash.
-
-For the mobile app to reach a locally-running backend, set
-`BACKEND_URL` in `mobile/.env` — `http://127.0.0.1:8000` works from the
-iOS Simulator (shares the Mac's network stack); Android emulator needs
-`http://10.0.2.2:8000`; a physical device needs the Mac's LAN IP.
-
-### Local Postgres + pgvector (optional, for backend tests)
-
-```bash
-docker compose up -d db
-```
-
-## Environment variables
-
-Copy `backend/.env.example` to `backend/.env`. Never commit `.env` files —
-API keys and the Supabase service role key live only in the backend
-environment, never in the Flutter app (see requirements doc, section 36).
+For AI processing to actually produce embeddings, set `AI_PROVIDER`
+(`openai` / `gemini` / `local`) and the matching key in `backend/.env`
+— without one, items still save, just stay unprocessed. For the mobile
+app to reach a local backend, set `BACKEND_URL` in `mobile/.env`
+(`http://127.0.0.1:8000` on iOS Simulator, `http://10.0.2.2:8000` on
+Android emulator). A local Postgres+pgvector for backend tests:
+`docker compose up -d db`.
 
 ## Tests
 
 ```bash
-# Backend
 cd backend && DYLD_LIBRARY_PATH="$(brew --prefix expat)/lib" .venv/bin/pytest
-cd backend && DYLD_LIBRARY_PATH="$(brew --prefix expat)/lib" .venv/bin/ruff check .
-
-# Mobile
-cd mobile && flutter analyze
 cd mobile && flutter test
 ```
 
-There's also an `integration_test/` suite that runs the real app (real
-go_router, real screen wiring, real rendering) on an actual
-simulator/device — only the Supabase/backend boundary is faked. It needs
-a booted device, so it isn't part of `flutter test` or CI:
-
-```bash
-cd mobile && flutter test integration_test/app_test.dart -d <device-id>
-```
-
-Every push/PR to `main` runs the same checks in CI — see
+CI runs the same checks on every push — see
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-
-## Roadmap
-
-See [`docs/roadmap.md`](docs/roadmap.md) — the project is built in phases,
-starting with a backend-less Flutter shell (auth + navigation) and adding
-AI capabilities incrementally.
